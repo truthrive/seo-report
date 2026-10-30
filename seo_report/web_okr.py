@@ -77,8 +77,8 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
         issues = _sheet_issues(ov["items"], tasks, today)
         overdue_tasks = sum(1 for x in issues if x["kind"] == "task" and x["reason"] == "Quá deadline")
         if issues:
-            with ui.element("div").classes("sr-card q-pa-md w-full").style(
-                    f"border-radius:12px;border-left:4px solid {T.AMBER}"):
+            with ui.element("div").classes("q-pa-md w-full").style(
+                    f"border-radius:12px;background:{T.TONES['amber'][0]};border:1px solid #EAD7AE"):
                 with ui.row().classes("items-center gap-2"):
                     ui.icon("rule", size="18px").style(f"color:{T.AMBER}")
                     ui.label(f"Cần cập nhật trên sheet · {len(issues)}").classes("text-sm font-semibold")

@@ -336,7 +336,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     elif match is False:
                         ui.badge("lệch target").props("color=orange-2 text-color=orange-10")
                     elif not target:
-                        ui.badge("chưa gán target").props("outline color=grey-7")
+                        ui.badge("chưa gán target").props("outline color=grey-8")
                 if a.head and a.head_basis == "impression":
                     ui.label("Không query nào có click; chọn theo impression.").classes("text-xs muted")
 

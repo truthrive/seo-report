@@ -10,6 +10,7 @@ from contextlib import contextmanager
 
 GREEN, LIME, CREAM, INK, MUTED = "#1E7C31", "#B8D332", "#EDEDE5", "#1F221E", "#6B6A5E"
 RED, AMBER, BLUE, GREY = "#C2410C", "#B7791F", "#2563EB", "#8C8A7E"
+AMBER_TEXT = "#8F5F14"  # hổ phách đậm cho chữ: đủ tương phản 4,5:1 trên nền trắng và nền kem
 PAGE_BG = "#F4F4EF"
 
 HEAD = """
@@ -36,6 +37,9 @@ HEAD = """
   .q-card { border-radius: 12px; }
   .q-card.q-card--bordered, .q-card--flat.q-card--bordered { border-color: var(--line); }
   .sr-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; }
+  /* Thẻ nằm trong thẻ (ô KPI, thẻ mục tiêu, ô danh sách): bỏ viền, chỉ giữ nền nhạt để bớt đường kẻ lồng nhau. */
+  .sr-card .sr-card { border-color: transparent; background: #F6F6F1; }
+  .sr-card .sr-kpi.clickable:hover { background: #F1F1EA; }
   .sr-section-title { font-family: var(--head); font-size: 16px; font-weight: 700; letter-spacing: -0.015em; }
   .sr-link { color: var(--ink) !important; font-size: 13.5px; font-weight: 600; text-decoration: none;
              border-bottom: 1.5px solid var(--ink); padding-bottom: 1px; white-space: nowrap; }
@@ -66,7 +70,7 @@ HEAD = """
   .q-dialog .q-card { border-radius: 14px !important; }
   /* bảng */
   .q-table__container { border-radius: 12px; border-color: var(--line) !important; }
-  .q-table thead th { font-family: var(--mono); font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+  .q-table thead th { font-family: var(--mono); font-size: 11px; font-weight: 600; text-transform: uppercase;
                       letter-spacing: .07em; color: var(--muted); background: #FAFAF6; }
   .q-table tbody td { font-size: 13px; font-variant-numeric: tabular-nums; }
   .q-table tbody tr:nth-child(even) td { background: #FAFAF6; }
@@ -77,7 +81,7 @@ HEAD = """
   .sr-url-item { width: 100%; flex-shrink: 0; padding: 7px 10px; border-radius: 8px; cursor: pointer;
                  display: flex; flex-direction: column; gap: 1px; border: 1px solid transparent; }
   .sr-url-item:hover { background: #F3F3EC; }
-  .sr-url-item.selected { background: #EEF6EF; border-color: #CFE6D4; }
+  .sr-url-item.selected { background: #E7F3EA; }
   .sr-url-item:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
   .sr-url-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
   .sr-url-path { font-size: 13px; font-weight: 550; color: var(--ink); overflow: hidden; text-overflow: ellipsis;
@@ -93,7 +97,7 @@ HEAD = """
                    gap: 4px; min-width: 0; }
   .sr-bento-tile.big { grid-column: span 2; grid-row: span 2; gap: 6px; }
   .sr-bento-tile.wide { grid-column: span 2; }
-  .sr-bento-eyebrow { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
+  .sr-bento-eyebrow { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .08em;
                       text-transform: uppercase; }
   .sr-bento-hero { font-family: var(--head); font-size: 32px; font-weight: 800; letter-spacing: -0.035em;
                    line-height: 1.05; }
@@ -127,8 +131,8 @@ HEAD = """
   .sr-nav a:hover { background: #E8E8E0; }
   .sr-nav a.active { background: #fff; color: var(--ink); font-weight: 650; box-shadow: 0 1px 2px rgba(31,34,30,.08); }
   .sr-nav a.active .q-icon { color: var(--green); }
-  .sr-nav-group { font-family: var(--mono); font-size: 10.5px; font-weight: 600; text-transform: uppercase;
-                  letter-spacing: .09em; color: #9A998C; padding: 16px 12px 5px; }
+  .sr-nav-group { font-family: var(--mono); font-size: 11px; font-weight: 600; text-transform: uppercase;
+                  letter-spacing: .09em; color: #6B6A5E; padding: 16px 12px 5px; }
   .sr-summary { display: flex; flex-wrap: wrap; padding: 0; }
   .sr-summary-half { flex: 1 1 460px; min-width: 0; padding: 18px 20px; display: flex; flex-direction: column;
                      gap: 12px; }
@@ -159,7 +163,7 @@ HEAD = """
 """
 
 TONES = {"green": ("#E7F3EA", GREEN), "lime": ("#F2F7DC", "#5E7414"), "blue": ("#E8EFFD", BLUE),
-         "amber": ("#FBF1DE", AMBER), "red": ("#FCEDE6", RED), "grey": ("#F1F0EA", MUTED),
+         "amber": ("#FBF1DE", AMBER_TEXT), "red": ("#FCEDE6", RED), "grey": ("#F1F0EA", MUTED),
          "purple": ("#F1EAFB", "#7C3AED")}
 
 
@@ -367,7 +371,8 @@ BODY = """
   // Toast: một góc cố định (dưới phải), role="status"; thông báo thường tự tắt sau 4,5 giây và dừng đếm khi rê
   // chuột hoặc focus vào; lỗi và thông báo đang chạy giữ đến khi bấm Đóng / xong việc.
   const patch = () => {
-    if (!window.Quasar || !Quasar.Notify || Quasar.Notify._sr) return !!(window.Quasar && Quasar.Notify);
+    if (!window.Quasar || !Quasar.Notify || typeof Quasar.Notify.create !== 'function') return false;
+    if (Quasar.Notify._sr) return true;
     const create = Quasar.Notify.create.bind(Quasar.Notify);
     Quasar.Notify.create = (opts) => {
       if (typeof opts === 'string') opts = {message: opts};
