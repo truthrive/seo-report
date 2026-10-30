@@ -289,12 +289,14 @@ def render(data: dict) -> dict:
 
 # ---- Mã hóa ----
 
-def encrypt(payload: dict, password: str) -> dict:
+def encrypt(payload: dict, password: str, salt: bytes | None = None) -> dict:
+    """salt cố định giữa các lần xuất (lưu ở data/) để khóa đã nhớ trong trình duyệt vẫn mở được bản mới khi mật khẩu
+    không đổi; iv luôn mới."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-    salt, iv = os.urandom(16), os.urandom(12)
+    salt, iv = salt or os.urandom(16), os.urandom(12)
     key = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=ITERATIONS).derive(password.encode())
     ct = AESGCM(key).encrypt(iv, json.dumps(payload, ensure_ascii=False).encode(), None)
     b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
@@ -327,7 +329,8 @@ PAGE = """<!doctype html>
 .num{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}h1{font:700 26px/1.2 'Be Vietnam Pro',sans-serif;margin:4px 0}
 header{position:sticky;top:0;z-index:5;background:rgba(244,244,239,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .hd{max-width:1200px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-.hd img{height:34px}.stamp{font-size:12px;color:var(--muted);margin-left:auto}
+.hd img{height:34px}.stamp{font-size:12px;color:var(--muted)}
+.right{margin-left:auto;display:flex;align-items:center;gap:10px}
 nav{display:flex;gap:2px;background:#EEECE4;border-radius:999px;padding:3px;overflow-x:auto;max-width:100%}
 nav button{border:0;background:transparent;border-radius:999px;padding:5px 14px;font:500 13px Inter;color:#4a4a42;cursor:pointer;white-space:nowrap}
 nav button.on{background:#fff;color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(31,34,30,.12)}
@@ -354,25 +357,47 @@ td{padding:7px 8px;border-bottom:1px solid #F0EEE6}.r{text-align:right}.warn{col
 .list{list-style:none;margin:6px 0 0;padding:0;font-size:13px}.list li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.list .dot{margin-right:6px}
 #lock{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 #lock form{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px;width:100%;max-width:360px;text-align:center}
-#lock img{height:44px;margin-bottom:12px}#lock input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font:14px Inter;margin:14px 0 10px}
-#lock button{width:100%;padding:10px;border:0;border-radius:999px;background:var(--ink);color:#fff;font:600 14px Inter;cursor:pointer}
+#lock img{height:44px;margin-bottom:12px}.pwbox{position:relative;margin:14px 0 10px}
+#lock input{width:100%;padding:10px 92px 10px 12px;border:1px solid var(--line);border-radius:10px;font:14px Inter}
+#go{width:100%;padding:10px;border:0;border-radius:999px;background:var(--ink);color:#fff;font:600 14px Inter;cursor:pointer}
+#peek{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:1px solid var(--line);background:#F4F4EF;color:var(--ink);
+border-radius:999px;padding:4px 10px;font:500 12px Inter;cursor:pointer;white-space:nowrap;z-index:20}
+#peek.run{position:fixed;right:auto;transform:none;transition:left .25s cubic-bezier(.2,.8,.2,1.2),top .25s cubic-bezier(.2,.8,.2,1.2);
+box-shadow:0 6px 18px rgba(31,34,30,.18);background:#fff}
 #err{color:var(--red);font-size:13px;min-height:20px;margin-top:8px}#app{display:none}
+#out{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:500 12px Inter;color:var(--muted);cursor:pointer}
 </style></head><body>
 <div id="lock"><form autocomplete="off"><img src="logo.svg" alt=""><div style="font:600 17px 'Be Vietnam Pro'">Báo cáo SEO &amp; GEO</div>
 <div class="muted" style="font-size:13px">Bản xem chỉ đọc · nhập mật khẩu để mở</div>
-<input id="pw" type="password" placeholder="Mật khẩu" autofocus><button id="go" type="submit">Mở báo cáo</button><div id="err"></div></form></div>
-<div id="app"><header><div class="hd"><img src="logo.svg" alt="__HOST__"><nav id="nav"></nav><div class="stamp" id="stamp"></div></div></header><main id="main"></main></div>
+<div class="pwbox"><input id="pw" type="password" placeholder="Mật khẩu" autofocus>
+<button id="peek" type="button" aria-label="Hiện mật khẩu">👁 Hiện</button></div>
+<button id="go" type="submit">Mở báo cáo</button><div id="err"></div></form></div>
+<div id="app"><header><div class="hd"><img src="logo.svg" alt="__HOST__"><nav id="nav"></nav><div class="right"><div class="stamp" id="stamp"></div>
+<button id="out" type="button" title="Quên đăng nhập trên máy này">Thoát</button></div></div></header><main id="main"></main></div>
 <script id="blob" type="application/json">__BLOB__</script>
 <script>
 const blob = JSON.parse(document.getElementById('blob').textContent);
 const ub = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-async function unlock(pw) {
+const SAVED = 'seo-report-key', DAYS = 30;
+async function derive(pw) {
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
-  const key = await crypto.subtle.deriveKey({name: 'PBKDF2', salt: ub(blob.salt), iterations: blob.iter, hash: 'SHA-256'},
-    base, {name: 'AES-GCM', length: 256}, false, ['decrypt']);
+  return crypto.subtle.deriveKey({name: 'PBKDF2', salt: ub(blob.salt), iterations: blob.iter, hash: 'SHA-256'},
+    base, {name: 'AES-GCM', length: 256}, true, ['decrypt']);
+}
+async function openWith(key) {
   const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: ub(blob.iv)}, key, ub(blob.ct));
   return JSON.parse(new TextDecoder().decode(plain));
 }
+// Nhớ đăng nhập: lưu khóa giải mã (không lưu mật khẩu) trong máy này 30 ngày. Bản xuất lại với cùng mật khẩu vẫn
+// mở được; đổi mật khẩu thì khóa cũ hết tác dụng.
+async function remember(key) {
+  try {
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', key));
+    localStorage.setItem(SAVED, JSON.stringify({salt: blob.salt, k: btoa(String.fromCharCode(...raw)),
+                                                exp: Date.now() + DAYS * 864e5}));
+  } catch (e) {}
+}
+function forget() { try { localStorage.removeItem(SAVED); sessionStorage.removeItem('pw'); } catch (e) {} }
 function show(d) {
   document.getElementById('lock').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -406,13 +431,47 @@ document.querySelector('#lock form').onsubmit = async ev => {
   const btn = document.getElementById('go'), err = document.getElementById('err');
   btn.disabled = true; btn.textContent = 'Đang mở…'; err.textContent = '';
   try {
-    const pw = document.getElementById('pw').value;
-    show(await unlock(pw));
-    try { sessionStorage.setItem('pw', pw); } catch (e) {}
+    const key = await derive(document.getElementById('pw').value);
+    show(await openWith(key));
+    remember(key);
   } catch (e) { err.textContent = 'Sai mật khẩu.'; btn.disabled = false; btn.textContent = 'Mở báo cáo'; }
 };
-(async () => { let pw = null; try { pw = sessionStorage.getItem('pw'); } catch (e) {}
-  if (pw) { try { show(await unlock(pw)); } catch (e) {} } })();
+document.getElementById('out').onclick = () => { forget(); location.reload(); };
+(async () => {
+  let s = null; try { s = JSON.parse(localStorage.getItem(SAVED) || 'null'); sessionStorage.removeItem('pw'); } catch (e) {}
+  if (!s || s.salt !== blob.salt || !(s.exp > Date.now())) return;
+  try { show(await openWith(await crypto.subtle.importKey('raw', ub(s.k), 'AES-GCM', false, ['decrypt']))); }
+  catch (e) { forget(); }
+})();
+// Nút "Hiện" tinh nghịch: rê chuột tới là chạy trốn; đuổi đủ 7 lần thì chịu thua. Điện thoại (không có rê chuột)
+// và bàn phím (Tab rồi Enter) bấm được ngay.
+(() => {
+  const peek = document.getElementById('peek'), pw = document.getElementById('pw');
+  const quips = ['Bắt được thì cho xem 😄', 'Hụt rồi!', 'Gần lắm rồi…', 'Chậm quá 🐢', 'Thêm chút nữa', 'Suýt nữa!',
+                 'Thôi được, cho xem 🙈'];
+  let tries = 0;
+  peek.addEventListener('pointerenter', ev => {
+    if (ev.pointerType !== 'mouse' || tries >= quips.length) return;
+    peek.textContent = quips[tries++];
+    const r = peek.getBoundingClientRect(), m = 16;
+    let x, y, n = 0;
+    do {  // chạy xa con trỏ ít nhất 140px
+      x = m + Math.random() * Math.max(0, innerWidth - r.width - 2 * m);
+      y = m + Math.random() * Math.max(0, innerHeight - r.height - 2 * m);
+    } while (Math.hypot(x - ev.clientX, y - ev.clientY) < 140 && ++n < 30);
+    if (!peek.classList.contains('run')) { peek.style.left = r.left + 'px'; peek.style.top = r.top + 'px';
+      peek.classList.add('run'); peek.offsetWidth; }
+    peek.style.left = x + 'px'; peek.style.top = y + 'px';
+  });
+  peek.onclick = () => {
+    const showing = pw.type === 'password';
+    pw.type = showing ? 'text' : 'password';
+    peek.classList.remove('run'); peek.style.left = peek.style.top = '';
+    peek.textContent = showing ? '🙈 Ẩn' : '👁 Hiện';
+    peek.setAttribute('aria-label', showing ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+    pw.focus();
+  };
+})();
 </script></body></html>
 """
 
@@ -428,7 +487,10 @@ def export(cfg, out_dir: Path, password: str, today: date | None = None) -> Path
     if len(password) < 10:
         raise ValueError("Mật khẩu cần ít nhất 10 ký tự")
     payload = render(collect(cfg, today))
-    blob = encrypt(payload, password)
+    salt_file = Path(cfg.db_path).parent / "static_salt.txt"
+    if not salt_file.exists():
+        salt_file.write_text(base64.b64encode(os.urandom(16)).decode(), encoding="utf-8")
+    blob = encrypt(payload, password, base64.b64decode(salt_file.read_text(encoding="utf-8").strip()))
     host = cfg.site_url.split("//")[-1].strip("/")
     page = (PAGE.replace("__HOST__", e(host)).replace("__ECHARTS__", ECHARTS)
             .replace("__BLOB__", json.dumps(blob).replace("</", "<\\/")))
