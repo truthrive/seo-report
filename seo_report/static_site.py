@@ -358,20 +358,24 @@ td{padding:7px 8px;border-bottom:1px solid #F0EEE6}.r{text-align:right}.warn{col
 #lock{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 #lock form{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px;width:100%;max-width:360px;text-align:center}
 #lock img{height:44px;margin-bottom:12px}.pwbox{position:relative;margin:14px 0 10px}
-#lock input{width:100%;padding:10px 92px 10px 12px;border:1px solid var(--line);border-radius:10px;font:14px Inter}
+#lock input{width:100%;padding:10px 44px 10px 12px;border:1px solid var(--line);border-radius:10px;font:14px Inter}
 #go{width:100%;padding:10px;border:0;border-radius:999px;background:var(--ink);color:#fff;font:600 14px Inter;cursor:pointer}
-#peek{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:1px solid var(--line);background:#F4F4EF;color:var(--ink);
-border-radius:999px;padding:4px 10px;font:500 12px Inter;cursor:pointer;white-space:nowrap;z-index:20}
-#peek.run{position:fixed;right:auto;transform:none;transition:left .25s cubic-bezier(.2,.8,.2,1.2),top .25s cubic-bezier(.2,.8,.2,1.2);
-box-shadow:0 6px 18px rgba(31,34,30,.18);background:#fff}
+#peek{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;border-radius:8px;
+padding:4px 6px;font-size:15px;cursor:pointer;opacity:.7}#peek:hover{opacity:1;background:#F4F4EF}
+#tease{margin-top:12px;border:1px dashed var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:5px 12px;
+font:500 12px Inter;cursor:pointer;white-space:nowrap;z-index:20}
+#tease.run{position:fixed;transition:left .25s cubic-bezier(.2,.8,.2,1.2),top .25s cubic-bezier(.2,.8,.2,1.2);
+box-shadow:0 6px 18px rgba(31,34,30,.18);color:var(--ink)}
+#joke{font-size:13px;color:var(--green);min-height:0;margin-top:8px}
 #err{color:var(--red);font-size:13px;min-height:20px;margin-top:8px}#app{display:none}
 #out{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:500 12px Inter;color:var(--muted);cursor:pointer}
 </style></head><body>
 <div id="lock"><form autocomplete="off"><img src="logo.svg" alt=""><div style="font:600 17px 'Be Vietnam Pro'">Báo cáo SEO &amp; GEO</div>
 <div class="muted" style="font-size:13px">Bản xem chỉ đọc · nhập mật khẩu để mở</div>
 <div class="pwbox"><input id="pw" type="password" placeholder="Mật khẩu" autofocus>
-<button id="peek" type="button" aria-label="Hiện mật khẩu">👁 Hiện</button></div>
-<button id="go" type="submit">Mở báo cáo</button><div id="err"></div></form></div>
+<button id="peek" type="button" aria-label="Xem ký tự đã gõ" title="Xem ký tự đã gõ">👁</button></div>
+<button id="go" type="submit">Mở báo cáo</button><div id="err"></div>
+<button id="tease" type="button">🔑 Hiện mật khẩu</button><div id="joke" aria-live="polite"></div></form></div>
 <div id="app"><header><div class="hd"><img src="logo.svg" alt="__HOST__"><nav id="nav"></nav><div class="right"><div class="stamp" id="stamp"></div>
 <button id="out" type="button" title="Quên đăng nhập trên máy này">Thoát</button></div></div></header><main id="main"></main></div>
 <script id="blob" type="application/json">__BLOB__</script>
@@ -443,12 +447,22 @@ document.getElementById('out').onclick = () => { forget(); location.reload(); };
   try { show(await openWith(await crypto.subtle.importKey('raw', ub(s.k), 'AES-GCM', false, ['decrypt']))); }
   catch (e) { forget(); }
 })();
-// Nút "Hiện" tinh nghịch: rê chuột tới là chạy trốn; đuổi đủ 7 lần thì chịu thua. Điện thoại (không có rê chuột)
-// và bàn phím (Tab rồi Enter) bấm được ngay.
+// 👁 trong ô: xem lại ký tự đã gõ.
 (() => {
   const peek = document.getElementById('peek'), pw = document.getElementById('pw');
+  peek.onclick = () => {
+    const showing = pw.type === 'password';
+    pw.type = showing ? 'text' : 'password';
+    peek.textContent = showing ? '🙈' : '👁';
+    pw.focus();
+  };
+})();
+// Nút đùa "Hiện mật khẩu": rê chuột tới là chạy trốn, đuổi đủ 7 lần thì chịu đứng yên. Bấm được cũng chỉ ra câu
+// đùa: trang không biết mật khẩu (chỉ có số liệu đã khóa). Điện thoại / bàn phím bấm được ngay.
+(() => {
+  const peek = document.getElementById('tease'), joke = document.getElementById('joke');
   const quips = ['Bắt được thì cho xem 😄', 'Hụt rồi!', 'Gần lắm rồi…', 'Chậm quá 🐢', 'Thêm chút nữa', 'Suýt nữa!',
-                 'Thôi được, cho xem 🙈'];
+                 'Thôi được, bấm đi 🙈'];
   let tries = 0;
   peek.addEventListener('pointerenter', ev => {
     if (ev.pointerType !== 'mouse' || tries >= quips.length) return;
@@ -464,12 +478,10 @@ document.getElementById('out').onclick = () => { forget(); location.reload(); };
     peek.style.left = x + 'px'; peek.style.top = y + 'px';
   });
   peek.onclick = () => {
-    const showing = pw.type === 'password';
-    pw.type = showing ? 'text' : 'password';
     peek.classList.remove('run'); peek.style.left = peek.style.top = '';
-    peek.textContent = showing ? '🙈 Ẩn' : '👁 Hiện';
-    peek.setAttribute('aria-label', showing ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
-    pw.focus();
+    peek.textContent = '🔑 Hiện mật khẩu';
+    joke.textContent = 'Mật khẩu là… hỏi Thịnh qua Zalo nhé 😄';
+    tries = 0;
   };
 })();
 </script></body></html>
