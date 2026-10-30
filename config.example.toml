@@ -1,0 +1,48 @@
+# Sao chép file này thành config.toml rồi sửa.
+
+# Property trong GSC, viết đúng như lệnh `python -m seo_report login` liệt kê.
+# Domain property: "sc-domain:matkinhtamduc.com"; URL-prefix property: "https://matkinhtamduc.com/"
+site_url = "sc-domain:matkinhtamduc.com"
+
+# GA4 property cho module AI Search & GEO, dạng "properties/123456789" (lệnh login liệt kê sẵn).
+ga4_property = ""
+
+db_path = "data/seo.db"
+client_secret = "secrets/client_secret.json"
+token_path = "secrets/token.json"
+
+# Lần đầu lấy bù bao nhiêu tháng (GSC giữ tối đa 16 tháng).
+backfill_months = 16
+# Mỗi lần chạy lấy lại bao nhiêu ngày gần nhất, vì GSC còn cập nhật số liệu 2–3 ngày.
+refetch_days = 5
+
+[keywords]
+# Head KW và keyword phụ tính trên bao nhiêu ngày gần nhất (ổn định hơn tính theo tuần).
+window_days = 28
+# Keyword phụ phải có ít nhất bấy nhiêu impression trong khoảng trên, và position trung bình không quá max_position.
+min_impressions = 50
+max_position = 30
+max_secondary = 5
+# Từ khóa thương hiệu: query chứa các từ này (không phân biệt dấu, khoảng trắng) bị loại khỏi head/keyword phụ.
+brand_terms = ["tâm đức", "matkinhtamduc"]
+[rank]
+# Ngân sách check rank mỗi tháng (USD), dùng chung cả team. Không gắn được ★ khi ước tính vượt mức này.
+monthly_budget_usd = 20
+# Giá DataForSEO chế độ standard cho mỗi trang 10 kết quả. Kiểm tra lại khi DataForSEO đổi giá.
+price_per_page = 0.0006
+# 2704 = Việt Nam, toàn quốc. Thiết bị: mobile.
+location_code = 2704
+language_code = "vi"
+device = "mobile"
+[okr]
+# Google Sheet OKR / Weekly Task Tracker cho báo cáo công việc (tool chỉ đọc). Dán link sheet.
+sheet = ""
+okr_tab = "OKRs 3 tháng"
+weekly_tab = "Weekly Task Tracker"
+
+[access]
+# Người ngoài vào tool qua Cloudflare Tunnel + Access (xem README mục 11). Mở thẳng trên máy này luôn có quyền sửa.
+editors = []  # email được sửa: check rank, sửa nhóm URL/keyword, nhập file, nhận xét, đồng bộ, xuất lên Drive
+viewers = []  # email chỉ xem và tải file về máy
+team_domain = ""  # ví dụ "tamduc.cloudflareaccess.com" (Zero Trust → Settings → Custom Pages / Team domain)
+aud = ""  # Application Audience (AUD) tag của ứng dụng seo.matkinhtamduc.com trong Cloudflare Access
