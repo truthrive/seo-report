@@ -285,6 +285,23 @@ Phân loại lại toàn bộ URL đang chờ (chạy tay):
 .\.venv\Scripts\python -m seo_report classify
 ```
 
+## 8f. KPI cam kết (sheet mẫu)
+
+Màn **KPI cam kết** (`/kpi`) và khối **Tiến độ KPI** trên đầu màn Tổng quan / Báo cáo đọc số cam kết từ một Google Sheet.
+
+**Sheet mẫu:** trên màn KPI cam kết, bấm **Tạo sheet mẫu**. Tool tạo sheet "KPI cam kết SEO – matkinhtamduc.com" trong folder Drive của tool, gồm 2 tab:
+- **KPI cam kết**: tên dự án, **ngày bắt đầu** (để trống thì tool chưa chấm), và bảng theo tháng dự án: giai đoạn, % từ khóa top 3 / 5 / 10, phiên Organic Search (GA4). Ô `-` hoặc trống nghĩa là tháng đó không cam kết. Sheet điền sẵn số của dự án mẫu 6 tháng để làm khung.
+- **Từ khóa cam kết**: từ khóa + URL mục tiêu (điền sẵn các từ đang check rank). Khi đồng bộ, từ khóa mới được tự thêm vào danh sách check rank.
+
+Có thể dùng sheet khác bằng cách dán link, miễn đúng tên 2 tab.
+
+**Cách tính:**
+- Tháng dự án là từ ngày bắt đầu đến trước cùng ngày tháng sau (1/11 → 30/11).
+- Thứ hạng lấy theo **lần check DataForSEO cuối trong tháng**. URL khác URL mục tiêu vẫn tính; chưa check hoặc ngoài độ sâu là chưa đạt.
+- Phiên là GA4 kênh Organic Search toàn site. Tháng đang chạy có thêm **dự báo cuối tháng** theo tốc độ hiện tại.
+
+**Đồng bộ:** chạy cùng lệnh `daily`, hoặc bấm **Đồng bộ ngay**. Mỗi lần nội dung sheet đổi, tool lưu một phiên bản. Tháng đã qua chấm theo phiên bản có hiệu lực cuối tháng đó, nên điều chỉnh KPI về sau không làm đổi kết quả đã chốt.
+
 ## 11. Cho sếp và team dùng từ máy khác
 
 Có hai đường. Cả hai dùng chung phân quyền trong `config.toml`, mục `[access]`:

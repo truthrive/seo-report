@@ -188,6 +188,20 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                         ui.icon(icon, size="16px").style(f"color:{color}")
                         ui.label(n["long"]).classes("text-sm ellipsis").tooltip(n["long"])
 
+    # ---- Tiến độ KPI cam kết (sheet KPI; chỉ hiện khi đã có) ----
+    kpi_box = ui.column().classes("w-full")
+
+    async def load_kpi():
+        from .web_kpi import kpi_block, load_progress
+        try:
+            p = await run.io_bound(lambda: load_progress(cfg))
+        except (Exception, SystemExit):  # noqa: BLE001  (lỗi KPI không làm hỏng màn tổng quan)
+            return
+        with kpi_box:
+            kpi_block(ui, p)
+
+    background_tasks.create(load_kpi())
+
     summary_section()
 
     # ---- Google Search ----

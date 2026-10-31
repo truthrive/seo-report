@@ -230,6 +230,13 @@ def cmd_daily(cfg) -> None:
                     print("OKR:", okr.sync(con, cfg), flush=True)
         except (Exception, SystemExit):
             traceback.print_exc()
+        try:  # KPI cam kết: đọc sheet KPI, lưu phiên bản mới nếu đổi, thêm từ khóa cam kết vào check rank
+            from . import kpi
+            with db.connect(cfg.db_path) as con:
+                if kpi.sheet_id(con):
+                    print("KPI:", kpi.sync(con, cfg, "tool (daily)"), flush=True)
+        except (Exception, SystemExit):
+            traceback.print_exc()
         try:
             cmd_index(cfg, limit=1500)
         except Exception:

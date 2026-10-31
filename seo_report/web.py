@@ -15,6 +15,7 @@ from .web_index import build_index_page
 from .web_rank import build_rank_page
 from .web_report import build_report_page
 from .web_okr import build_okr_page
+from .web_kpi import build_kpi_page
 from .web_overview import build_overview_page
 from .web_url import build_url_page
 
@@ -23,7 +24,8 @@ NUMBER = "val => val.toLocaleString('vi-VN')"
 # Menu chia nhóm: (tên nhóm hoặc None, [(nhãn, đường dẫn, icon)])
 NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo tuần", "/report", "summarize"),
-            ("Báo cáo tháng", "/report?kind=month", "calendar_month"), ("Công việc & OKR", "/okr", "task_alt")]),
+            ("Báo cáo tháng", "/report?kind=month", "calendar_month"), ("KPI cam kết", "/kpi", "flag"),
+            ("Công việc & OKR", "/okr", "task_alt")]),
     ("SEO", [("Hiệu suất URL", "/url", "link"), ("Từ khóa & rank", "/rank", "leaderboard"),
              ("Index", "/index", "travel_explore")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome")]),
@@ -233,6 +235,13 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         ctx = page_ctx()
         shell("Công việc & OKR", user, ctx, group=False)
         build_okr_page(ui, cfg, connect, user, ctx)
+
+    @ui.page("/kpi")
+    def kpi_page(request: Request):
+        if not (user := gate(request)):
+            return
+        shell("KPI cam kết", user, page_ctx(), period=False, group=False)
+        build_kpi_page(ui, cfg, connect, user)
 
     @ui.page("/index")
     def index_page(request: Request):
