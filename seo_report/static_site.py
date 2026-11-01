@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import ai_format as F
+from .projects import domain
 
 ITERATIONS = 600_000
 GREEN, LIME, INK, MUTED, RED, AMBER, BLUE = "#1E7C31", "#B8D332", "#1F221E", "#6B6A5E", "#C2410C", "#B7791F", "#2563EB"
@@ -503,7 +504,7 @@ def export(cfg, out_dir: Path, password: str, today: date | None = None) -> Path
     if not salt_file.exists():
         salt_file.write_text(base64.b64encode(os.urandom(16)).decode(), encoding="utf-8")
     blob = encrypt(payload, password, base64.b64decode(salt_file.read_text(encoding="utf-8").strip()))
-    host = cfg.site_url.split("//")[-1].strip("/")
+    host = domain(cfg.site_url)
     page = (PAGE.replace("__HOST__", e(host)).replace("__ECHARTS__", ECHARTS)
             .replace("__BLOB__", json.dumps(blob).replace("</", "<\\/")))
     out_dir = Path(out_dir)

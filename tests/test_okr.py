@@ -104,5 +104,46 @@ class OverviewTest(unittest.TestCase):
         self.assertIn("synced", k)
 
 
+class CycleTest(unittest.TestCase):
+    """Nhiều đợt OKR: mỗi tab "OKRs …" là một đợt; mã trùng giữa hai đợt vẫn tách riêng."""
+
+    def setUp(self):
+        self.con = sqlite3.connect(":memory:")
+        q1 = O.parse_okr(OKR_ROWS, TODAY)  # đợt 1: 08/10 → 06/11
+        rows2 = [OKR_ROWS[1], ["O1", "", "Đợt 2", "", "", "", "", ""],
+                 ["O1.01", "Tech", "Việc đợt 2", "10/11/2026", "20/12/2026", "A", "Đang làm", ""]]
+        q2 = O.parse_okr(rows2, TODAY)
+        self.items = O.combine([("OKRs 3 tháng", q1), ("OKRs Q1-2027", q2)])
+        O.save(self.con, self.items, [], TODAY, "api")
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_duplicate_codes_get_cycle_prefix(self):
+        uids = [i["uid"] for i in self.items]
+        self.assertIn("OKRs 3 tháng|O1.01", uids)
+        self.assertIn("OKRs Q1-2027|O1.01", uids)
+        self.assertIn("O2.01", uids)  # mã không trùng giữ nguyên
+        kid = next(i for i in self.items if i["uid"] == "OKRs Q1-2027|O1.01")
+        self.assertEqual(kid["objective"], "OKRs Q1-2027|O1")
+
+    def test_overview_picks_cycle_by_date(self):
+        ov = O.overview(self.con, TODAY)  # 30/10: đang ở đợt 1
+        self.assertEqual(ov["cycle"], "OKRs 3 tháng")
+        self.assertEqual(ov["total"], 4)
+        later = O.overview(self.con, date(2026, 12, 1))
+        self.assertEqual((later["cycle"], later["total"]), ("OKRs Q1-2027", 1))
+        self.assertEqual(later["objectives"][0]["total"], 1)
+        pick = O.overview(self.con, TODAY, cycle="OKRs Q1-2027")
+        self.assertEqual(pick["cycle"], "OKRs Q1-2027")
+        self.assertEqual([c["name"] for c in pick["cycles"]], ["OKRs 3 tháng", "OKRs Q1-2027"])
+
+    def test_tab_names(self):
+        from types import SimpleNamespace
+        cfg = SimpleNamespace(okr=O.OkrSettings())
+        titles = ["OKRs 3 tháng", "Đề xuất chi phí", " Weekly Task Tracker", "OKRs Q1-2027", "Content"]
+        self.assertEqual(O.okr_tab_names(titles, cfg), ["OKRs 3 tháng", "OKRs Q1-2027"])
+
+
 if __name__ == "__main__":
     unittest.main()

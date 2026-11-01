@@ -64,7 +64,9 @@ class ReportTest(unittest.TestCase):
         texts = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
         self.assertIn("Báo cáo SEO & GEO tuần 19/10/2026 – 25/10/2026", texts)
         self.assertIn("Tuần ổn định.", texts)
-        self.assertIn("Sai URL mục tiêu", texts)
+        self.assertIn("⚠ 1 từ khóa đang xếp hạng bằng trang khác trang mục tiêu", texts)
+        self.assertIn("Kết quả SEO · traffic từ Google Search", texts)
+        self.assertNotIn("CTR", texts)  # chỉ số vận hành không đưa vào báo cáo gửi đi
         self.assertEqual(len(ws._charts), 1)
 
 
@@ -84,12 +86,12 @@ class ReportAiBlockTest(unittest.TestCase):
                   "paid": {"sessions": 33}, "sources": [{"source": "CHATGPT", "sessions": 60}], "warnings": []}
         texts = [c.value for row in load_workbook(io.BytesIO(build_report_excel(rep, "t")))["Báo cáo"].iter_rows()
                  for c in row if isinstance(c.value, str)]
-        self.assertIn("Phiên từ AI", texts)
-        self.assertIn("Theo nguồn: ChatGPT 60", texts)
+        self.assertIn("Phiên từ AI assistant (GA4)", texts)
+        self.assertIn("Nguồn AI: ChatGPT 100%", texts)
         rep.ai = {"error": "Tài khoản chưa cấp quyền"}
         texts = [c.value for row in load_workbook(io.BytesIO(build_report_excel(rep, "t")))["Báo cáo"].iter_rows()
                  for c in row if isinstance(c.value, str)]
-        self.assertTrue(any("Chưa lấy được số liệu GA4" in t for t in texts))
+        self.assertIn("chưa có", texts)  # lỗi kỹ thuật không đưa vào báo cáo gửi đi
 
 
 if __name__ == "__main__":
@@ -148,8 +150,9 @@ class MonthlyReportTest(unittest.TestCase):
         self.assertEqual(report.get_note(self.con, SITE, report.date(2026, 10, 1)), "")  # không lẫn với tuần
         ws = load_workbook(io.BytesIO(build_report_excel(rep, "test")))["Báo cáo"]
         texts = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
-        for t in ("Báo cáo SEO & GEO tháng 10/2026", "Kế hoạch tháng sau", "Viết 5 bài.", "Theo loại trang (cộng theo URL)",
-                  "Top 10 từ khóa (query) nhiều click nhất tháng", "Click tháng này"):
+        for t in ("Báo cáo SEO & GEO tháng 10/2026", "Kế hoạch tháng sau", "Viết 5 bài.",
+                  "Phụ lục · theo loại trang (cộng theo trang)", "Phụ lục · top 10 từ khóa (GSC) nhiều click nhất tháng",
+                  "Tháng này"):
             self.assertIn(t, texts)
 
 
@@ -178,6 +181,6 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(geo["Phiên AI"]["value"], "chưa có")  # chưa kết nối GA4: không ghi 0
         self.assertEqual(geo["AI Overviews"]["value"], "chưa có")
         notes = [n["long"] for n in sm["seo_notes"]]
-        self.assertIn("URL tăng click nhiều nhất: /gong-kinh/ (+20 click)", notes)
-        self.assertIn("1 keyword đang xếp hạng bằng URL khác URL mục tiêu", notes)
+        self.assertIn("Trang tăng click nhiều nhất: /gong-kinh/ (+20 click)", notes)
+        self.assertIn("1 từ khóa đang xếp hạng bằng trang khác trang mục tiêu", notes)
         self.assertEqual(sm["seo_notes"][0]["short"], "/gong-kinh/ +20")

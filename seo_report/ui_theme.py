@@ -104,6 +104,35 @@ HEAD = """
   .sr-seg { background: #EEECE4; border-radius: 999px; padding: 3px; gap: 2px; box-shadow: none; }
   .sr-seg .q-btn { border-radius: 999px !important; padding: 2px 12px; min-height: 26px; font-size: 12.5px; }
   .sr-seg .q-btn.bg-white { box-shadow: 0 1px 2px rgba(31,34,30,.12); font-weight: 600; }
+  .sr-access-row { padding: 8px 4px; border-bottom: 1px solid var(--line); }
+  .sr-access-row:last-child { border-bottom: 0; }
+  /* Màn rộng: nội dung không giãn quá 1.440px, căn giữa */
+  .nicegui-content { max-width: 1440px; margin-left: auto; margin-right: auto; width: 100%; }
+  /* Hai khối cạnh nhau khi đủ chỗ (SEO | GEO), tự xuống dòng trên màn nhỏ */
+  .sr-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 16px;
+            align-items: stretch; }
+  .sr-two > .sr-card { height: 100%; }
+  /* Ô chỉ số bật/tắt đường (kiểu GSC): gọn, nền trắng; ô đang bật có vạch màu trên + nền màu rất nhạt */
+  .sr-trend-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+  .sr-trend-tile { position: relative; border-radius: 10px; padding: 10px 12px 9px; border: 1px solid var(--line);
+                   background: #fff; cursor: pointer; transition: background .15s, border-color .15s;
+                   user-select: none; overflow: hidden; }
+  .sr-trend-tile:hover { border-color: var(--c); }
+  .sr-trend-tile:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .sr-trend-tile.active { border-color: color-mix(in srgb, var(--c) 45%, white);
+                          background: color-mix(in srgb, var(--c) 7%, white); }
+  .sr-trend-tile.static { cursor: default; background: #F8F8F4; }
+  .sr-trend-check { color: var(--c); }
+  .sr-trend-tile:not(.active) .sr-trend-check { color: #B8B6A8; }
+  .sr-trend-label { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden;
+                    text-overflow: ellipsis; }
+  .sr-trend-value { font-family: var(--head); font-size: 21px; font-weight: 700; letter-spacing: -0.02em;
+                    color: var(--ink); }
+  .sr-trend-hint { font-size: 11px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden;
+                   text-overflow: ellipsis; }
+  .sr-todo { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px;
+             color: var(--ink) !important; }
+  .sr-todo:hover { background: #F3F3EC; }
   .sr-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
   .sr-bento-tile .sr-delta, .sr-metric .sr-delta { align-self: flex-start; }
   @media (max-width: 1100px) { .sr-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -146,8 +175,49 @@ HEAD = """
   .q-header.sr-top .q-field--dense .q-field__control { min-height: 34px; height: 34px; }
   .q-header.sr-top .q-field--dense .q-field__marginal { height: 34px; }
   .q-header.sr-top .q-field--dense .q-field__native { min-height: 34px; padding: 0; }
-  .q-drawer--mini .q-mini-drawer-hide { display: none !important; }
-  .q-drawer:not(.q-drawer--mini) .q-mini-drawer-only { display: none !important; }
+  /* Lớp riêng thay cho q-mini-drawer-*: Quasar ẩn các lớp đó khi menu ở chế độ điện thoại (mất chữ menu) */
+  .q-drawer--mini .sr-mini-hide { display: none !important; }
+  .q-drawer:not(.q-drawer--mini) .sr-mini-only { display: none !important; }
+  /* Ô thứ hạng Top 3 / 5 / 10: số lớn, màu số theo mức đạt cam kết */
+  .sr-rank-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+  .sr-rank-tile { background: #F6F6F1; border-radius: 12px; padding: 14px 18px 16px; }
+  .sr-rank-name { font-size: 14px; font-weight: 650; color: var(--ink); }
+  .sr-rank-num { font-family: var(--head); font-size: 44px; font-weight: 800; letter-spacing: -0.03em;
+                 line-height: 1.1; margin: 6px 0 4px; color: var(--ink); }
+  .sr-rank-num span { font-size: 20px; font-weight: 600; color: var(--muted); letter-spacing: 0; margin-left: 2px; }
+  .sr-rank-tile.good .sr-rank-num { color: var(--green); }
+  .sr-rank-tile.warn .sr-rank-num { color: #8F5F14; }
+  .sr-rank-tile.bad .sr-rank-num { color: #C2410C; }
+  .sr-rank-sub { font-size: 13.5px; color: var(--muted); }
+  .sr-rank-goal { font-size: 13.5px; font-weight: 650; margin-top: 6px; color: var(--ink); }
+  .sr-rank-tile.good .sr-rank-goal { color: var(--green); }
+  .sr-rank-tile.warn .sr-rank-goal { color: #8F5F14; }
+  .sr-rank-tile.bad .sr-rank-goal { color: #C2410C; }
+  .sr-rank-goal.none { font-weight: 400; color: var(--muted); }
+  /* Câu kết luận đầu trang */
+  .sr-verdict { display: flex; align-items: flex-start; gap: 10px; background: #fff; border: 1px solid var(--line);
+                border-radius: 12px; padding: 12px 16px; font-size: 15px;
+                line-height: 1.5; color: var(--ink); }
+  .sr-verdict .q-icon { margin-top: 2px; flex-shrink: 0; }
+  /* Nhãn KPI khi dự án chưa bắt đầu */
+  .sr-kpi-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+                 border: 1px solid var(--line); background: #fff; color: var(--ink) !important; font-size: 13px;
+                 font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .sr-kpi-chip:hover { border-color: var(--green); color: var(--green) !important; }
+  .sr-kpi-chip .q-icon { color: var(--green); }
+  /* Điện thoại: tiêu đề nhỏ lại, nút đầu trang chỉ còn icon, ô chỉ số hai cột, số và % được xuống dòng */
+  @media (max-width: 600px) {
+    .sr-title { font-size: 22px; }
+    .sr-head-btn .q-btn__content > span:not(.q-icon), .sr-head-btn .block { display: none; }
+    .sr-head-btn .q-icon { margin: 0 !important; }
+    .sr-page-head, .sr-sec-head { flex-wrap: wrap !important; }
+    .sr-sec-head > .q-space { display: none; }
+    .sr-sec-head > .nicegui-column { flex: 1 1 210px; min-width: 0; }
+    .sr-sec-head > .sr-link { margin-left: 46px; }
+    .sr-trend-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sr-trend-value { font-size: 19px; }
+    .sr-verdict { font-size: 14px; }
+  }
   /* menu thu gọn: mỗi mục là một ô vuông 40px căn giữa; nhóm ngăn bằng vạch mảnh thay cho chữ */
   .sr-nav { align-items: stretch !important; }
   .sr-nav a { width: 100%; }
@@ -176,10 +246,11 @@ def page_header(ui, icon: str, title: str, subtitle: str = "", tone: str = "gree
     nút/bộ lọc."""
     m = re.search(r"\d", title)
     strong, soft = (title[:m.start()], title[m.start():]) if m and m.start() > 0 else (title, "")
-    with ui.row().classes("w-full items-end gap-3 no-wrap q-mb-md q-mt-xs"):
+    # Không còn nhãn mono "SEO Report — …" phía trên: nó lặp lại đúng tiêu đề và mục đang chọn trong menu.
+    with ui.row().classes("w-full items-end gap-3 no-wrap q-mb-md q-mt-xs sr-page-head"):
         with ui.column().classes("gap-1").style("min-width: 0"):
-            ui.label(f"SEO Report — {eyebrow or EYEBROWS.get(icon, 'matkinhtamduc.com')}").classes("sr-eyebrow")
-            ui.html(f'<div class="sr-title">{escape(strong)}<span class="soft">{escape(soft)}</span></div>')
+            ui.html(f'<h1 class="sr-title" style="margin:0">{escape(strong)}<span class="soft">{escape(soft)}</span>'
+                    '</h1>')
             if subtitle:
                 ui.label(subtitle).classes("text-sm muted q-mt-xs")
         ui.space()
@@ -198,24 +269,142 @@ def delta_badge(ui, text: str, good: bool | None):
 
 def sparkline(ui, values: list, color: str = GREEN, height: int = 40, labels: list | None = None,
               fmt: str = "num", **_):
-    """Cột nhỏ theo kỳ (cũ → mới), cột cuối (kỳ đang xem) tô đậm, rê chuột hiện số. Trục từ 0 để chiều cao đúng tỷ lệ:
-    không phóng đại -0,6% thành một cú tụt; muốn xem chênh lệch chính xác thì xem nhãn % cạnh số lớn."""
+    """Đường nhỏ theo kỳ (cũ → mới) có nền mờ, chấm đậm ở kỳ đang xem, rê chuột hiện số. Trục từ 0 để độ dốc đúng tỷ
+    lệ: không phóng đại -0,6% thành một cú tụt; muốn xem chênh lệch chính xác thì xem nhãn % cạnh số lớn."""
     vals = list(values)
     if not any(v for v in vals if v is not None):
         ui.element("div").style(f"height:{height}px")  # giữ chỗ để các thẻ cùng hàng thẳng nhau
         return
-    data = [{"value": v, "itemStyle": {"color": color, "opacity": 1 if i == len(vals) - 1 else 0.35,
-                                       "borderRadius": [2, 2, 0, 0]}} for i, v in enumerate(vals)]
-    value_js = ("v => v == null ? 'chưa có' : (v * 100).toLocaleString('vi-VN', {maximumFractionDigits: 2}) + '%'"
-                if fmt == "pct" else "v => v == null ? 'chưa có' : v.toLocaleString('vi-VN', "
-                                     "{maximumFractionDigits: 1})")
-    ui.echart({"animation": False, "grid": {"left": 0, "right": 0, "top": 2, "bottom": 0},
-               "tooltip": {"trigger": "axis", "confine": True, "axisPointer": {"type": "none"},
-                           "textStyle": {"fontSize": 11}, "padding": [4, 8], ":valueFormatter": value_js},
-               "xAxis": {"type": "category", "show": False, "data": labels or [str(i) for i in range(len(vals))]},
+    last = max(i for i, v in enumerate(vals) if v is not None)
+    data = [{"value": v, "symbolSize": 6 if i == last else 0} for i, v in enumerate(vals)]
+    ui.echart({"animation": False, "grid": {"left": 3, "right": 5, "top": 5, "bottom": 2},
+               "tooltip": {"trigger": "axis", "confine": True,
+                           "axisPointer": {"type": "line", "lineStyle": {"color": "#D9D8CF"}},
+                           "textStyle": {"fontSize": 11}, "padding": [4, 8], ":valueFormatter": _value_js(fmt)},
+               "xAxis": {"type": "category", "show": False, "boundaryGap": False,
+                         "data": labels or [str(i) for i in range(len(vals))]},
                "yAxis": {"type": "value", "show": False, "min": 0},
-               "series": [{"type": "bar", "data": data, "barWidth": "62%", "name": ""}]}).style(
-        f"height:{height}px; width:100%")
+               "series": [{"type": "line", "data": data, "name": "", "smooth": 0.3, "symbol": "circle",
+                           "lineStyle": {"color": color, "width": 2}, "itemStyle": {"color": color},
+                           "areaStyle": {"color": color, "opacity": 0.12}}]}).style(f"height:{height}px; width:100%")
+
+
+def _value_js(fmt: str) -> str:
+    return ("v => v == null ? 'chưa có' : (v * 100).toLocaleString('vi-VN', {maximumFractionDigits: 2}) + '%'"
+            if fmt == "pct" else "v => v == null ? 'chưa có' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})")
+
+
+def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230) -> None:
+    """Kiểu biểu đồ Hiệu suất của Google Search Console: mỗi chỉ số là một ô bấm để bật/tắt đường của nó trên biểu
+    đồ chung bên dưới. Mỗi đường có trục riêng (ẩn) nên chỉ số nhỏ (phiên ~5.000) và lớn (impression ~180.000) cùng
+    hiện rõ; rê chuột hiện số mọi đường của kỳ đó.
+
+    metrics: [{"key", "label", "value", "delta", "good", "data": [số theo kỳ], "color", "icon", "hint", "fmt": "num" |
+    "pct", "kind": "line" | "bar", "axis": nhóm trục, "zero": trục từ 0, "source": nguồn (tooltip), "on": bật sẵn hay
+    không}]. Chỉ số không có dữ liệu xu hướng thì ô không bấm được.
+    Trục số của hai chỉ số bật đầu tiên hiện ở trái / phải, cùng màu đường."""
+    import json
+    on = {m["key"] for m in metrics if m.get("on") and _has(m)}
+    if not on:
+        on = {m["key"] for m in metrics[:1] if _has(m)}
+
+    @ui.refreshable
+    def body():
+        with ui.element("div").classes("sr-trend-tiles w-full"):
+            for m in metrics:
+                active = m["key"] in on
+                usable = _has(m)
+                tile = ui.element("div").classes("sr-trend-tile" + (" active" if active else "")
+                                                 + ("" if usable else " static"))
+                tile.style(f"--c:{m['color']}")
+                if usable:
+                    tile.props(f'role=button tabindex=0 aria-pressed={"true" if active else "false"}')
+                    tile.on("click", lambda _, k=m["key"]: toggle(k))
+                    tile.on("keydown.enter", lambda _, k=m["key"]: toggle(k))
+                with tile:
+                    with ui.row().classes("items-center gap-2 no-wrap"):
+                        icon = ("check_box" if active else "check_box_outline_blank") if usable else \
+                            (m.get("icon") or "insights")
+                        ui.icon(icon, size="18px").classes("sr-trend-check")
+                        ui.label(m["label"]).classes("sr-trend-label")
+                    with ui.row().classes("items-baseline gap-2 q-mt-xs").style("row-gap:2px"):  # hẹp thì % xuống dòng
+                        ui.label(m["value"]).classes("sr-trend-value num")
+                        if m.get("delta"):
+                            delta_badge(ui, m["delta"], m.get("good"))
+                    hint = ui.label(m.get("hint") or " ").classes("sr-trend-hint")
+                    full = " · ".join(x for x in (m.get("hint"), m.get("source")) if x)
+                    if full:  # chữ phụ có thể bị cắt "…" và nguồn số liệu: rê chuột để đọc đủ
+                        hint.props(f'title="{full}"')
+                        tile.props(f'aria-description="{full}"')
+        shown = [m for m in metrics if m["key"] in on]
+        if not shown:
+            return
+        fmts = {m["label"]: m.get("fmt", "num") for m in shown}
+        has_bar = any(m.get("kind") == "bar" for m in shown)
+        series = []
+        for i, m in enumerate(shown):
+            base = {"name": m["label"], "yAxisIndex": i, "itemStyle": {"color": m["color"]}}
+            if m.get("kind") == "bar":
+                last = len(m["data"]) - 1
+                series.append({**base, "type": "bar", "barMaxWidth": 26, "z": 1,
+                               "data": [{"value": v, "itemStyle": {"color": m["color"], "opacity": 1 if j == last
+                                                                   else 0.45, "borderRadius": [4, 4, 0, 0]}}
+                                        for j, v in enumerate(m["data"])]})
+            else:
+                series.append({**base, "type": "line", "data": m["data"], "smooth": 0.25, "symbol": "circle",
+                               "symbolSize": 6, "showSymbol": len(labels) <= 12, "connectNulls": False, "z": 3,
+                               "lineStyle": {"width": 2.5, "color": m["color"]},
+                               "areaStyle": {"color": m["color"], "opacity": 0.05 if len(shown) > 1 else 0.1}})
+        pct_js = "v => (v * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%'"
+        num_js = ("v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + 'k' "
+                  ": v.toLocaleString('vi-VN')")
+        # Trục số: đường thứ nhất bên trái, đường thứ hai bên phải (cùng màu đường), các đường khác trục ẩn
+        # Chỉ số cùng "axis" dùng chung một trục (cùng đơn vị, cùng độ lớn: so độ cao được); trục chung màu trung tính
+        groups = list(dict.fromkeys(m.get("axis", m["key"]) for m in shown))
+        for s, m in zip(series, shown):
+            s["yAxisIndex"] = groups.index(m.get("axis", m["key"]))
+        y_axes = []
+        for i, g in enumerate(groups):
+            ms = [m for m in shown if m.get("axis", m["key"]) == g]
+            m = ms[0]
+            zero = m.get("kind") == "bar" or m.get("zero")
+            y = {"type": "value", "show": i < 2, "position": "left" if i == 0 else "right",
+                 "scale": not zero, "splitNumber": 4,
+                 "splitLine": {"show": i == 0, "lineStyle": {"color": "#EEECE4"}},
+                 "axisLine": {"show": False}, "axisTick": {"show": False},
+                 "axisLabel": {"color": m["color"] if len(ms) == 1 else "#8C8A7E", "fontSize": 10.5,
+                               ":formatter": pct_js if m.get("fmt") == "pct" else num_js}}
+            if zero:
+                y["min"] = 0
+            y_axes.append(y)
+        tip = ("ps => ps[0].axisValue + ps.map(p => '<br/>' + p.marker + p.seriesName + ': <b>' + "
+               "(p.value == null ? 'chưa có' : (" + json.dumps(fmts, ensure_ascii=False) + "[p.seriesName] === 'pct' "
+               "? (p.value * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%' : "
+               "p.value.toLocaleString('vi-VN'))) + '</b>').join('')")
+        ui.echart({"animation": False, "legend": {"show": False},
+                   "grid": {"left": 44, "right": 48 if len(groups) > 1 else 14, "top": 14, "bottom": 26},
+                   "tooltip": {"trigger": "axis", "confine": True, ":formatter": tip,
+                               "axisPointer": {"type": "shadow" if has_bar else "line",
+                                               "shadowStyle": {"color": "rgba(31,34,30,0.04)"},
+                                               "lineStyle": {"color": "#C9C7BC"}}},
+                   "xAxis": {"type": "category", "data": labels, "boundaryGap": has_bar, "axisTick": {"show": False},
+                             "axisLine": {"lineStyle": {"color": "#E7E5DC"}},
+                             "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5}},
+                   "yAxis": y_axes, "series": series}).classes("w-full q-mt-sm").style(f"height:{height}px")
+
+    def toggle(key: str) -> None:
+        if key in on:
+            if len(on) > 1:  # luôn giữ ít nhất một đường
+                on.discard(key)
+        else:
+            on.add(key)
+        body.refresh()
+
+    body()
+
+
+def _has(m: dict) -> bool:
+    return any(v is not None for v in (m.get("data") or []))
 
 
 def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | None = None, hint: str = "",
@@ -225,6 +414,7 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
     Bố cục cố định để mọi thẻ cùng hàng cao bằng nhau: spark=[] giữ chỗ biểu đồ dù không có số, dòng phụ luôn có
     chỗ (để trống nếu không có)."""
     bg, fg = TONES[tone]
+    href = href if href and link_allowed(href) else None
     card = ui.element("div").classes("sr-card sr-kpi q-pa-md" + (" clickable" if href else ""))
     if href:
         card.on("click", lambda: ui.navigate.to(href))
@@ -243,21 +433,32 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
     return card
 
 
+def link_allowed(href: str) -> bool:
+    """Người đang xem có mở được trang này không (khách hàng chỉ mở các màn báo cáo): không thì ẩn link "Xem chi tiết"
+    thay vì để bấm vào rồi bị đưa về trang chủ. Danh sách do web.open_page đặt cho từng lần mở trang."""
+    try:
+        from nicegui import app
+        only = app.storage.client.get("only_links")
+    except (RuntimeError, KeyError, AttributeError):  # ngoài trang web (test, xuất file)
+        return True
+    return not only or href.split("?")[0] in only
+
+
 @contextmanager
 def section(ui, title: str, icon: str | None = None, subtitle: str = "", href: str | None = None,
             link_text: str = "Xem chi tiết"):
     """Khung trắng có tiêu đề mục; nội dung đặt trong `with`."""
     with ui.element("div").classes("sr-card q-pa-md w-full"):
-        with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-sm"):
+        with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-sm sr-sec-head"):
             if icon:
                 with ui.element("div").classes("sr-icon-bubble").style(f"background:{TONES['green'][0]}"):
                     ui.icon(icon, size="18px").style(f"color:{GREEN}")
             with ui.column().classes("gap-0"):
-                ui.label(title).classes("sr-section-title")
+                ui.label(title).classes("sr-section-title").props('role=heading aria-level=2')
                 if subtitle:
                     ui.label(subtitle).classes("text-xs muted")
             ui.space()
-            if href:
+            if href and link_allowed(href):
                 ui.link(link_text + " →", href).classes("sr-link")
         body = ui.column().classes("w-full gap-2")
         with body:

@@ -1,4 +1,7 @@
 # Sao chép file này thành config.toml rồi sửa.
+#
+# Nhiều website: site_url, ga4_property, [keywords] brand_terms, [rank] (ngân sách, vị trí, thiết bị) và [okr] chỉ
+# dùng để tạo DỰ ÁN ĐẦU TIÊN khi tool chạy lần đầu. Sau đó sửa và thêm website ở màn Quản trị → Dự án (README mục 6a).
 
 # Property trong GSC, viết đúng như lệnh `python -m seo_report login` liệt kê.
 # Domain property: "sc-domain:matkinhtamduc.com"; URL-prefix property: "https://matkinhtamduc.com/"

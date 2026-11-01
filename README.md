@@ -89,12 +89,30 @@ Mỗi sáng, sau khi lấy dữ liệu, tool tự đọc schema cho tối đa 30
 .\.venv\Scripts\python -m seo_report classify
 ```
 
+## 6a. Nhiều website (dự án), từ 01/11/2026
+
+Tool chạy được cho nhiều website. Mỗi website là một **dự án** với cấu hình và dữ liệu riêng.
+
+- **Mở:** Quản trị → **Dự án**. Đổi dự án đang xem ở ô chọn trên thanh trên cùng; tool mở lại đúng màn đang xem của dự án kia. Ô chọn chỉ hiện khi có từ 2 dự án.
+- **Dự án đầu tiên** được tạo tự động từ `config.toml` và dùng luôn `data/seo.db`, nên dữ liệu có sẵn không phải chuyển. Từ đây, các mục riêng từng website (`site_url`, `ga4_property`, `brand_terms`, ngân sách check rank, `[okr] sheet`) sửa ở màn Dự án. Sửa trong `config.toml` không còn tác dụng.
+- **Thêm website khách hàng:**
+  1. Khách thêm email Google của tool vào Search Console và GA4, quyền đọc.
+  2. Ở màn Dự án, bấm **Thêm dự án** và chọn property trong danh sách (tool tự lấy từ Google).
+  3. Bấm **Lấy dữ liệu ngay**. Lần đầu tool lấy bù 16 tháng, khoảng 10–30 phút.
+  4. Sheet KPI cam kết gắn ở màn KPI cam kết của dự án đó.
+- **Dữ liệu tách riêng:** mỗi dự án mới có file riêng `data/projects/<mã dự án>.db`. Số liệu của các khách không bao giờ nằm chung một file.
+- **Lưu trữ** một dự án: dự án bị ẩn khỏi ô chọn và job hằng ngày bỏ qua nó, nhưng dữ liệu vẫn giữ. Khôi phục được bất cứ lúc nào. Tool không có nút xóa dự án.
+- **Job hằng ngày** (`daily`) chạy lần lượt từng dự án đang hoạt động. Dự án lỗi (ví dụ mất quyền GSC) được ghi vào `data/sync.log` và không chặn các dự án sau.
+- **Lệnh dòng lệnh** chạy cho dự án đầu tiên. Thêm `--project <mã>` để chọn dự án khác, ví dụ `python -m seo_report --project khach-a-vn stats`. Mã dự án xem ở màn Dự án (phần đuôi tên file dữ liệu).
+- **Phân quyền theo dự án:** xem mục 11. Khách hàng chỉ thấy website của mình.
+- **Quy tắc phân loại URL** theo đường dẫn chỉ áp cho matkinhtamduc.com. Website khác chỉ dùng quy tắc chung (trang chủ, liên hệ, URL kiểu WordPress cũ…), còn lại tool đọc schema của trang.
+
 ## 6b. Bố cục chung (từ 30/10/2026)
 
 - **Menu trái chia nhóm:** Tổng quan · Báo cáo tuần · SEO (Hiệu suất URL, Từ khóa & rank, Index) · AI & GEO · Quản trị (Quản lý URL, Chất lượng dữ liệu).
 - **Thanh trên cùng có ô chọn tuần và nhóm URL dùng chung cho mọi màn.** Đổi ở đây thì Tổng quan, Báo cáo tuần, Hiệu suất URL và AI Search & GEO cùng theo. Lựa chọn được nhớ theo trình duyệt.
 - **Tổng quan (trang chủ):** Google Search, traffic AI (GA4), AI Overviews, rank, index và URL tăng/giảm của tuần trong một màn. Mỗi khối có "Xem chi tiết" để đi sâu.
-- **Báo cáo tuần:** cùng các khối đó, thêm nhận xét gửi sếp và nút xuất Excel.
+- **Báo cáo tuần:** cùng các khối đó, thêm nhận xét & kết luận và nút xuất báo cáo.
 - **Báo cáo tháng** (menu, hoặc nút Tuần | Tháng trong màn Báo cáo): chỉ tháng đã đủ dữ liệu GSC, so với tháng trước. Số tính thẳng từ dữ liệu ngày của tháng (không cộng các tuần). Thêm xu hướng 12 tháng, theo loại trang, top 10 URL, top 10 query, ô Nhận xét tháng + Kế hoạch tháng sau; xuất Excel. GA4 (traffic AI) so với cùng số ngày liền trước.
 
 ## 7. Màn URL (Hiệu suất URL)
@@ -126,22 +144,19 @@ Bấm nút **Xuất dữ liệu (Excel)** ở cột trái của màn URL. File x
 
 Hai sheet lịch sử rank sẽ được thêm khi làm phần check rank.
 
-## 8b. Báo cáo tuần cho sếp
+## 8b. Báo cáo tuần / tháng (gửi quản lý hoặc khách hàng)
 
-Màn **Báo cáo tuần**:
-1. Chọn tuần (thứ Hai đến Chủ nhật) và nhóm URL ở thanh trên cùng.
-2. Xem trước nội dung báo cáo:
-   - KPI GSC của toàn site và của nhóm, so với tuần trước;
-   - xu hướng click 8 tuần;
-   - rank thực tế;
-   - top 10 URL tăng và top 10 URL giảm click.
-3. Viết **nhận xét** rồi bấm **Lưu nhận xét**. Nhận xét được lưu riêng cho từng tuần.
-4. Bấm **Xuất báo cáo (Excel)**. File gồm một sheet định dạng sẵn, có biểu đồ và in vừa một trang ngang. Nhận xét được đặt lên đầu.
+Màn **Báo cáo tuần / tháng**, file Excel và slide (Google Slides / PDF) có cùng thứ tự, chỉ gồm chỉ số người đọc cần:
 
-Cách tính:
-- Top URL tăng/giảm chỉ xét URL có từ 20 click ở một trong hai tuần, xếp theo số click chênh lệch.
-- Rank lấy lần check mới nhất từ đầu tuần báo cáo đến hết tuần kế tiếp, vì rank thường được check vào thứ Ba, trước buổi báo cáo. Báo cáo ghi rõ ngày check.
-- Position TB (GSC) là số trung bình của GSC, không phải thứ hạng.
+1. **Kết luận**: nhận xét (và kế hoạch tháng sau) do bạn viết, cùng tối đa 3 điểm cần chú ý tự động. Chưa viết nhận xét thì slide đổi thành "Điểm chính"; bản gửi đi không có chữ "chưa có".
+2. **KPI cam kết**: chỉ hiện khi dự án trong sheet KPI đã bắt đầu.
+3. **Kết quả SEO**: phiên Organic Search (GA4), Click, Impression (GSC), kèm xu hướng 8 tuần / 12 tháng.
+4. **Kết quả GEO**: phiên từ AI assistant (GA4), hiển thị trong AI Overviews và tỷ lệ trên hiển thị Google (GSC). Hai nguồn đo riêng, không cộng với nhau.
+5. **Thứ hạng từ khóa cam kết**: số từ trong top 3 / 5 / 10 so với lần check trước, từ tăng / giảm mạnh nhất. Chưa có sheet KPI thì tính mọi từ đang theo dõi.
+6. **Công việc**: hạng mục OKR hoàn thành trong kỳ và kế hoạch kỳ sau.
+7. **Phụ lục**: thứ hạng từng từ khóa (Excel tuần và tháng). Báo cáo tháng có thêm theo loại trang, top trang, top từ khóa.
+
+Chỉ số vận hành không đưa vào báo cáo gửi đi: index, CTR, Position TB của GSC, nhóm URL, engagement rate. Các chỉ số này vẫn xem được trên màn Tổng quan (khối **Cần xử lý**) và các màn chi tiết.
 
 ## 8c. Kết nối GA4 (module AI Search & GEO)
 
@@ -197,7 +212,7 @@ Cài đặt một lần:
 
 Cách hoạt động:
 - **Quyền tối thiểu (drive.file):** tool chỉ thấy và sửa file/folder do chính nó tạo, không đọc được file khác trong Drive.
-- **Folder:** lần đầu, tool tạo folder **"SEO Report – matkinhtamduc.com"** trong Drive. Dùng **Chọn folder Drive…** để chọn hoặc tạo folder con (ví dụ "Báo cáo tháng"). Muốn sếp xem, chia sẻ folder gốc đó trên Drive.
+- **Folder:** lần đầu, tool tạo folder **"SEO Report – matkinhtamduc.com"** trong Drive. Dùng **Chọn folder Drive…** để chọn hoặc tạo folder con (ví dụ "Báo cáo tháng"). Muốn người khác xem, chia sẻ folder gốc đó trên Drive.
 - **Định dạng:** Google Sheets do Drive chuyển từ file Excel, nên nội dung giống hệt file Excel. PDF xuất từ chính bộ Google Slides, nên giống hệt slide. PDF được lưu lên Drive và tải về máy.
 
 ## 8e. Công việc & OKR (đọc từ Google Sheet)
@@ -208,6 +223,8 @@ Cài đặt một lần:
 1. Trong `config.toml`, mục `[okr]`: `sheet` = link Google Sheet; `okr_tab` và `weekly_tab` = tên 2 tab (mặc định "OKRs 3 tháng", "Weekly Task Tracker").
 2. Trong Google Cloud project, bật **Google Sheets API**, rồi chạy lại `login` và tích quyền xem bảng tính (chỉ đọc).
 3. Khi màn OKR không còn hiện chip "Đang đọc qua link công khai", tắt chia sẻ công khai của sheet.
+
+**Thêm đợt OKR mới (3 tháng tiếp theo):** trong cùng file, bấm chuột phải tab "OKRs 3 tháng" → **Nhân bản**, đổi tên tab bắt đầu bằng **"OKRs"** (ví dụ "OKRs Q1-2027"), xóa nội dung cũ rồi điền đợt mới. Tool đọc mọi tab tên bắt đầu bằng "OKRs", mỗi tab là một đợt. Màn OKR tự chọn đợt đang chạy theo ngày, có nút chuyển sang đợt khác. Báo cáo tuần/tháng lấy đợt chứa kỳ báo cáo. Nên đánh mã nối tiếp (O6, O7…) để task trong Weekly Task Tracker không bị nhầm đợt; nếu lỡ trùng mã, tool vẫn tách riêng hai đợt. Weekly Task Tracker giữ **một tab chung**, ghi tiếp xuống dưới.
 
 Cách hoạt động:
 - Đồng bộ trong lệnh `daily` hoặc bấm **Đồng bộ ngay** trên màn OKR.
@@ -291,9 +308,9 @@ Màn **KPI cam kết** (`/kpi`) và khối **Tiến độ KPI** trên đầu mà
 
 **Sheet mẫu:** trên màn KPI cam kết, bấm **Tạo sheet mẫu**. Tool tạo sheet "KPI cam kết SEO – matkinhtamduc.com" trong folder Drive của tool, gồm 2 tab:
 - **KPI cam kết**: tên dự án, **ngày bắt đầu** (để trống thì tool chưa chấm), và bảng theo tháng dự án: giai đoạn, % từ khóa top 3 / 5 / 10, phiên Organic Search (GA4). Ô `-` hoặc trống nghĩa là tháng đó không cam kết. Sheet điền sẵn số của dự án mẫu 6 tháng để làm khung.
-- **Từ khóa cam kết**: từ khóa + URL mục tiêu (điền sẵn các từ đang check rank). Khi đồng bộ, từ khóa mới được tự thêm vào danh sách check rank.
+- **Từ khóa cam kết**: từ khóa, URL mục tiêu, **Top target** (Top 3 / 5 / 10 riêng cho từng từ, không bắt buộc). Điền sẵn các từ đang check rank. Khi đồng bộ, từ khóa mới được tự thêm vào danh sách check rank. Tool đọc theo tên cột nên thêm hay đổi thứ tự cột vẫn đúng.
 
-Có thể dùng sheet khác bằng cách dán link, miễn đúng tên 2 tab.
+Có thể dùng sheet khác bằng cách dán link, miễn có 2 tab đúng tên. Tab chép sang có tên "Bản sao của …" cũng được. Hiện tool đọc 2 tab trong file dự án "matkinhtamduc.com - SEO Plan - 2026". Trước khi dự án bắt đầu, màn KPI hiện **mốc trước dự án**: vị trí mới nhất của từng từ so với top target.
 
 **Cách tính:**
 - Tháng dự án là từ ngày bắt đầu đến trước cùng ngày tháng sau (1/11 → 30/11).
@@ -302,14 +319,39 @@ Có thể dùng sheet khác bằng cách dán link, miễn đúng tên 2 tab.
 
 **Đồng bộ:** chạy cùng lệnh `daily`, hoặc bấm **Đồng bộ ngay**. Mỗi lần nội dung sheet đổi, tool lưu một phiên bản. Tháng đã qua chấm theo phiên bản có hiệu lực cuối tháng đó, nên điều chỉnh KPI về sau không làm đổi kết quả đã chốt.
 
-## 11. Cho sếp và team dùng từ máy khác
+## 11. Cho team, quản lý hoặc khách hàng dùng từ máy khác
 
-Có hai đường. Cả hai dùng chung phân quyền trong `config.toml`, mục `[access]`:
-- `editors`: được sửa. Gồm check rank (tốn tiền), thêm/bỏ keyword, sửa nhóm URL, target KW, nhập file GSC, nhận xét báo cáo, đồng bộ OKR, lưu vào Drive.
-- `viewers`: chỉ xem và tải Excel / PowerPoint về máy. Không thấy màn Quản lý URL, không thấy nút sửa.
-- Email không có trong hai danh sách bị chặn. Mở thẳng trên máy này (http://127.0.0.1:8080) luôn có quyền sửa.
+**Phân quyền theo dự án (từ 01/11/2026).** Tài khoản có hai loại:
+- **Quản trị:** vào mọi dự án, được sửa, quản lý màn Dự án và Phân quyền. Gồm chủ máy (mở thẳng trên máy chạy tool) và email trong `editors` của `config.toml`.
+- **Theo dự án:** chỉ vào được các website được gắn. Mỗi website có một trong ba quyền:
+  - **Khách hàng:** chỉ thấy Tổng quan, Báo cáo tuần/tháng, KPI cam kết, Công việc & OKR. Không thấy nhóm URL, các màn SEO/AI chi tiết hay link "Xem chi tiết" sang các màn đó. Tải được file báo cáo.
+  - **Chỉ xem:** thấy thêm các màn SEO / AI (Hiệu suất URL, Từ khóa & rank, Index, AI Search & GEO) nhưng không sửa được.
+  - **Được sửa:** như người trong team. Check rank (tốn tiền), sửa từ khóa, nhóm URL, nhận xét, đồng bộ, lưu lên Drive. Không vào được màn Dự án / Phân quyền.
+- Email trong `viewers` của `config.toml` luôn xem được **dự án đầu tiên** (cách dùng cũ khi tool chỉ có một website), và có thể được gắn thêm dự án khác. Tài khoản "chỉ xem" thêm trên màn Phân quyền trước ngày này được tự gắn quyền Chỉ xem ở dự án đầu tiên.
+- Email không có quyền gì bị chặn. Tài khoản chưa được gắn dự án nào đăng nhập được, nhưng chỉ thấy thông báo "chưa được gắn dự án".
+- **Chặn ở máy chủ:** mỗi lần mở trang, tool kiểm tra lại quyền và chỉ mở file dữ liệu của dự án được phép. Gõ thẳng địa chỉ màn bị cấm thì bị đưa về Tổng quan. Đổi hay gỡ quyền có hiệu lực từ lần mở trang kế tiếp.
+- **Xem thử:** trên máy chạy tool, nút **Xem thử** ở thanh trên cùng cho xem đúng giao diện của người chỉ xem hoặc khách hàng.
 
-Hiện tại: `editors = ["bt.thinh2010@gmail.com"]`, `viewers = ["congdat192@gmail.com"]` (sếp).
+Hiện tại: `editors = ["bt.thinh2010@gmail.com"]` (quản trị), `viewers = ["congdat192@gmail.com"]` (quản lý, xem dự án Mắt Kính Tâm Đức).
+
+**Đăng nhập:** người mở từ máy khác phải đăng nhập bằng **email + mật khẩu**. Mở thẳng trên máy chạy tool thì vào luôn với toàn quyền.
+- Cấp tài khoản: màn **Quản trị → Phân quyền**, thêm email, chọn loại tài khoản; với tài khoản theo dự án thì chọn dự án và quyền (mặc định Khách hàng). Gắn thêm / gỡ / đổi quyền từng dự án ngay trên dòng của người đó. Tool tạo một **mật khẩu tạm** (chỉ hiện một lần), bạn gửi riêng cho người đó. Email đã có (kể cả email trong `config.toml`) thì bấm 🔑 để cấp hoặc đặt lại mật khẩu tạm.
+- Lần đăng nhập đầu, người dùng phải đặt mật khẩu riêng (ít nhất 10 ký tự) mới dùng được tool. Muốn đổi sau này thì vào menu ⋮ cạnh tên ở góc dưới bên trái → Đổi mật khẩu / Đăng xuất.
+- Mật khẩu chỉ lưu dạng băm (scrypt), không ai xem lại được. Sai 5 lần liên tiếp thì khóa 15 phút.
+- Đặt lại mật khẩu hoặc gỡ quyền thì người đó bị đăng xuất khỏi mọi máy ngay ở lần mở trang tiếp theo.
+- Nếu đi qua Cloudflare Access (đã khai `team_domain` + `aud`) hoặc Tailscale, email đã được xác minh ở lớp đó thì vào thẳng, không hỏi mật khẩu.
+
+**Thêm, đổi, gỡ email không cần sửa file:** vào màn **Quản trị → Phân quyền** (chỉ người được sửa hoặc người mở trên máy chạy tool mới vào được). Email trong `config.toml` hiện kèm khóa 🔒, muốn đổi thì sửa trong file. Email thêm trên màn được lưu trong dữ liệu của tool; gỡ quyền chỉ đánh dấu, vẫn giữ lịch sử ai thêm, ai gỡ.
+
+**Người chỉ xem thấy gì:** Tổng quan (không có dải tình trạng dữ liệu, khối "Cần xử lý" và thẻ ngân sách check rank), Báo cáo tuần/tháng, KPI cam kết, Công việc & OKR, các màn SEO và AI để xem. Không thấy nhóm Quản trị. Xuất file chỉ có "Tải về máy".
+
+**Dùng máy này làm máy chủ:** chạy một lần
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\cai-dat-may-chu.ps1
+```
+
+Script tạo task **SEO Report web** (tool chạy nền mỗi khi đăng nhập Windows, tự bật lại nếu tắt), rồi hỏi có tắt chế độ ngủ khi cắm sạc không. Rời máy thì khóa màn hình (Win + L), đừng Sign out. Gỡ: `.\scripts\go-may-chu.ps1`.
 
 Cả hai đường đều cần tool chạy nền trên máy này: xem **Bước 4** ở mục 11b.
 
@@ -326,12 +368,12 @@ Mỗi người xem cài app Tailscale và đăng nhập bằng Gmail của mình
 tailscale serve --bg 8080
 ```
 
-   Lệnh in ra địa chỉ dạng `https://ten-may.ten-mang.ts.net`. Đó là địa chỉ gửi cho sếp.
-4. Mời sếp: trang quản trị → **Users → Invite users** → nhập **congdat192@gmail.com**.
+   Lệnh in ra địa chỉ dạng `https://ten-may.ten-mang.ts.net`. Đó là địa chỉ gửi cho người xem.
+4. Mời người xem: trang quản trị → **Users → Invite users** → nhập **congdat192@gmail.com**.
 
-**Trên máy / điện thoại của sếp:** mở thư mời, cài app Tailscale, đăng nhập Google congdat192@gmail.com, bật app. Rồi mở địa chỉ `https://ten-may.ten-mang.ts.net`. Thanh trên của tool sẽ có chip **Chỉ xem**.
+**Trên máy / điện thoại của người xem:** mở thư mời, cài app Tailscale, đăng nhập Google congdat192@gmail.com, bật app. Rồi mở địa chỉ `https://ten-may.ten-mang.ts.net`. Thanh trên của tool sẽ có chip **Chỉ xem**.
 
-Nếu sếp thấy màn "Không có quyền truy cập · Chưa đăng nhập Tailscale" thì Tailscale chưa gửi email người dùng sang tool. Tool chặn để an toàn; báo lại để kiểm tra.
+Nếu người xem thấy màn "Không có quyền truy cập · Chưa đăng nhập Tailscale" thì Tailscale chưa gửi email người dùng sang tool. Tool chặn để an toàn; báo lại để kiểm tra.
 
 ### 11b. Cloudflare Tunnel + Access (khi có quyền Cloudflare của matkinhtamduc.com)
 
@@ -393,7 +435,7 @@ Bản tĩnh **không** tự cập nhật, **không** đổi tuần/tháng hay ch
 npx vercel deploy dist --prod
 ```
 
-Gửi sếp link, còn mật khẩu gửi riêng qua kênh khác (ví dụ Zalo). Muốn đổi mật khẩu: xuất lại với mật khẩu mới rồi đẩy lại, mật khẩu cũ hết tác dụng ngay. Trang có `noindex` nên Google không lập chỉ mục.
+Gửi người xem link, còn mật khẩu gửi riêng qua kênh khác (ví dụ Zalo). Muốn đổi mật khẩu: xuất lại với mật khẩu mới rồi đẩy lại, mật khẩu cũ hết tác dụng ngay. Trang có `noindex` nên Google không lập chỉ mục.
 
 ## Giới hạn cần biết
 

@@ -24,6 +24,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from . import urls as U
+from .projects import domain
 from .config import RankSettings
 
 API = "https://api.dataforseo.com/v3/serp/google/organic"
@@ -256,8 +257,7 @@ def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
             url_id = None
             if raw_url:
                 url = U.normalize(raw_url)
-                if url.split("//")[-1].split("/")[0].removeprefix("www.") != \
-                        site.split("//")[-1].strip("/").removeprefix("www."):
+                if domain(url) != domain(site):
                     res["bad_url"].append(f"{kw} | {raw_url}")
                     continue
                 url_id = U._match_existing(con, site, url) or U._get_or_create_url(con, site, url)
@@ -412,7 +412,7 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
 
 def parse_rank(task: dict, site: str, target_url: str | None) -> tuple[int | None, str | None, int | None]:
     """(rank tốt nhất của site, URL đang xếp hạng, rank của URL mục tiêu)."""
-    host = site.split("//")[-1].strip("/").removeprefix("www.")
+    host = domain(site)
     items = (task.get("result") or [{}])[0].get("items") or []
     best, best_url, target_rank = None, None, None
     for it in items:

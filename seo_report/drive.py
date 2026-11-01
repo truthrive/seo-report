@@ -11,6 +11,8 @@ import sqlite3
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload
 
+from .projects import domain
+
 FOLDER = "application/vnd.google-apps.folder"
 SHEET = "application/vnd.google-apps.spreadsheet"
 SLIDES = "application/vnd.google-apps.presentation"
@@ -61,7 +63,7 @@ def root_folder(con, svc, site: str) -> str:
     fid = _setting(con, "drive_root")
     if fid and _exists(svc, fid):
         return fid
-    name = f"SEO Report – {site.split('//')[-1].strip('/')}"
+    name = f"SEO Report – {domain(site)}"
     fid = svc.files().create(body={"name": name, "mimeType": FOLDER}, fields="id").execute()["id"]
     return _setting(con, "drive_root", fid)
 

@@ -31,6 +31,9 @@ INFO_PAGES = {
     "chon-kinh-theo-khuon-mat", "quiz", "tin-tuc",
 }
 INFO_PREFIXES = ("chinh-sach-", "dieu-khoan-", "mo-phong-")
+# Trang thông tin thường gặp ở mọi website (dùng cho các dự án khác matkinhtamduc.com)
+GENERIC_INFO = {"lien-he", "gioi-thieu", "tuyen-dung", "cart", "gio-hang", "thanh-toan", "checkout", "contact",
+                "about", "about-us", "privacy-policy", "terms", "my-account", "tai-khoan", "huong-dan-mua-hang"}
 LEGACY_PATH = re.compile(r"^/(\d{4}/\d{2}/|category/|tag/|author/|wp-|feed/)|/page/\d+/?$")
 
 
@@ -59,6 +62,11 @@ def classify_by_rules(url: str) -> tuple[str | None, str]:
         return LEGACY, "Đường dẫn kiểu WordPress cũ"
     parts = [p for p in path.split("/") if p]
     first = parts[0]
+    if not s.netloc.lower().removeprefix("www.").startswith("matkinhtamduc."):
+        # Website khác: chỉ dùng quy tắc chung, còn lại đọc schema (cấu trúc đường dẫn mỗi site một kiểu)
+        if first in GENERIC_INFO or first.startswith(INFO_PREFIXES):
+            return INFO, ""
+        return None, ""
     if first == COLLECTION_ROOT:
         return CATEGORY, ""
     if first in CATEGORY_ROOTS:

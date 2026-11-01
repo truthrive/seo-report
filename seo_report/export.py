@@ -10,6 +10,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from . import indexing as IX
+from .projects import domain
 from . import keywords as K
 from . import rank as R
 from . import urls as U
@@ -224,5 +225,5 @@ def _rank_sheets(wb: Workbook, con, ids: list[int], start: date, end: date) -> N
 
 def data_export_filename(cfg, con, week_index: int) -> str:
     start, end = K.weeks(K.latest_date(con, cfg.site_url), week_index + 1)[week_index]
-    host = cfg.site_url.split("//")[-1].strip("/").split(".")[0]
+    host = domain(cfg.site_url).split(".")[0]
     return f"seo-du-lieu_{host}_{start:%Y-%m-%d}_{end:%Y-%m-%d}.xlsx"

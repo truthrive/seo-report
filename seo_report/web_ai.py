@@ -118,7 +118,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
 
     if not cfg.ga4_property:
         ui.label("AI Search & GEO").classes("text-2xl font-semibold")
-        ui.label("Chưa kết nối GA4: điền ga4_property trong config.toml (xem README mục 8c).").classes("text-negative")
+        ui.label("Chưa kết nối GA4: gắn GA4 property cho dự án ở màn Dự án (Quản trị → Dự án → Sửa).").classes("text-negative")
         return
 
     from urllib.parse import urlencode

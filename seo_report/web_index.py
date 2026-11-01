@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 from . import indexing as IX
+from .projects import domain
 
 
 def _vn(iso: str | None) -> str:
@@ -42,7 +43,7 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
 
     if ed:
         with T.section(ui, "Kiểm tra URL mới", "add_link", "Mỗi dòng một URL. Kiểm tra ngay rồi theo dõi đến khi index"):
-            paste = ui.textarea(placeholder="https://matkinhtamduc.com/bai-moi/\nhttps://matkinhtamduc.com/bai-moi-2/").props(
+            paste = ui.textarea(placeholder=f"https://{domain(cfg.site_url)}/bai-moi/\nhttps://{domain(cfg.site_url)}/bai-moi-2/").props(
                 "outlined autogrow").classes("w-full")
             with ui.row().classes("items-center gap-3"):
                 check_btn = ui.button("Kiểm tra và theo dõi", icon="travel_explore", on_click=lambda: check()).props(

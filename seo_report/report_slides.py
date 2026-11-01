@@ -1,8 +1,8 @@
 """Bộ slide báo cáo tuần / tháng (16:9) từ cùng dữ liệu với màn Báo cáo và file Excel. Tải lên Drive thì Google tự
 chuyển sang Google Slides; PDF xuất từ chính bộ Slides đó.
 
-Slide: bìa · nhận xét (+ kế hoạch tháng sau) · Google Search · AI · rank · URL tăng/giảm · (tháng) loại trang, top URL,
-top query.
+Slide: bìa · kết luận (+ kế hoạch tháng sau, điểm cần chú ý) · KPI cam kết · kết quả SEO · kết quả GEO · thứ hạng từ
+khóa cam kết · công việc · (tháng) phụ lục: thứ hạng từng từ khóa, theo loại trang, top từ khóa, top trang.
 """
 import io
 from datetime import datetime
@@ -15,9 +15,11 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
 from . import ai_format as F
-from .report import BUCKETS, WeeklyReport, change, rank_change, summary
+from .projects import domain
+from .report import WeeklyReport, change, rank_change, rank_summary, summary
 
 GREEN, LIME, INK, MUTED, RED, CREAM = "1E7C31", "B8D332", "2A2A24", "6B6A5E", "C2410C", "F4F3EE"
+AMBER, BLUE = "8F5F14", "2563EB"
 FONT = "Arial"
 W, H = Inches(13.333), Inches(7.5)
 ASSETS = __import__("pathlib").Path(__file__).parent / "assets"
@@ -105,6 +107,24 @@ def _pct_delta(now, prev) -> tuple[str, bool | None]:
     return F.delta_pct(d), (None if not d else d > 0)
 
 
+def _good(ch, prev) -> tuple[str, bool | None]:
+    """Nhãn % thay đổi (kỳ trước quá nhỏ thì ghi số kỳ trước) và tốt/xấu."""
+    return F.delta_pct(ch, prev), (None if not ch else ch > 0)
+
+
+def _vn(iso) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}" if iso else "–"
+
+
+def _kpi_status(ch: dict, running: bool) -> tuple[str, bool | None]:
+    if ch["target"] is None or ch["ok"] is None:
+        return ("không cam kết" if ch["target"] is None else "chưa có số"), None
+    if ch["ok"]:
+        return ("đang đạt" if running else "đạt"), True
+    gap = ch["gap"]
+    return (f"thiếu {gap} từ khóa" if "need" in ch else f"thiếu {F.n(gap)} phiên"), False
+
+
 def _short(url, site):
     return (url or "").replace(site.rstrip("/"), "") or ("/" if url else "")
 
@@ -115,7 +135,7 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
     month = rep.kind == "month"
     unit = "tháng" if month else "tuần"
     (ws, we), (ps, pe) = rep.week, rep.prev_week
-    site = rep.site.split("//")[-1].strip("/")
+    site = domain(rep.site)
     period = f"tháng {ws:%m/%Y}" if month else f"tuần {ws:%d/%m} – {we:%d/%m/%Y}"
     prev_text = f"tháng {ps:%m/%Y}" if month else f"tuần {ps:%d/%m} – {pe:%d/%m}"
 
@@ -132,164 +152,221 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
     accent.fill.fore_color.rgb = _rgb(LIME)
     accent.line.fill.background()
     _text(s, Inches(0.9), Inches(3.0), Inches(11.5), Inches(1.0), f"Báo cáo SEO & GEO {period}", 38, True)
-    _text(s, Inches(0.9), Inches(4.05), Inches(11.5), Inches(0.6), f"{site} · nhóm {rep.group} · so với {prev_text}",
+    _text(s, Inches(0.9), Inches(4.05), Inches(11.5), Inches(0.6), f"{site} · so với {prev_text}",
           18, color=MUTED)
     _text(s, Inches(0.9), Inches(6.45), Inches(11.5), Inches(0.5),
           f"Xuất lúc {datetime.now():%d/%m/%Y %H:%M} bởi {user}", 12, color="E7F3EA")
 
-    # ---- Tổng quan SEO & GEO ----
+    # Thứ tự giống màn Báo cáo: Kết luận → KPI cam kết → SEO → GEO → Thứ hạng → Công việc → (tháng) Phụ lục.
+    x0, gap, cw = Inches(0.6), Inches(4.1), Inches(3.95)
     sm = summary(rep)
-    s = _slide(prs, "Tổng quan SEO & GEO", f"{period} · so với {prev_text}")
-    for col, (title, color, items, notes) in enumerate([
-            ("SEO · Google Search", GREEN, sm["seo"], sm["seo_notes"]),
-            ("GEO · AI Search", "7C3AED", sm["geo"], sm["geo_notes"])]):
-        x = Inches(0.6) + Inches(6.25) * col
-        head = s.shapes.add_shape(5, x, Inches(1.45), Inches(6.0), Inches(0.45))
-        head.fill.solid()
-        head.fill.fore_color.rgb = _rgb(color)
-        head.line.fill.background()
-        head.adjustments[0] = 0.25
-        _text(s, x + Inches(0.15), Inches(1.47), Inches(5.7), Inches(0.4), title, 15, True, "FFFFFF")
-        for i, it in enumerate(items[:4]):
-            _kpi(s, x + Inches(3.05) * (i % 2), Inches(2.05) + Inches(1.45) * (i // 2), it["short"], it["value"],
-                 it["delta"], it["good"], w=Inches(2.95), h=Inches(1.32))
-        for j, note in enumerate(notes):
-            mark = {"up": "▲", "down": "▼", "warn": "⚠"}.get(note["tone"], "•")
-            color = {"up": GREEN, "down": RED, "warn": "B7791F"}.get(note["tone"], MUTED)
-            _text(s, x, Inches(5.05) + Inches(0.42) * j, Inches(6.0), Inches(0.4), f"{mark} {note['long']}", 12,
-                  color=color)
+    notes = sm["seo_notes"][:3]
 
-    # ---- Nhận xét ----
-    if rep.note or (month and rep.plan):
-        s = _slide(prs, "Nhận xét" + (" và kế hoạch" if month else ""), period)
-        _text(s, Inches(0.6), Inches(1.5), Inches(6 if month else 12), Inches(5.5), rep.note or "(Chưa có nhận xét)",
-              16)
-        if month:
-            _text(s, Inches(6.9), Inches(1.5), Inches(5.8), Inches(0.5), "Kế hoạch tháng sau", 16, True, GREEN)
-            _text(s, Inches(6.9), Inches(2.0), Inches(5.8), Inches(5), rep.plan or "(Chưa có kế hoạch)", 15)
+    # ---- Kết luận (chưa viết nhận xét thì thành "Điểm chính": không để chữ "chưa có" trong bản gửi đi) ----
+    plan = rep.plan if month else ""
+    if rep.note or plan or notes:
+        s = _slide(prs, ("Kết luận" if rep.note else "Điểm chính") + (" và kế hoạch tháng sau" if plan else ""),
+                   f"{period} · so với {prev_text}")
+        y = Inches(1.5)
+        if rep.note or plan:
+            if rep.note:
+                _text(s, x0, y, Inches(6.0) if plan else Inches(12.1), Inches(3.3), rep.note, 16)
+            if plan:
+                px = Inches(6.9) if rep.note else x0
+                _text(s, px, y, Inches(5.8), Inches(0.45), "Kế hoạch tháng sau", 15, True, GREEN)
+                _text(s, px, y + Inches(0.45), Inches(5.8), Inches(2.9), plan, 14)
+            y = Inches(5.15)
+        if notes:
+            _text(s, x0, y, Inches(12), Inches(0.4), "Điểm cần chú ý", 14, True)
+            for j, note in enumerate(notes):
+                mark = {"up": "▲", "down": "▼", "warn": "⚠"}.get(note["tone"], "•")
+                color = {"up": GREEN, "down": RED, "warn": AMBER}.get(note["tone"], MUTED)
+                _text(s, x0, y + Inches(0.45) + Inches(0.45) * j, Inches(12), Inches(0.4), f"{mark}  {note['long']}",
+                      14, color=color)
 
-    # ---- Google Search ----
-    s = _slide(prs, "Google Search (GSC)", f"{period} · toàn site theo tổng property; nhóm {rep.group} theo URL")
-    sk, sp, gk, gp = rep.site_kpi, rep.site_prev, rep.group_kpi, rep.group_prev
-    x0, y0, gap = Inches(0.6), Inches(1.55), Inches(3.08)
-    _kpi(s, x0, y0, "Click toàn site", F.n(sk.clicks), *_pct_delta(sk.clicks, sp.clicks))
-    _kpi(s, x0 + gap, y0, "Impression toàn site", F.n(sk.impressions), *_pct_delta(sk.impressions, sp.impressions))
-    d = (sk.ctr - sp.ctr) if sk.ctr is not None and sp.ctr is not None else None
-    _kpi(s, x0 + gap * 2, y0, "CTR toàn site", F.pct(sk.ctr, 1), F.delta_points(d), None if not d else d > 0)
-    _kpi(s, x0 + gap * 3, y0, f"Click nhóm {rep.group}", F.n(gk.clicks), *_pct_delta(gk.clicks, gp.clicks))
+    # ---- KPI cam kết (khi dự án đã bắt đầu) ----
+    k = rep.kpi
+    if k and k.get("state") not in ("before", "no_start", None) and any(m["status"] != "future" for m in k["months"]):
+        m = next((x for x in k["months"] if x["status"] == "running"),
+                 [x for x in k["months"] if x["status"] == "closed"][-1])
+        running = m["status"] == "running"
+        s = _slide(prs, f"KPI cam kết · Tháng {m['n']}/{len(k['months'])}",
+                   f"{_vn(m['from'])} – {_vn(m['to'])} · {m['rank']['total']} từ khóa cam kết · "
+                   + ("đang chạy, số còn thay đổi" if running else "đã chốt"))
+        for i, key in enumerate(("top3", "top5", "top10", "sessions")):
+            ch = m["checks"][key]
+            if key == "sessions":
+                label, value = "Phiên Organic (GA4)", F.n(ch["actual"]) if ch["actual"] is not None else "chưa có"
+                target = F.n(ch["target"]) if ch["target"] is not None else "không cam kết"
+            else:
+                label = f"Từ khóa top {key[3:]}"
+                value = f"{(ch['actual'] or 0) * 100:.0f}%" if ch["actual"] is not None else "–"
+                target = f"{ch['target'] * 100:.0f}%" if ch["target"] is not None else "không cam kết"
+            status, good = _kpi_status(ch, running)
+            _kpi(s, x0 + Inches(3.08) * i, Inches(1.5), label, value, f"Cam kết {target} · {status}", good,
+                 w=Inches(2.95), h=Inches(1.5))
+        heads = ["Chỉ số"] + [f"T{x['n']}" for x in k["months"]]
+        rows, colors = [], []
+        for key, lab in (("top3", "Top 3"), ("top5", "Top 5"), ("top10", "Top 10"), ("sessions", "Phiên Organic")):
+            tgt, act, col = [f"{lab} · cam kết"], ["Thực tế"], [None]
+            for x in k["months"]:
+                t = x.get(key)
+                tgt.append("–" if t is None else (F.n(t) if key == "sessions" else f"{t * 100:.0f}%"))
+                ch = (x.get("checks") or {}).get(key)
+                if not ch or x["status"] == "future":
+                    act.append("")
+                    col.append(None)
+                    continue
+                act.append(F.n(ch["actual"]) if key == "sessions" and ch["actual"] is not None else
+                           (f"{ch['actual'] * 100:.0f}%" if key != "sessions" and ch["actual"] is not None else "–"))
+                col.append(None if ch["ok"] is None else (GREEN if ch["ok"] else (AMBER if x["status"] == "running"
+                                                                                  else RED)))
+            rows += [tgt, act]
+            colors += [[None] * len(tgt), col]
+        _table(s, x0, Inches(3.3), Inches(12.1), heads, rows, [2.6] + [1.0] * len(k["months"]), 10, colors)
+
+    # ---- Kết quả SEO ----
+    s = _slide(prs, "Kết quả SEO", f"Traffic từ Google Search · {period} · so với {prev_text}")
+    o = rep.organic if rep.organic and not rep.organic.get("error") else None
+    sk, sp = rep.site_kpi, rep.site_prev
+    if o:
+        _kpi(s, x0, Inches(1.5), "Phiên Organic Search (GA4)", F.n(o["sessions"]), *_good(o["change"], o["prev"]),
+             w=cw)
+    else:
+        _kpi(s, x0, Inches(1.5), "Phiên Organic Search (GA4)", "chưa có", "Chưa kết nối GA4", None, w=cw)
+    _kpi(s, x0 + gap, Inches(1.5), "Click (GSC)", F.n(sk.clicks), *_pct_delta(sk.clicks, sp.clicks), w=cw)
+    _kpi(s, x0 + gap * 2, Inches(1.5), "Impression (GSC)", F.n(sk.impressions),
+         *_pct_delta(sk.impressions, sp.impressions), w=cw)
     data = CategoryChartData()
     data.categories = [t["week"] for t in rep.trend]
-    data.add_series("Click toàn site", [t["site_clicks"] for t in rep.trend])
-    data.add_series(f"Click nhóm {rep.group}", [t["group_clicks"] for t in rep.trend])
-    chart = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.6), Inches(3.25), Inches(12.1), Inches(3.9),
-                               data).chart
+    if o:
+        data.add_series("Phiên Organic (GA4)", o["spark"])
+    data.add_series("Click (GSC)", [t["site_clicks"] for t in rep.trend])
+    chart = s.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, x0, Inches(3.2), Inches(12.1), Inches(3.55), data).chart
     chart.has_legend, chart.legend.position, chart.legend.include_in_layout = True, XL_LEGEND_POSITION.BOTTOM, False
-    for series, color in zip(chart.series, [GREEN, LIME]):
-        series.format.fill.solid()
-        series.format.fill.fore_color.rgb = _rgb(color)
+    for series, color in zip(chart.series, ([GREEN, BLUE] if o else [BLUE])):
+        series.format.line.color.rgb = _rgb(color)
+        series.format.line.width = Pt(2.25)
+        series.smooth = True
+        series.marker.format.fill.solid()
+        series.marker.format.fill.fore_color.rgb = _rgb(color)
     chart.font.size, chart.font.name = Pt(11), FONT
+    _text(s, x0, Inches(6.8), Inches(12.1), Inches(0.35), "Click đếm lượt bấm từ Google (GSC); phiên đếm lượt vào site "
+          "(GA4). Hai nguồn đo khác nhau nên số không bằng nhau.", 10, color=MUTED)
 
-    # ---- AI ----
+    # ---- Kết quả GEO ----
+    s = _slide(prs, "Kết quả GEO", "Hiện diện trên AI Search · hai nguồn đo riêng, không cộng với nhau")
     ai, aio = rep.ai, rep.aio
-    if (ai and not ai.get("error")) or aio:
-        s = _slide(prs, "AI Search & GEO", "Hai nguồn tách riêng, không cộng với nhau")
-        if ai and not ai.get("error"):
-            k, dl, pv = ai["kpi"], ai["deltas"], ai["prev"]
-            _text(s, Inches(0.6), Inches(1.45), Inches(8), Inches(0.4), "Traffic từ AI assistant (GA4: ChatGPT, "
-                  "Gemini…)", 14, True, GREEN)
-            _kpi(s, Inches(0.6), Inches(1.95), "Phiên AI", F.n(k["sessions"]),
-                 F.delta_pct(dl.get("sessions"), pv.get("sessions")), None if not dl.get("sessions") else
-                 dl["sessions"] > 0)
-            _kpi(s, Inches(0.6) + gap, Inches(1.95), "Engagement rate", F.pct(k["engagementRate"], 1),
-                 F.delta_points(dl.get("engagementRate")))
-            _kpi(s, Inches(0.6) + gap * 2, Inches(1.95), "Key events", F.n(k["keyEvents"]),
-                 F.delta_pct(dl.get("keyEvents"), pv.get("keyEvents")))
-            _kpi(s, Inches(0.6) + gap * 3, Inches(1.95), "Tỷ lệ trên tổng phiên", F.pct(ai["share"]["ofAllSessions"]))
-            if ai["sources"]:
-                _text(s, Inches(0.6), Inches(3.5), Inches(12), Inches(0.4), "Theo nguồn: " + " · ".join(
-                    f"{F.SOURCE_NAMES.get(x['source'], x['source'])} {x['sessions']}" for x in ai["sources"]), 12,
-                      color=MUTED)
-        if aio:
-            y = Inches(4.2)
-            _text(s, Inches(0.6), y, Inches(8), Inches(0.4), "Hiển thị trong AI Overviews / AI Mode (GSC, nhập file)",
-                  14, True, GREEN)
-            if aio["impressions"] is None:
-                _text(s, Inches(0.6), y + Inches(0.5), Inches(12), Inches(0.4),
-                      f"Chưa có số cho {unit} này: file đã nhập có dữ liệu tới {aio['data_until']}.", 13, color=RED)
-            else:
-                _kpi(s, Inches(0.6), y + Inches(0.5), "Impression", F.n(aio["impressions"]),
-                     F.delta_pct(aio["change"], aio["prev"]), None if not aio["change"] else aio["change"] > 0)
-                _kpi(s, Inches(0.6) + gap, y + Inches(0.5), "Trên impression GSC Web", F.pct(aio["share"], 1))
-                _text(s, Inches(0.6) + gap * 2, y + Inches(0.7), Inches(6), Inches(1.2),
-                      "Chỉ có impression: GSC không cung cấp click riêng cho AI Overviews.", 12, color=MUTED)
-
-    # ---- Rank ----
-    s = _slide(prs, f"Rank thực tế · {len(rep.ranks)} keyword", "DataForSEO, Google mobile, Việt Nam")
-    if rep.ranks:
-        buckets = " · ".join(f"{b}: {rep.rank_buckets[b][0]}" for b in BUCKETS if any(rep.rank_buckets[b]))
-        _text(s, Inches(0.6), Inches(1.4), Inches(12), Inches(0.4), buckets, 13, True)
-        rows, colors = [], []
-        for r in rep.ranks[:12]:
-            text, color, _ = rank_change(r["date"], r["rank"], r["depth"], r["prev"], r["prev_depth"])
-            wrong = bool(r["target_url"] and r["ranking_url"] and r["ranking_url"] != r["target_url"])
-            rows.append([r["keyword"], r["rank"] if r["rank"] is not None else f">{r['depth']}", text,
-                         _short(r["ranking_url"], rep.site) + ("  ⚠ khác URL mục tiêu" if wrong else "")])
-            colors.append([None, None, color.lstrip("#"), RED if wrong else None])
-        _table(s, Inches(0.6), Inches(1.95), Inches(12.1), ["Keyword", "Vị trí", "Thay đổi", "URL đang xếp hạng"],
-               rows, [3.2, 1, 1.6, 6.3], 11, colors)
+    if ai and not ai.get("error"):
+        kk, dl, pv = ai["kpi"], ai["deltas"], ai["prev"]
+        top = ai["sources"][0] if ai["sources"] else None
+        total = sum(x["sessions"] for x in ai["sources"]) or 1
+        _kpi(s, x0, Inches(1.5), "Phiên từ AI assistant (GA4)", F.n(kk["sessions"]),
+             *_good(dl.get("sessions"), pv.get("sessions")), w=cw)
+        if top:
+            _text(s, x0, Inches(3.05), cw, Inches(0.4), f"Nhiều nhất: {F.SOURCE_NAMES.get(top['source'], top['source'])}"
+                  f" {top['sessions'] / total * 100:.0f}%", 12, color=MUTED)
     else:
-        _text(s, Inches(0.6), Inches(1.6), Inches(12), Inches(0.5), "Chưa có lần check rank nào trong khoảng này.", 14)
+        _kpi(s, x0, Inches(1.5), "Phiên từ AI assistant (GA4)", "chưa có", "Chưa kết nối GA4", None, w=cw)
+    if aio and aio["impressions"] is not None:
+        _kpi(s, x0 + gap, Inches(1.5), "Hiển thị trong AI Overviews", F.n(aio["impressions"]),
+             *_good(aio["change"], aio["prev"]), w=cw)
+        dp = (aio["share"] - aio["prev_share"]) if aio["share"] is not None and aio.get("prev_share") is not None else None
+        _kpi(s, x0 + gap * 2, Inches(1.5), "Tỷ lệ trên hiển thị Google", F.pct(aio["share"], 1), F.delta_points(dp),
+             None if not dp else dp > 0, w=cw)
+    else:
+        why = "Chưa nhập file từ GSC" if not aio else f"File GSC mới có số tới {_vn(str(aio['data_until']))}"
+        _kpi(s, x0 + gap, Inches(1.5), "Hiển thị trong AI Overviews", "chưa có", why, None, w=cw)
+    spark = (aio or {}).get("spark") or []
+    labels = [t["week"] for t in rep.trend][-len(spark):] if spark else []
+    first = next((i for i, v in enumerate(spark) if v is not None), None)
+    if first is not None:
+        data = CategoryChartData()
+        data.categories = labels[first:]
+        data.add_series("Hiển thị trong AI Overviews", spark[first:])
+        chart = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, x0, Inches(3.55), Inches(12.1), Inches(2.85),
+                                   data).chart
+        chart.has_legend, chart.legend.position, chart.legend.include_in_layout = True, XL_LEGEND_POSITION.BOTTOM, False
+        ser = chart.series[0]
+        ser.format.fill.solid()
+        ser.format.fill.fore_color.rgb = _rgb("C9A46A")
+        chart.font.size, chart.font.name = Pt(11), FONT
+    _text(s, x0, Inches(6.5), Inches(12.1), Inches(0.7),
+          "Phiên AI: người bấm từ ChatGPT, Gemini, Perplexity… vào site (GA4). AI Overviews: số lần trang hiện trong câu "
+          "trả lời AI của Google (GSC, chỉ có lượt hiển thị, không có click).", 10, color=MUTED)
 
-    # ---- URL tăng / giảm ----
-    s = _slide(prs, f"URL tăng / giảm click · nhóm {rep.group}", f"So với {prev_text} · URL có từ 20 click")
-    for i, (title, items, color) in enumerate([("Tăng click", rep.winners, GREEN), ("Giảm click", rep.losers, RED)]):
-        x = Inches(0.6) + Inches(6.2) * i
-        _text(s, x, Inches(1.4), Inches(5.8), Inches(0.4), title, 15, True, color)
-        if items:
-            _table(s, x, Inches(1.9), Inches(5.9), ["URL", f"{unit.capitalize()} này", "Trước", "Chênh"],
-                   [[_short(x_["url"], rep.site), F.n(x_["clicks"]), F.n(x_["prev"]), f"{x_['diff']:+,}".replace(
-                       ",", ".")] for x_ in items], [5, 1.3, 1.1, 1.1], 10,
-                   [[None, None, None, color] for _ in items])
+    # ---- Thứ hạng ----
+    rs = rank_summary(rep, rep.committed)
+    if rs["total"]:
+        s = _slide(prs, "Thứ hạng từ khóa cam kết" if rs["committed"] else "Thứ hạng từ khóa theo dõi",
+                   f"{rs['total']} từ khóa · DataForSEO, Google mobile, Việt Nam · lần check mới nhất so với lần trước")
+        for i, n in enumerate((3, 5, 10)):
+            diff = rs["now"][n] - rs["prev"][n] if rs["has_prev"] else None
+            _kpi(s, x0 + gap * i, Inches(1.5), f"Top {n}", f"{rs['now'][n]}/{rs['total']}",
+                 (f"{diff:+d} từ khóa" if diff else "không đổi") if diff is not None else "lần check đầu",
+                 None if not diff else diff > 0, w=cw)
+        if not rs["has_prev"]:  # chưa có lần trước để so: hiện vị trí từng từ khóa
+            shown = [r for r in rep.ranks if not rep.committed or r["keyword"].lower() in rep.committed][:9]
+            def wrong(r):
+                return bool(r["target_url"] and r["ranking_url"] and r["ranking_url"] != r["target_url"])
+            _table(s, x0, Inches(3.3), Inches(12.1), ["Từ khóa", "Vị trí", "Trang đang xếp hạng"],
+                   [[r["keyword"], r["rank"] if r["rank"] is not None else f">{r['depth']}",
+                     (_short(r["ranking_url"], rep.site) or "–") + ("   ⚠ khác trang mục tiêu" if wrong(r) else "")]
+                    for r in shown], [4.2, 1.2, 6.7], 12, [[None, None, AMBER if wrong(r) else None] for r in shown])
+            more = rs["total"] - len(shown)
+            _text(s, x0, Inches(6.75), Inches(12), Inches(0.4), "Lần check đầu tiên của bộ từ khóa: từ lần sau sẽ có "
+                  "từ khóa tăng / giảm mạnh nhất." + (f" Còn {more} từ khóa: xem phụ lục trong file Excel." if more > 0 else ""),
+                  11, color=MUTED)
+        else:
+            for i, (title, items, color) in enumerate((("Tăng mạnh nhất", rs["up"], GREEN),
+                                                        ("Giảm mạnh nhất", rs["down"], RED))):
+                x = x0 + Inches(6.2) * i
+                _text(s, x, Inches(3.3), Inches(5.8), Inches(0.4), title, 15, True, color)
+                lines = [f"{mm['keyword']}:  {mm['from'] if mm['from'] is not None else '>' + str(mm['prev_depth'])}"
+                         f" → {mm['to'] if mm['to'] is not None else '>' + str(mm['depth'])}" for mm in items]
+                _text(s, x, Inches(3.8), Inches(5.8), Inches(2.5), "\n".join(lines) or "Không có.", 13)
 
-    # ---- Tiến độ công việc (OKR) ----
+    # ---- Công việc ----
     if rep.okr:
         from . import okr as O
-        k = rep.okr
-        p, cnt = k["period"], k["counts"]
-        s = _slide(prs, "Tiến độ công việc", "OKR 3 tháng, đọc từ Google Sheet của team")
-        pct = f"{cnt[O.DONE] / k['total'] * 100:.0f}%" if k["total"] else "–"
-        _kpi(s, Inches(0.6), Inches(1.4), "Hoàn thành OKR", pct, f"{cnt[O.DONE]}/{k['total']} hạng mục")
-        _kpi(s, Inches(0.6) + gap, Inches(1.4), f"Xong trong {unit}", str(len(p["done"])),
-             f"{len(p['due'])} đến hạn")
-        _kpi(s, Inches(0.6) + gap * 2, Inches(1.4), "Đang làm", str(cnt[O.DOING]))
-        _kpi(s, Inches(0.6) + gap * 3, Inches(1.4), "Trễ hạn", str(len(k["late"])), "tính đến hôm nay",
-             False if k["late"] else None)
+        kk = rep.okr
+        p, cnt = kk["period"], kk["counts"]
+        pct = cnt[O.DONE] / kk["total"] * 100 if kk["total"] else 0
+        s = _slide(prs, "Công việc", f"OKR · hiện có {pct:.0f}% hạng mục đã hoàn thành"
+                   + (f" · {len(kk['late'])} trễ hạn" if kk["late"] else ""))
+        for i, (title, its, color) in enumerate(((f"Hoàn thành trong {unit}", p["done"], GREEN),
+                                                 (f"Kế hoạch {unit} sau", p["next"], INK))):
+            x = x0 + Inches(6.2) * i
+            _text(s, x, Inches(1.5), Inches(5.8), Inches(0.4), f"{title} · {len(its)}", 15, True, color)
+            lines = [f"{it['code']}   {it['title']}" for it in its[:10]]
+            if len(its) > 10:
+                lines.append(f"và {len(its) - 10} hạng mục khác")
+            _text(s, x, Inches(2.0), Inches(5.8), Inches(4.8), "\n".join(lines) or "Không có.", 13)
 
-        def vn(iso):
-            return f"{iso[8:10]}/{iso[5:7]}" if iso else ""
-
-        cols = [(f"Hoàn thành trong {unit}", p["done"], GREEN), ("Trễ hạn", k["late"], RED),
-                (f"Kế hoạch {unit} sau", p["next"], INK)]
-        for n, (title, its, color) in enumerate(cols):
-            x = Inches(0.6) + Inches(4.1) * n
-            _text(s, x, Inches(3.15), Inches(3.9), Inches(0.4), f"{title} · {len(its)}", 14, True, color)
-            lines = [f"{i['code']}  {i['title']}" + (f" (hạn {vn(i['end'])})" if i["end"] else "") for i in its[:8]]
-            if len(its) > 8:
-                lines.append(f"và {len(its) - 8} hạng mục khác")
-            _text(s, x, Inches(3.6), Inches(3.9), Inches(3.4), "\n".join(lines) or "Không có.", 11)
-
-    # ---- Tháng: loại trang, top URL, top query ----
+    # ---- Phụ lục (báo cáo tháng) ----
     if month:
-        s = _slide(prs, "Theo loại trang và top của tháng", "Cộng theo URL nên tổng khác tổng toàn site")
-        _table(s, Inches(0.6), Inches(1.45), Inches(5.6), ["Loại trang", "Click", "Thay đổi"],
-               [[r["type"], F.n(r["clicks"]), F.delta_pct(r["change"])] for r in rep.by_type[:10]], [3, 1.2, 1.2],
+        if rep.ranks:
+            s = _slide(prs, "Phụ lục · Thứ hạng từng từ khóa", "DataForSEO, Google mobile, Việt Nam")
+            rows, colors = [], []
+            for r in rep.ranks[:14]:
+                text, color, _ = rank_change(r["date"], r["rank"], r["depth"], r["prev"], r["prev_depth"])
+                rows.append([r["keyword"], r["rank"] if r["rank"] is not None else f">{r['depth']}", text,
+                             _short(r["ranking_url"], rep.site)])
+                colors.append([None, None, color.lstrip("#"), None])
+            _table(s, x0, Inches(1.45), Inches(12.1), ["Từ khóa", "Vị trí", "Thay đổi", "Trang đang xếp hạng"],
+                   rows, [3.4, 1, 1.6, 6.1], 11, colors)
+        by_type = [r for r in rep.by_type if r["clicks"]][:10]
+        s = _slide(prs, "Phụ lục · Theo loại trang và top từ khóa", "Click trong tháng · cộng theo trang nên tổng khác "
+                                                                    "tổng toàn site")
+        _table(s, x0, Inches(1.45), Inches(5.6), ["Loại trang", "Click", "Thay đổi"],
+               [[r["type"], F.n(r["clicks"]), F.delta_pct(r["change"])] for r in by_type], [3, 1.2, 1.2],
                10, [[None, None, (GREEN if (r["change"] or 0) > 0 else RED) if r["change"] else None]
-                    for r in rep.by_type[:10]])
-        _table(s, Inches(6.6), Inches(1.45), Inches(6.1), ["Top query", "Click", "Thay đổi"],
+                    for r in by_type])
+        _table(s, Inches(6.6), Inches(1.45), Inches(6.1), ["Từ khóa (GSC)", "Click", "Thay đổi"],
                [[r["query"], F.n(r["clicks"]), F.delta_pct(r["change"])] for r in rep.top_queries[:10]],
                [3.6, 1.1, 1.2], 10)
-        s = _slide(prs, "Top 10 URL của tháng", "Toàn site, theo click")
-        _table(s, Inches(0.6), Inches(1.45), Inches(12.1), ["URL", "Loại", "Click", "Thay đổi"],
+        s = _slide(prs, "Phụ lục · Top 10 trang của tháng", "Toàn site, theo click")
+        _table(s, x0, Inches(1.45), Inches(12.1), ["Trang", "Loại", "Click", "Thay đổi"],
                [[_short(r["url"], rep.site), r["type"], F.n(r["clicks"]), F.delta_pct(r["change"])]
                 for r in rep.top_urls], [7, 2, 1.2, 1.3], 11)
 
@@ -299,7 +376,7 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
 
 
 def slides_filename(rep: WeeklyReport) -> str:
-    host = rep.site.split("//")[-1].strip("/").split(".")[0]
+    host = domain(rep.site).split(".")[0]
     if rep.kind == "month":
         return f"bao-cao-seo-thang_{host}_{rep.week[0]:%Y-%m}"
     return f"bao-cao-seo_{host}_{rep.week[0]:%Y-%m-%d}_{rep.week[1]:%Y-%m-%d}"

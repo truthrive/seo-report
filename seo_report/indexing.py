@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from googleapiclient.errors import HttpError
 
 from . import urls as U
+from .projects import domain
 
 NEW_URL_MILESTONES = (3, 7, 14)
 OLD = "2000-01-01"  # first_seen của URL đã có trong sitemap ngay lần đọc đầu tiên: không coi là URL mới
@@ -231,13 +232,13 @@ def add_watch(con: sqlite3.Connection, site: str, text: str, user: str) -> tuple
     """Thêm các link dán vào danh sách theo dõi. Trả về ([(url_id, url)], [dòng không phải link])."""
     ensure_tables(con)
     picked, invalid, seen = [], [], set()
-    host = site.split("//")[-1].strip("/").removeprefix("www.")
+    host = domain(site)
     with con:
         for raw in re.split(r"\s+", text.strip()):
             if not raw:
                 continue
             url = U.normalize(raw)
-            if url.split("//")[-1].split("/")[0].removeprefix("www.") != host:
+            if domain(url) != host:
                 invalid.append(raw)  # URL Inspection chỉ kiểm tra được URL thuộc property này
                 continue
             url_id = U._match_existing(con, site, url) or U._get_or_create_url(con, site, url)

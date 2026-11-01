@@ -21,6 +21,8 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
+from .projects import domain
+
 KPI_TAB, KW_TAB = "KPI cam kết", "Từ khóa cam kết"
 RANK_ROWS = (("top3", 3), ("top5", 5), ("top10", 10))
 SCHEMA = """
@@ -28,7 +30,8 @@ CREATE TABLE IF NOT EXISTS kpi_versions (
     id INTEGER PRIMARY KEY,
     day TEXT NOT NULL,          -- ngày tool thấy phiên bản này (có hiệu lực từ ngày này)
     synced_at TEXT NOT NULL,
-    data TEXT NOT NULL          -- JSON: project, start, months, keywords
+    data TEXT NOT NULL,         -- JSON: project, start, months, keywords
+    sheet TEXT                  -- sheet đọc ra phiên bản này: chỉ dùng phiên bản của sheet đang chọn
 );
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
@@ -36,6 +39,9 @@ CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NU
 
 def ensure_tables(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
+    if "sheet" not in [r[1] for r in con.execute("PRAGMA table_info(kpi_versions)")]:
+        with con:
+            con.execute("ALTER TABLE kpi_versions ADD COLUMN sheet TEXT")
 
 
 def _setting(con, key: str, value: str | None = None) -> str | None:
@@ -148,18 +154,40 @@ def parse_kpi(rows: list[list], today: date) -> dict:
     return out
 
 
+def _top(v) -> int | None:
+    """'Top 3' / 3 / 'top10' → 3 / 10; trống hoặc lạ → None."""
+    m = re.search(r"\d+", str(v)) if v not in (None, "") else None
+    return int(m.group(0)) if m and 0 < int(m.group(0)) <= 100 else None
+
+
 def parse_keywords(rows: list[list]) -> list[dict]:
+    """Đọc theo tên cột ở dòng tiêu đề (Từ khóa, URL mục tiêu, Top target), nên thêm hay đổi thứ tự cột vẫn đúng."""
+    col = {"kw": 0, "url": 1, "target": None}
+    start = 0
+    for i, r in enumerate(rows[:5]):
+        names = [str(c).strip().lower() for c in r]
+        if any(n in ("từ khóa", "từ khoá", "keyword") for n in names):
+            for j, n in enumerate(names):
+                if n in ("từ khóa", "từ khoá", "keyword"):
+                    col["kw"] = j
+                elif "url" in n:
+                    col["url"] = j
+                elif "top" in n or "mục tiêu" in n:
+                    col["target"] = j
+            start = i + 1
+            break
+
+    def cell(r, j):
+        return r[j] if j is not None and j < len(r) and r[j] not in (None, "") else None
+
     out, seen = [], set()
-    for r in rows:
-        kw = str(r[0]).strip() if r and r[0] is not None else ""
-        if not kw or kw.lower() in ("từ khóa", "từ khoá", "keyword") or kw.startswith("#"):
+    for r in rows[start:]:
+        kw = str(cell(r, col["kw"]) or "").strip()
+        if not kw or kw.startswith("#") or kw.lower() in seen:
             continue
-        key = kw.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        url = str(r[1]).strip() if len(r) > 1 and r[1] not in (None, "") else ""
-        out.append({"keyword": kw, "url": url})
+        seen.add(kw.lower())
+        out.append({"keyword": kw, "url": str(cell(r, col["url"]) or "").strip(),
+                    "target": _top(cell(r, col["target"]))})
     return out
 
 
@@ -171,11 +199,17 @@ def fetch(cfg, sid: str) -> dict[str, list[list]]:
                 cache_discovery=False)
     titles = [s["properties"]["title"] for s in
               svc.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(title))").execute()["sheets"]]
+    def norm(t: str) -> str:  # tab chép từ sheet mẫu sang được Google đặt tên "Bản sao của …" / "Copy of …"
+        t = t.strip().lower()
+        for p in ("bản sao của ", "copy of "):
+            t = t.removeprefix(p)
+        return t
+
     out = {}
     for want in (KPI_TAB, KW_TAB):
-        title = next((t for t in titles if t.strip().lower() == want.lower()), None)
+        title = next((t for t in titles if norm(t) == want.lower()), None)
         if title:
-            rng = "'" + title.replace("'", "''") + "'!A1:Z1000"
+            rng = "'" + title.replace("'", "''") + "'!A1:AZ1000"
             out[want] = svc.spreadsheets().values().get(
                 spreadsheetId=sid, range=rng, valueRenderOption="UNFORMATTED_VALUE",
                 dateTimeRenderOption="SERIAL_NUMBER").execute().get("values", [])
@@ -189,13 +223,14 @@ def fetch(cfg, sid: str) -> dict[str, list[list]]:
 def save(con, data: dict, today: date) -> bool:
     """Lưu nếu khác phiên bản mới nhất. Trả về True khi có phiên bản mới."""
     ensure_tables(con)
-    last = con.execute("SELECT data FROM kpi_versions ORDER BY id DESC LIMIT 1").fetchone()
+    sid = sheet_id(con) or None
+    last = con.execute("SELECT data FROM kpi_versions WHERE sheet IS ? ORDER BY id DESC LIMIT 1", (sid,)).fetchone()
     body = json.dumps(data, ensure_ascii=False, sort_keys=True)
     if last and last[0] == body:
         return False
     with con:
-        con.execute("INSERT INTO kpi_versions (day, synced_at, data) VALUES (?, ?, ?)",
-                    (today.isoformat(), datetime.now(timezone.utc).isoformat(timespec="seconds"), body))
+        con.execute("INSERT INTO kpi_versions (day, synced_at, data, sheet) VALUES (?, ?, ?, ?)",
+                    (today.isoformat(), datetime.now(timezone.utc).isoformat(timespec="seconds"), body, sid))
     return True
 
 
@@ -222,9 +257,10 @@ def sync(con, cfg, user: str = "tool", today: date | None = None) -> dict:
 
 
 def versions(con) -> list[dict]:
+    """Các phiên bản KPI của sheet đang chọn (đổi sang sheet khác thì phiên bản cũ vẫn giữ nhưng không dùng)."""
     ensure_tables(con)
     return [{"id": i, "day": d, "data": json.loads(x)} for i, d, x in
-            con.execute("SELECT id, day, data FROM kpi_versions ORDER BY id")]
+            con.execute("SELECT id, day, data FROM kpi_versions WHERE sheet IS ? ORDER BY id", (sheet_id(con) or None,))]
 
 
 def version_at(vs: list[dict], day: date) -> dict | None:
@@ -243,12 +279,13 @@ def _rank_stats(con, site: str, kws: list[dict], s: date, e: date) -> dict:
     from . import rank as R
     R.ensure_tables(con)
     ids = {k.lower(): i for i, k in con.execute("SELECT id, keyword FROM rank_keywords WHERE site = ?", (site,))}
-    out = {"total": len(kws), "checked": 0, "top3": 0, "top5": 0, "top10": 0, "missing": []}
+    out = {"total": len(kws), "checked": 0, "top3": 0, "top5": 0, "top10": 0, "missing": [], "items": [],
+           "target_set": 0, "target_ok": 0}
     for k in kws:
         kid = ids.get(k["keyword"].lower())
-        row = con.execute("SELECT check_date, rank FROM rank_checks WHERE keyword_id = ? AND check_date BETWEEN ? AND ?"
-                          " ORDER BY check_date DESC LIMIT 1", (kid, s.isoformat(), e.isoformat())).fetchone() \
-            if kid else None
+        row = con.execute("SELECT check_date, rank, depth FROM rank_checks WHERE keyword_id = ? AND check_date "
+                          "BETWEEN ? AND ? ORDER BY check_date DESC LIMIT 1",
+                          (kid, s.isoformat(), e.isoformat())).fetchone() if kid else None
         rank = row[1] if row else None
         if row:
             out["checked"] += 1
@@ -257,6 +294,12 @@ def _rank_stats(con, site: str, kws: list[dict], s: date, e: date) -> dict:
                 out[key] += 1
         if rank is None or rank > 10:
             out["missing"].append({"keyword": k["keyword"], "rank": rank, "checked": bool(row)})
+        target = k.get("target")  # top target riêng của từ khóa (cột "Top target" trong sheet)
+        ok = None if target is None else (rank is not None and rank <= target)
+        out["target_set"] += target is not None
+        out["target_ok"] += bool(ok)
+        out["items"].append({"keyword": k["keyword"], "url": k.get("url", ""), "target": target, "rank": rank,
+                             "depth": row[2] if row else None, "date": row[0] if row else None, "ok": ok})
     return out
 
 
@@ -297,6 +340,8 @@ def progress(con, site: str, today: date, organic_sessions=None) -> dict | None:
     first = date.fromisoformat(out["months"][0]["from"]) if out["months"] else start
     last = date.fromisoformat(out["months"][-1]["to"]) if out["months"] else start
     out["state"] = "before" if today < first else ("after" if today > last else "running")
+    if out["state"] == "before":  # mốc trước dự án: vị trí mới nhất của từng từ khóa cam kết
+        out["baseline"] = {"n": 0, "rank": _rank_stats(con, site, cur.get("keywords", []), date(2000, 1, 1), today)}
     return out
 
 
@@ -403,13 +448,14 @@ def template_xlsx(project: str, keywords: list[tuple[str, str]]) -> bytes:
     ws.row_dimensions[h + 1].height = 34
 
     kw = wb.create_sheet(KW_TAB)
-    for j, t in enumerate(["Từ khóa", "URL mục tiêu", "Ghi chú"], start=1):
+    for j, t in enumerate(["Từ khóa", "URL mục tiêu", "Top target", "Ghi chú"], start=1):
         c = kw.cell(1, j, t)
         c.fill, c.font, c.border = navy, white, box
     for i, (k, u) in enumerate(keywords, start=2):
         kw.cell(i, 1, k)
         kw.cell(i, 2, u)
-    kw.column_dimensions["A"].width, kw.column_dimensions["B"].width, kw.column_dimensions["C"].width = 38, 60, 30
+    for col, w in zip("ABCD", (38, 60, 14, 30)):
+        kw.column_dimensions[col].width = w
     kw.freeze_panes = "A2"
     buf = io.BytesIO()
     wb.save(buf)
@@ -421,7 +467,7 @@ def create_template(con, cfg) -> dict:
     from . import drive as D, keywords as K, rank as R
     svc = D.build_service(cfg)
     folder, _ = D.target_folder(con, svc, cfg.site_url)
-    host = cfg.site_url.split("//")[-1].strip("/")
+    host = domain(cfg.site_url)
     kws = [(k["keyword"], k["target_url"] or "") for k in R.keywords(con, cfg.site_url, K.latest_date(con, cfg.site_url))]
     f = D.upload(svc, template_xlsx(f"SEO {host}", kws), f"KPI cam kết SEO – {host}", D.XLSX, folder, D.SHEET)
     set_sheet(con, f["id"])

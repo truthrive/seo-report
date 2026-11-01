@@ -4,6 +4,7 @@ from datetime import date
 
 from . import keywords as K
 from . import rank as R
+from .projects import domain
 
 
 def _vn(iso: str | None) -> str:
@@ -124,8 +125,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
         ui.label("Thêm keyword").classes("text-lg font-semibold")
         ui.label("Mỗi dòng một keyword. Muốn gán URL mục tiêu thì thêm URL sau dấu | (hoặc dán 2 cột từ Excel).").classes(
             "text-sm muted")
-        paste = ui.textarea(placeholder="gọng kính\ntròng kính zeiss | https://matkinhtamduc.com/trong-kinh-chinh-hang/"
-                                        "trong-kinh-zeiss/").props("outlined autogrow").classes("w-full")
+        paste = ui.textarea(placeholder=f"từ khóa 1\ntừ khóa 2 | https://{domain(cfg.site_url)}/trang-muc-tieu/").props("outlined autogrow").classes("w-full")
         add_result = ui.label().classes("text-sm")
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button("Đóng", on_click=add_dialog.close).props("flat no-caps")

@@ -1,4 +1,4 @@
-"""File Excel báo cáo tuần cho sếp: một sheet định dạng sẵn, đọc từ trên xuống, có biểu đồ xu hướng.
+"""File Excel báo cáo tuần / tháng gửi quản lý / khách hàng: một sheet định dạng sẵn, đọc từ trên xuống, có biểu đồ xu hướng.
 
 Khác file "Xuất dữ liệu" (bảng phẳng để kiểm tra/pivot): file này để đọc và gửi đi, nên chỉ có số đã chọn lọc.
 """
@@ -10,10 +10,13 @@ from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from .report import BUCKETS, MIN_CLICKS_FOR_MOVERS, WeeklyReport, change, rank_change, summary
+from .projects import domain
+from .report import WeeklyReport, change, rank_change, rank_summary, summary
 
 GREEN = "1E7C31"
 RED = "C2410C"
+AMBER = "8F5F14"
+BLUE = "2563EB"
 INK = "2A2A24"
 MUTED = "6B6A5E"
 TINT = "E4EFDC"
@@ -82,6 +85,15 @@ class _Sheet:
             self.row += 1
 
 
+def _vn_iso(iso) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}" if iso else "–"
+
+
+def _source(code: str) -> str:
+    from . import ai_format as F
+    return F.SOURCE_NAMES.get(code, code)
+
+
 def _unit(rep: WeeklyReport) -> str:
     return "tháng" if rep.kind == "month" else "tuần"
 
@@ -93,101 +105,6 @@ def _delta_color(value, lower_is_better=False):
     return GREEN if good else RED
 
 
-def _aio_section(s: "_Sheet", rep: WeeklyReport) -> None:
-    from . import ai_format as F
-
-    s.section("Hiển thị trong AI Overviews / AI Mode của Google (GSC Generative AI, nhập file)")
-    a = rep.aio
-    if a["impressions"] is None:
-        s.text(f"Chưa có số cho {_unit(rep)} này: file đã nhập có dữ liệu tới {a['data_until']}.", color=RED)
-        return
-    prev = a["prev"]
-    s.table(["Chỉ số", f"{_unit(rep).capitalize()} này", f"So với {_unit(rep)} trước"], [
-        ["Impression AI Overviews / AI Mode", a["impressions"],
-         f"{_unit(rep)} trước {prev}" if prev is not None and prev < F.MIN_BASE else a["change"]],
-        ["Tỷ lệ trên impression GSC Web", a["share"], None],
-    ], None, [[None, None, _delta_color(a["change"])], [None, None, None]])
-    ws, r0 = s.ws, s.row - 2
-    ws.cell(r0, 2).number_format, ws.cell(r0 + 1, 2).number_format = "#,##0", "0.00%"
-    ws.cell(r0, 3).number_format = "+0.0%;-0.0%;0.0%"
-    s.text("Chỉ có impression, GSC không cung cấp click riêng cho AI Overviews. Không cộng với traffic ChatGPT/Gemini.",
-           italic=True)
-
-
-def _okr_section(s: "_Sheet", rep: WeeklyReport) -> None:
-    from . import okr as O
-
-    k, unit = rep.okr, _unit(rep)
-    p, cnt = k["period"], k["counts"]
-    s.section("Tiến độ công việc (OKR 3 tháng, đọc từ Google Sheet của team)")
-    s.table(["Chỉ số", "Số"], [
-        ["Hạng mục OKR hoàn thành", f"{cnt[O.DONE]} / {k['total']}"],
-        [f"Hoàn thành trong {unit}", len(p["done"])],
-        [f"Đến hạn trong {unit}", len(p["due"])],
-        ["Đang làm", cnt[O.DOING]],
-        ["Trễ hạn (tính đến hôm nay)", len(k["late"])],
-    ], colors=[[None, None]] * 4 + [[None, RED if k["late"] else None]])
-
-    def vn(iso):
-        return f"{iso[8:10]}/{iso[5:7]}" if iso else ""
-
-    rows, colors = [], []
-    for title, its in [(f"Hoàn thành trong {unit}", p["done"]), ("Trễ hạn", k["late"]),
-                       (f"Kế hoạch {unit} sau", p["next"])]:
-        for i in its:
-            rows.append([title, i["code"], i["title"], f"{vn(i['start'])} – {vn(i['end'])}", i["pic"] or "",
-                         O.STATUS_LABEL[i["status"]]])
-            colors.append([GREEN if title.startswith("Hoàn") else RED if title == "Trễ hạn" else None] + [None] * 5)
-    if rows:
-        s.gap()
-        s.table(["Nhóm", "ID", "Hạng mục", "Thời gian", "PIC", "Trạng thái"], rows, colors=colors)
-    if k["tasks"]:
-        s.gap()
-        s.table(["Mã OKR", f"Việc {unit} (Weekly Task Tracker)", "PIC", "Deadline", "Trạng thái"],
-                [[t["okr_code"] or "", t["task"] or t["item"] or "", t["pic"] or "", vn(t["deadline"]),
-                  O.STATUS_LABEL[t["status"]]] for t in k["tasks"]])
-    if p["tracking_since"]:
-        s.text(f"Sheet không có cột ngày hoàn thành: 'Hoàn thành trong {unit}' tính theo ngày tool thấy trạng thái đổi "
-               f"sang Hoàn thành (theo dõi từ {vn(p['tracking_since'])}).", italic=True)
-
-
-def _ai_section(s: "_Sheet", rep: WeeklyReport) -> None:
-    from . import ai_format as F
-
-    s.section("Traffic từ AI assistant (GA4: ChatGPT, Gemini…; không gồm AI Overviews của Google)")
-    ai = rep.ai
-    if ai.get("error"):
-        s.text(f"Chưa lấy được số liệu GA4: {ai['error']}", color=RED)
-        return
-    k, d, sh = ai["kpi"], ai["deltas"], ai["share"]
-
-    def chg(key):  # tuần trước quá nhỏ thì ghi số tuần trước, không ghi % (1 → 17 phiên = +1.600%)
-        prev = ai.get("prev", {}).get(key)
-        return f"{_unit(rep)} trước {prev}" if prev is not None and prev < F.MIN_BASE else d.get(key)
-
-    s.table(["Chỉ số", f"{_unit(rep).capitalize()} này", f"So với {_unit(rep)} trước"], [
-        ["Phiên từ AI", k["sessions"], chg("sessions")],
-        ["Tỷ lệ trên tổng phiên site", sh["ofAllSessions"], None],
-        ["Engagement rate", k["engagementRate"], d.get("engagementRate")],
-        ["Key events", k["keyEvents"], chg("keyEvents")],
-        ["Session key event rate (% phiên có key event)", k["sessionKeyEventRate"], d.get("sessionKeyEventRate")],
-    ], None, [[None, None, _delta_color(d.get(x))] for x in
-              ("sessions", "_", "engagementRate", "keyEvents", "sessionKeyEventRate")])
-    ws, r0 = s.ws, s.row - 5
-    for i, fmt in enumerate(["#,##0", "0.00%", "0.00%", "#,##0", "0.00%"]):
-        ws.cell(r0 + i, 2).number_format = fmt
-        ws.cell(r0 + i, 3).number_format = "+0.0%;-0.0%;0.0%" if i in (0, 3) else '+0.00" điểm";-0.00" điểm"'
-        if i in (2, 4) and ws.cell(r0 + i, 3).value is not None:
-            ws.cell(r0 + i, 3).value = ws.cell(r0 + i, 3).value * 100  # điểm phần trăm
-    if ai["sources"]:
-        s.text("Theo nguồn: " + " · ".join(f"{F.SOURCE_NAMES.get(x['source'], x['source'])} {x['sessions']}"
-                                           for x in ai["sources"]))
-    if ai["paid"]["sessions"]:
-        s.text(f"Không tính {ai['paid']['sessions']} phiên từ quảng cáo trên nền tảng AI (ví dụ chatgpt / paid).",
-               italic=True)
-    if "LOW_SAMPLE_SIZE" in ai.get("warnings", []):
-        s.text(f"Số phiên AI trong {_unit(rep)} còn nhỏ: tỷ lệ dao động mạnh, nên xem xu hướng nhiều kỳ.",
-               italic=True)
 
 
 def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
@@ -198,7 +115,7 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
     for col, width in zip("ABCDEFGH", [44, 16, 16, 14, 16, 16, 14, 30]):
         ws.column_dimensions[col].width = width
     s = _Sheet(ws)
-    site_name = rep.site.split("//")[-1].strip("/")
+    site_name = domain(rep.site)
     (ws_, we), (ps, pe) = rep.week, rep.prev_week
 
     unit = _unit(rep)
@@ -219,9 +136,11 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
         s.text(f"Lưu ý: còn {rep.incomplete_days} ngày trong {unit} chưa có dữ liệu GSC; số có thể tăng thêm.",
                color=RED)
 
-    # Nhận xét lên đầu: sếp đọc kết luận trước.
+    # Nhận xét lên đầu: người nhận đọc kết luận trước.
     for title, text, empty in [("Nhận xét", rep.note, "(Chưa có nhận xét)")] + (
             [("Kế hoạch tháng sau", rep.plan, "(Chưa có kế hoạch)")] if month else []):
+        if not text:  # bản gửi đi không để ô "chưa có"
+            continue
         s.section(title)
         ws.merge_cells(start_row=s.row, start_column=1, end_row=s.row + 3, end_column=8)
         c = ws.cell(s.row, 1, text or empty)
@@ -230,111 +149,163 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
         c.font = Font(color=INK if text else MUTED, italic=not text)
         s.gap(4)
 
-    sm = summary(rep)
-    s.section("Tổng quan SEO & GEO")
-    rows, colors = [], []
-    for area, items in [("SEO", sm["seo"]), ("GEO", sm["geo"])]:
-        for it in items:
-            rows.append([area, it["label"], it["value"], it["delta"]])
-            colors.append([GREEN if area == "SEO" else "7C3AED", None, None,
-                           None if it["good"] is None else (GREEN if it["good"] else RED)])
-    s.table(["Mảng", "Chỉ số", "Giá trị", f"So với {unit} trước"], rows, None, colors)
-    for note in sm["seo_notes"] + sm["geo_notes"]:
-        s.text("• " + note["long"])
+    # Thứ tự giống màn Báo cáo và slide: Kết luận → KPI cam kết → SEO → GEO → Thứ hạng → Công việc → (tháng) Phụ lục.
+    notes = summary(rep)["seo_notes"][:3]
+    if notes:
+        s.section("Điểm cần chú ý")
+        for n in notes:
+            s.text({"up": "▲ ", "down": "▼ ", "warn": "⚠ "}.get(n["tone"], "• ") + n["long"],
+                   color={"up": GREEN, "down": RED, "warn": AMBER}.get(n["tone"], INK))
+
+    pct_fmt = "+0.0%;-0.0%;0.0%"
+    k = rep.kpi
+    if k and k.get("state") not in ("before", "no_start", None) and any(m["status"] != "future" for m in k["months"]):
+        m = next((x for x in k["months"] if x["status"] == "running"),
+                 [x for x in k["months"] if x["status"] == "closed"][-1])
+        running = m["status"] == "running"
+        s.section(f"KPI cam kết · tháng {m['n']}/{len(k['months'])} ({_vn_iso(m['from'])} – {_vn_iso(m['to'])}"
+                  + (", đang chạy" if running else ", đã chốt") + ")")
+        rows, colors = [], []
+        for key, lab in (("top3", "Từ khóa top 3"), ("top5", "Từ khóa top 5"), ("top10", "Từ khóa top 10"),
+                         ("sessions", "Phiên Organic (GA4)")):
+            ch = m["checks"][key]
+            if key == "sessions":
+                tgt, act = ch["target"], ch["actual"]
+                extra = f"dự báo cuối tháng {ch['forecast']:,}".replace(",", ".") if running and ch.get("forecast") else ""
+            else:
+                tgt, act = ch["target"], ch["actual"]
+                extra = f"{ch['count']}/{m['rank']['total']} từ khóa"
+            status = ("Không cam kết" if tgt is None else "Chưa có số" if ch["ok"] is None else
+                      ("Đang đạt" if running else "Đạt") if ch["ok"] else
+                      (f"Thiếu {ch['gap']} từ khóa" if key != "sessions" else f"Thiếu {ch['gap']:,} phiên".replace(",", ".")))
+            rows.append([lab, tgt, act, status, extra])
+            colors.append([None, None, None, None if ch["ok"] is None else (GREEN if ch["ok"] else
+                                                                             (AMBER if running else RED)), None])
+        s.table(["Chỉ số", "Cam kết", "Thực tế", "Trạng thái", "Ghi chú"], rows, None, colors)
+        for i, r in enumerate(rows):  # % cho dòng thứ hạng, số nguyên cho phiên
+            fmt = "#,##0" if i == 3 else "0%"
+            for col in (2, 3):
+                s.ws.cell(s.row - len(rows) + i, col).number_format = fmt
+
+    s.section("Kết quả SEO · traffic từ Google Search")
+    o = rep.organic if rep.organic and not rep.organic.get("error") else None
+    sk, sp = rep.site_kpi, rep.site_prev
+    rows = [["Phiên Organic Search (GA4)", o["sessions"] if o else "chưa có", o["prev"] if o else "",
+             o["change"] if o else None],
+            ["Click (GSC)", sk.clicks, sp.clicks, change(sk.clicks, sp.clicks)],
+            ["Impression (GSC)", sk.impressions, sp.impressions, change(sk.impressions, sp.impressions)]]
+    s.table(["Chỉ số", f"{unit.capitalize()} này", f"{unit.capitalize()} trước", "% thay đổi"], rows,
+            [None, "#,##0", "#,##0", pct_fmt], [[None, None, None, _delta_color(r[3])] for r in rows])
+    s.text("Click đếm lượt bấm từ Google (GSC); phiên đếm lượt vào site (GA4). Hai nguồn đo khác nhau nên số không bằng "
+           "nhau.", italic=True)
     s.gap()
-
-    s.section("Chỉ số chính (Google Search Console)")
-    rows, colors = [], []
-    for name, now, prev in [("Toàn site", rep.site_kpi, rep.site_prev),
-                            (f"Nhóm {rep.group}", rep.group_kpi, rep.group_prev)]:
-        dc, di = change(now.clicks, prev.clicks), change(now.impressions, prev.impressions)
-        dctr = (now.ctr - prev.ctr) if now.ctr is not None and prev.ctr is not None else None
-        dpos = (now.position - prev.position) if now.position and prev.position else None
-        rows.append([name, now.clicks, dc, now.impressions, di, now.ctr, dctr, now.position])
-        colors.append([None, None, _delta_color(dc), None, _delta_color(di), None, _delta_color(dctr), None])
-    s.table(["Phạm vi", "Click", f"% so với {unit} trước", "Impression", f"% so với {unit} trước", "CTR",
-             "CTR thay đổi (điểm)", "Position TB (GSC)"], rows,
-            [None, "#,##0", "+0.0%;-0.0%;0.0%", "#,##0", "+0.0%;-0.0%;0.0%", "0.0%", "+0.0%;-0.0%;0.0%", "0.0"],
-            colors)
-    s.text("Position TB là trung bình của GSC trên mọi lượt hiển thị, không phải thứ hạng thực tế. Thứ hạng thực tế "
-           "xem ở phần Rank bên dưới.", italic=True)
-
-    if rep.ai:
-        _ai_section(s, rep)
-    if rep.aio:
-        _aio_section(s, rep)
-
-    s.section(f"Click {len(rep.trend)} {unit} gần nhất")
     trend_top = s.row
-    s.table(["Tháng" if month else "Tuần (bắt đầu)", "Toàn site", f"Nhóm {rep.group}"],
-            [[t["week"], t["site_clicks"], t["group_clicks"]] for t in rep.trend], [None, "#,##0", "#,##0"])
+    s.table(["Tháng" if month else "Tuần (bắt đầu)", "Phiên Organic (GA4)", "Click (GSC)"],
+            [[t["week"], (o["spark"][i] if o else None), t["site_clicks"]] for i, t in enumerate(rep.trend)],
+            [None, "#,##0", "#,##0"])
     chart = LineChart()
-    chart.title, chart.y_axis.title, chart.height, chart.width = None, "Click", 7, 16
+    chart.title, chart.height, chart.width = None, 7, 16
     chart.add_data(Reference(ws, min_col=2, max_col=3, min_row=trend_top, max_row=trend_top + len(rep.trend)),
                    titles_from_data=True)
     chart.set_categories(Reference(ws, min_col=1, min_row=trend_top + 1, max_row=trend_top + len(rep.trend)))
-    for series, color in zip(chart.series, [GREEN, "9BB823"]):
+    for series, color in zip(chart.series, [GREEN, BLUE]):
         series.graphicalProperties.line.solidFill = color
         series.graphicalProperties.line.width = 28000
         series.smooth = False
     ws.add_chart(chart, f"E{trend_top}")
     s.gap(max(0, 15 - len(rep.trend) - 1))
 
-    s.section(f"Rank thực tế keyword theo dõi ({len(rep.ranks)} keyword · DataForSEO, mobile, Việt Nam)")
-    if rep.ranks:
-        s.table(["Nhóm vị trí", f"{unit.capitalize()} này", "Lần check trước"],
-                [[b, rep.rank_buckets[b][0], rep.rank_buckets[b][1]] for b in BUCKETS if any(rep.rank_buckets[b])],
-                [None, "#,##0", "#,##0"])
-        s.gap()
-        rows, colors = [], []
-        for r in rep.ranks:
-            text, _, move = rank_change(r["date"], r["rank"], r["depth"], r["prev"], r["prev_depth"])
-            wrong = bool(r["target_url"] and r["ranking_url"] and r["ranking_url"] != r["target_url"])
-            rows.append([r["keyword"], f"{_pos_text(r['rank'], r['depth'])} ({r['date'][8:10]}/{r['date'][5:7]})",
-                         f"{_pos_text(r['prev'], r['prev_depth'])} ({r['prev_date'][8:10]}/{r['prev_date'][5:7]})"
-                         if r["prev_date"] else "",
-                         text,
-                         _short(r["ranking_url"], rep.site), "Sai URL mục tiêu" if wrong else ""])
-            colors.append([None, None, None, _delta_color(move or None), None, RED if wrong else None])
-        s.table(["Keyword", "Vị trí (ngày check)", "Lần check trước", "Thay đổi", "URL đang xếp hạng", "Ghi chú"],
-                rows, None, colors)
+    s.section("Kết quả GEO · hiện diện trên AI Search")
+    ai, aio = rep.ai if rep.ai and not rep.ai.get("error") else None, rep.aio
+    rows = []
+    if ai:
+        rows.append(["Phiên từ AI assistant (GA4)", ai["kpi"]["sessions"], (ai.get("prev") or {}).get("sessions"),
+                     (ai.get("deltas") or {}).get("sessions")])
     else:
-        s.text("Chưa có lần check rank nào trong khoảng này.")
+        rows.append(["Phiên từ AI assistant (GA4)", "chưa có", "", None])
+    if aio and aio["impressions"] is not None:
+        rows.append(["Hiển thị trong AI Overviews (GSC)", aio["impressions"], aio["prev"], aio["change"]])
+    else:
+        rows.append(["Hiển thị trong AI Overviews (GSC)", "chưa có", "", None])
+    s.table(["Chỉ số", f"{unit.capitalize()} này", f"{unit.capitalize()} trước", "% thay đổi"], rows,
+            [None, "#,##0", "#,##0", pct_fmt], [[None, None, None, _delta_color(r[3])] for r in rows])
+    if aio and aio["impressions"] is not None and aio["share"] is not None:
+        s.text(f"Tỷ lệ trên tổng hiển thị Google: {aio['share'] * 100:.1f}%".replace(".", ","))
+    if ai and ai["sources"]:
+        total = sum(x["sessions"] for x in ai["sources"]) or 1
+        s.text("Nguồn AI: " + " · ".join(f"{_source(x['source'])} {x['sessions'] / total * 100:.0f}%"
+                                         for x in ai["sources"]))
+    s.text("Phiên AI: người bấm từ ChatGPT, Gemini… vào site (GA4). AI Overviews: số lần trang hiện trong câu trả lời "
+           "AI của Google (GSC, chỉ có lượt hiển thị). Hai nguồn không cộng với nhau.", italic=True)
 
-    for title, items in [(f"Top {len(rep.winners)} URL tăng click (nhóm {rep.group})", rep.winners),
-                         (f"Top {len(rep.losers)} URL giảm click (nhóm {rep.group})", rep.losers)]:
-        s.section(title)
-        if items:
-            s.table(["URL", "Loại", f"Click {unit} này", f"Click {unit} trước", "Chênh lệch"],
-                    [[_short(x["url"], rep.site), x["type"], x["clicks"], x["prev"], x["diff"]] for x in items],
-                    [None, None, "#,##0", "#,##0", "+#,##0;-#,##0"],
-                    [[None, None, None, None, _delta_color(x["diff"])] for x in items])
+    rs = rank_summary(rep, rep.committed)
+    s.section(("Thứ hạng từ khóa cam kết" if rs["committed"] else "Thứ hạng từ khóa theo dõi")
+              + f" · {rs['total']} từ khóa (DataForSEO, Google mobile, Việt Nam)")
+    if not rs["total"]:
+        s.text(f"Chưa có lần check rank nào trong {unit} này.")
+    else:
+        rows = [[f"Top {n}", rs["now"][n], rs["prev"][n] if rs["has_prev"] else "",
+                 (rs["now"][n] - rs["prev"][n]) if rs["has_prev"] else None] for n in (3, 5, 10)]
+        s.table(["Nhóm vị trí", "Lần check này", "Lần check trước", "Chênh lệch"], rows,
+                [None, "#,##0", "#,##0", "+#,##0;-#,##0;0"], [[None, None, None, _delta_color(r[3])] for r in rows])
+        if not rs["has_prev"]:
+            s.text("Đây là lần check đầu tiên của bộ từ khóa: từ lần sau sẽ có từ khóa tăng / giảm mạnh nhất.",
+                   italic=True)
         else:
-            s.text("Không có URL nào.")
-    s.text(f"Chỉ xét URL có từ {MIN_CLICKS_FOR_MOVERS} click ở một trong hai {unit}, xếp theo số click chênh lệch.",
-           italic=True)
+            moves = [["Tăng", m_["keyword"], _pos_text(m_["from"], m_["prev_depth"]), _pos_text(m_["to"], m_["depth"])]
+                     for m_ in rs["up"]] + \
+                    [["Giảm", m_["keyword"], _pos_text(m_["from"], m_["prev_depth"]), _pos_text(m_["to"], m_["depth"])]
+                     for m_ in rs["down"]]
+            if moves:
+                s.gap()
+                s.table(["", "Từ khóa", "Lần trước", "Lần này"], moves, None,
+                        [[GREEN if r[0] == "Tăng" else RED, None, None, None] for r in moves])
 
     if rep.okr:
-        _okr_section(s, rep)
+        from . import okr as O
+        kk = rep.okr
+        p, cnt = kk["period"], kk["counts"]
+        s.section(f"Công việc · OKR hiện có {cnt[O.DONE] / kk['total'] * 100 if kk['total'] else 0:.0f}% hạng mục "
+                  "đã hoàn thành"
+                  + (f" · {len(kk['late'])} trễ hạn" if kk["late"] else ""))
+        rows, colors = [], []
+        for title, its, color in ((f"Hoàn thành trong {unit}", p["done"], GREEN), (f"Kế hoạch {unit} sau", p["next"], None)):
+            for it in its:
+                rows.append([title, it["code"], it["title"]])
+                colors.append([color, None, None])
+        if rows:
+            s.table(["Nhóm", "Mã", "Hạng mục"], rows, None, colors)
+        else:
+            s.text(f"Không có hạng mục hoàn thành trong {unit} hay kế hoạch {unit} sau.")
 
+    shown = [r for r in rep.ranks if not rep.committed or r["keyword"].lower() in rep.committed]
+    if shown:  # tuần và tháng đều có: danh sách đầy đủ cho người muốn xem từng từ khóa
+        s.section("Phụ lục · thứ hạng từng từ khóa")
+        rows, colors = [], []
+        for r in shown:
+            text, _, move = rank_change(r["date"], r["rank"], r["depth"], r["prev"], r["prev_depth"])
+            rows.append([r["keyword"], f"{_pos_text(r['rank'], r['depth'])} ({r['date'][8:10]}/{r['date'][5:7]})",
+                         text, _short(r["ranking_url"], rep.site)])
+            colors.append([None, None, _delta_color(move or None), None])
+        s.table(["Từ khóa", "Vị trí (ngày check)", "Thay đổi", "Trang đang xếp hạng"], rows, None, colors)
     if month:
-        s.section("Theo loại trang (cộng theo URL)")
+        by_type = [r for r in rep.by_type if r["clicks"]]
+        s.section("Phụ lục · theo loại trang (cộng theo trang)")
         s.table(["Loại trang", "Click", "Click tháng trước", "% thay đổi", "Impression"],
-                [[r["type"], r["clicks"], r["prev_clicks"], r["change"], r["impressions"]] for r in rep.by_type],
-                [None, "#,##0", "#,##0", "+0.0%;-0.0%;0.0%", "#,##0"],
-                [[None, None, None, _delta_color(r["change"]), None] for r in rep.by_type])
-        s.text("Cộng theo từng URL nên tổng khác tổng toàn site (GSC tính toàn site theo property).", italic=True)
-        s.section("Top 10 URL nhiều click nhất tháng (toàn site)")
-        s.table(["URL", "Loại", "Click", "Click tháng trước", "% thay đổi"],
+                [[r["type"], r["clicks"], r["prev_clicks"], r["change"], r["impressions"]] for r in by_type],
+                [None, "#,##0", "#,##0", pct_fmt, "#,##0"],
+                [[None, None, None, _delta_color(r["change"]), None] for r in by_type])
+        s.section("Phụ lục · top 10 trang nhiều click nhất tháng")
+        s.table(["Trang", "Loại", "Click", "Click tháng trước", "% thay đổi"],
                 [[_short(r["url"], rep.site), r["type"], r["clicks"], r["prev"], r["change"]] for r in rep.top_urls],
-                [None, None, "#,##0", "#,##0", "+0.0%;-0.0%;0.0%"],
+                [None, None, "#,##0", "#,##0", pct_fmt],
                 [[None, None, None, None, _delta_color(r["change"])] for r in rep.top_urls])
-        s.section("Top 10 từ khóa (query) nhiều click nhất tháng")
-        s.table(["Query", "Click", "Impression", "Click tháng trước", "% thay đổi"],
+        s.section("Phụ lục · top 10 từ khóa (GSC) nhiều click nhất tháng")
+        s.table(["Từ khóa", "Click", "Impression", "Click tháng trước", "% thay đổi"],
                 [[r["query"], r["clicks"], r["impressions"], r["prev"], r["change"]] for r in rep.top_queries],
-                [None, "#,##0", "#,##0", "#,##0", "+0.0%;-0.0%;0.0%"],
+                [None, "#,##0", "#,##0", "#,##0", pct_fmt],
                 [[None, None, None, None, _delta_color(r["change"])] for r in rep.top_queries])
-        s.text("GSC ẩn các query hiếm, nên tổng click theo query nhỏ hơn click toàn site.", italic=True)
+        s.text("GSC ẩn các từ khóa hiếm, nên tổng click theo từ khóa nhỏ hơn click toàn site.", italic=True)
 
     ws.print_options.horizontalCentered = True
     ws.page_setup.orientation = "portrait"
@@ -347,7 +318,7 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
 
 
 def report_filename(rep: WeeklyReport) -> str:
-    host = rep.site.split("//")[-1].strip("/").split(".")[0]
+    host = domain(rep.site).split(".")[0]
     if rep.kind == "month":
         return f"bao-cao-seo-thang_{host}_{rep.week[0]:%Y-%m}.xlsx"
     return f"bao-cao-seo_{host}_{rep.week[0]:%Y-%m-%d}_{rep.week[1]:%Y-%m-%d}.xlsx"

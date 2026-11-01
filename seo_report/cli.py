@@ -88,8 +88,8 @@ def cmd_sync(cfg, backfill: bool) -> None:
     except HttpError as e:
         if e.resp.status == 403:
             raise SystemExit(
-                f"Tài khoản không có quyền trên '{cfg.site_url}'. Chạy lệnh login để xem danh sách "
-                "property đúng, rồi sửa site_url trong config.toml."
+                f"Tài khoản Google của tool không có quyền trên '{cfg.site_url}'. Nhờ chủ website thêm email đó vào "
+                "Search Console, hoặc chọn lại property ở màn Dự án."
             )
         raise
     print(f"Xong: đã lấy {n} ngày.")
@@ -202,14 +202,27 @@ def cmd_ai_summary(cfg, days: int) -> None:
                                           for r in ai.countries(start, end, limit=5)["data"]["rows"]))
 
 
-def cmd_daily(cfg) -> None:
-    """Chạy bởi Task Scheduler qua pythonw (không có cửa sổ): lấy dữ liệu rồi phân loại URL mới, ghi log ra file."""
-    import traceback
+def cmd_daily(base, project_cfgs) -> None:
+    """Chạy bởi Task Scheduler qua pythonw (không có cửa sổ): làm việc hằng ngày cho từng dự án đang chạy, ghi log ra
+    file. Một dự án lỗi không chặn các dự án sau."""
     from datetime import datetime
 
-    log = open(cfg.db_path.parent / "sync.log", "a", encoding="utf-8", buffering=1)
+    log = open(base.db_path.parent / "sync.log", "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stderr = log
     print(f"===== {datetime.now():%Y-%m-%d %H:%M} =====")
+    failed = []
+    for name, cfg in project_cfgs:
+        print(f"----- Dự án {name} ({cfg.site_url}) -----")
+        try:
+            _daily_one(cfg)
+        except (Exception, SystemExit):  # noqa: BLE001  (_daily_one đã ghi lỗi vào log)
+            failed.append(name)
+    if failed:
+        raise SystemExit(f"Lỗi ở dự án: {', '.join(failed)} (xem chi tiết phía trên)")
+
+
+def _daily_one(cfg) -> None:
+    import traceback
     try:
         cmd_sync(cfg, backfill=False)
         try:
@@ -360,11 +373,26 @@ def cmd_migrate(cfg) -> None:
     print(f"Khớp. Đã xóa file cũ. Dung lượng mới: {new.stat().st_size / 1024 / 1024:.0f} MB")
 
 
+def _projects(base, slug: str | None):
+    """(dự án được chọn, mọi dự án đang chạy) dưới dạng (tên, cấu hình). Không ghi --project thì là dự án đầu tiên."""
+    from contextlib import closing
+
+    from . import projects as PJ
+    with closing(db.connect(base.db_path)) as c:
+        PJ.ensure(c, base)
+        active = PJ.list_projects(c)
+    if slug and not any(p["slug"] == slug for p in active):
+        raise SystemExit(f"Không có dự án '{slug}'. Dự án đang chạy: {', '.join(p['slug'] for p in active)}")
+    chosen = next(p for p in active if p["slug"] == slug) if slug else active[0]
+    return PJ.config_for(base, chosen), [(p["name"], PJ.config_for(base, p)) for p in active]
+
+
 def main(argv=None) -> None:
     if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(prog="python -m seo_report")
     p.add_argument("--config", default="config.toml")
+    p.add_argument("--project", help="Mã dự án (slug, xem ở màn Dự án). Bỏ trống: dự án đầu tiên")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="Đăng nhập Google, liệt kê property GSC và GA4")
     sub.add_parser("ga4-check", help="Kiểm tra kết nối GA4 cho module AI Search & GEO")
@@ -387,7 +415,8 @@ def main(argv=None) -> None:
     st = sub.add_parser("export-static", help="Xuất bản xem tĩnh có mật khẩu để đưa lên Vercel")
     st.add_argument("--out", default="dist", help="Thư mục xuất (bị xóa và tạo lại)")
     args = p.parse_args(argv)
-    cfg = load_config(args.config)
+    base = load_config(args.config)
+    cfg, all_projects = _projects(base, args.project)
     if args.cmd == "login":
         cmd_login(cfg)
     elif args.cmd == "ga4-check":
@@ -405,9 +434,9 @@ def main(argv=None) -> None:
     elif args.cmd == "rank":
         cmd_rank(cfg, args.wait)
     elif args.cmd == "daily":
-        cmd_daily(cfg)
+        cmd_daily(base, [x for x in all_projects if not args.project or x[1].site_url == cfg.site_url])
     elif args.cmd == "web":
-        cmd_web(cfg, args.port, not args.no_open)
+        cmd_web(base, args.port, not args.no_open)
     elif args.cmd == "export-static":
         cmd_export_static(cfg, args.out)
     else:

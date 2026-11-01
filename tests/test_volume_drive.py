@@ -46,7 +46,8 @@ class VolumeTest(unittest.TestCase):
 
     def test_cost_counts_in_rank_budget(self):
         V.refresh(self.con, SITE, self.cfg, TODAY, TODAY, fetcher=self.fetcher, log=lambda m: None)
-        self.assertAlmostEqual(R.spent_this_month(self.con, TODAY), 0.075)
+        # Chi phí volume ghi theo giờ thật (run_at), nên so với tháng hiện tại chứ không phải TODAY cố định
+        self.assertAlmostEqual(R.spent_this_month(self.con, date.today()) - R.spent_this_month(self.con, date(2000, 1, 1)), 0.075)
 
     def test_budget_blocks_fetch(self):
         self.cfg.rank.monthly_budget_usd = 0.01
@@ -145,9 +146,11 @@ class SlidesTest(unittest.TestCase):
         texts = [sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame]
         self.assertIn("Báo cáo SEO & GEO tháng 10/2026", texts)
         self.assertIn("Tháng tốt.", texts)
-        self.assertIn("Kế hoạch tháng sau", texts)
-        self.assertEqual(len(prs.slides), 8)  # bìa, tổng quan, nhận xét, GSC, rank, URL, loại trang/top query, top URL
-        self.assertIn("Tổng quan SEO & GEO", texts)
+        self.assertNotIn("Chưa có kế hoạch.", texts)  # không để chữ "chưa có" trong bản gửi đi
+        self.assertEqual(len(prs.slides), 8)  # bìa, kết luận, SEO, GEO, thứ hạng, 3 phụ lục
+        for title in ("Kết luận", "Kết quả SEO", "Kết quả GEO", "Thứ hạng từ khóa theo dõi"):
+            self.assertIn(title, texts)
+        self.assertFalse(any("CTR" in t for t in texts))
         self.assertEqual(slides_filename(rep), "bao-cao-seo-thang_matkinhtamduc_2026-10")
         week = report.build(t.con, t.cfg, t.gid, 0, with_ai=False)
-        self.assertEqual(len(Presentation(io.BytesIO(build_report_pptx(week, "t"))).slides), 5)
+        self.assertEqual(len(Presentation(io.BytesIO(build_report_pptx(week, "t"))).slides), 4)  # không nhận xét, không điểm chú ý: bỏ slide kết luận

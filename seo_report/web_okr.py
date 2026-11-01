@@ -32,7 +32,7 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
 
     if not O.sheet_id(cfg.okr.sheet):
         T.empty_state(ui, "table_view", "Chưa khai báo Google Sheet",
-                      "Điền [okr] sheet = \"<link sheet>\" trong config.toml rồi mở lại tool.")
+                      "Gắn link Google Sheet OKR cho dự án ở màn Dự án (Quản trị → Dự án → Sửa).")
         return
 
     body = ui.column().classes("w-full gap-4")
@@ -52,13 +52,13 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
         render.refresh()
 
     cur_week = (today - timedelta(days=today.weekday()), today - timedelta(days=today.weekday()) + timedelta(days=6))
-    view = {"week": "now", "gantt": "all"}
+    view = {"week": "now", "gantt": "all", "cycle": None}
 
     @ui.refreshable
     def render():
         with connect() as c:
             info = O.sync_info(c)
-            ov = O.overview(c, today) if info else None
+            ov = O.overview(c, today, cycle=view["cycle"]) if info else None
             tasks = O.tasks(c) if info else []
         if not info:
             T.empty_state(ui, "sync", "Chưa đồng bộ lần nào", "Bấm Đồng bộ ngay để lấy dữ liệu từ sheet.")
@@ -72,6 +72,16 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
                     T.status_chip(ui, "Đang đọc qua link công khai", "amber", "public")
                     ui.tooltip("Sheet đang để ai có link đều xem được. Sau khi cấp quyền Google Sheets cho tool "
                                "(đăng nhập lại), nên tắt chia sẻ công khai.")
+
+        # ---- Chọn đợt OKR (mỗi tab "OKRs …" là một đợt) ----
+        if len(ov["cycles"]) > 1:
+            def pick(e):
+                view.update(cycle=e.value, gantt="all")
+                render.refresh()
+            ui.toggle({c["name"]: f"{c['name']} · {_vn(c['start'])} – {_vn(c['end'])}" for c in ov["cycles"]},
+                      value=ov["cycle"], on_change=pick).props(
+                "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                "sr-seg")
 
         # ---- Cần cập nhật trên sheet ----
         issues = _sheet_issues(ov["items"], tasks, today)
@@ -150,14 +160,26 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
         # ---- Gantt ----
         all_dated = [i for i in ov["items"] if i["start"] and i["end"]]
         if all_dated:
-            objs = [o["code"] for o in ov["objectives"]]
-            with T.section(ui, "Lịch triển khai", "view_timeline", "Vạch đỏ: hôm nay"):
-                opts = {"all": "Tất cả", "open": "Chưa xong", **{c: c for c in objs}}
+            objs = {o["uid"]: o["code"] for o in ov["objectives"]}  # lọc theo uid (mã có thể trùng giữa các đợt)
+            with T.section(ui, "Lịch triển khai", "view_timeline", "Rê chuột vào thanh để xem chi tiết"):
+                opts = {"all": "Tất cả", "open": "Chưa xong", **objs}
                 ui.toggle(opts, value=view["gantt"], on_change=lambda e: (view.update(gantt=e.value),
                                                                           gantt.refresh())).props(
                     "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
                     "sr-seg q-mb-sm")
-                gantt(all_dated, objs)
+                with ui.row().classes("items-center gap-4 q-mb-xs").style("flex-wrap: wrap"):
+                    for color, text in (("#1E7C31", "Hoàn thành"), ("#2563EB", "Đang làm (đậm = phần đã làm)"),
+                                        ("#B8B6A8", "Chưa bắt đầu"), ("#C2410C", "Trễ hạn")):
+                        with ui.row().classes("items-center gap-1 no-wrap"):
+                            ui.element("span").style(f"width:18px;height:8px;border-radius:4px;background:{color}")
+                            ui.label(text).classes("text-xs muted")
+                    with ui.row().classes("items-center gap-1 no-wrap"):
+                        ui.element("span").style("width:18px;height:4px;border-radius:2px;background:#1F221E")
+                        ui.label("Thời gian của cả mục tiêu").classes("text-xs muted")
+                    with ui.row().classes("items-center gap-1 no-wrap"):
+                        ui.element("span").style("width:2px;height:12px;background:#C2410C")
+                        ui.label("Hôm nay").classes("text-xs muted")
+                gantt(all_dated, ov["objectives"])
 
         # ---- Tuần ----
         week_block(tasks, late)
@@ -196,7 +218,11 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
                         row_key="row", pagination=50).classes("w-full").props("flat dense")
 
     @ui.refreshable
-    def gantt(all_dated, objs):
+    def gantt(all_dated, objectives):
+        """Lịch triển khai: mỗi mục tiêu một dòng tiêu đề (thanh mảnh = thời gian của cả mục tiêu, kèm % xong), bên dưới
+        là các hạng mục. Màu theo trạng thái, thanh "đang làm" tô đậm phần đã làm theo % tiến độ, nền xen kẽ theo tháng,
+        vạch đỏ là hôm nay."""
+        import html
         sel = view["gantt"]
         items = [i for i in all_dated if sel == "all" or (sel == "open" and i["status"] != O.DONE)
                  or i["objective"] == sel]
@@ -204,58 +230,125 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
             ui.label("Không có hạng mục nào.").classes("text-sm muted")
             return
         d0 = date.fromisoformat(min(i["start"] for i in all_dated))  # trục thời gian giữ nguyên khi lọc
-        rows = items[::-1]
-        cats = [f"{i['code']}  {i['title']}" for i in rows]
-        offset = [(date.fromisoformat(i["start"]) - d0).days for i in rows]
-        length = [(date.fromisoformat(i["end"]) - date.fromisoformat(i["start"])).days + 1 for i in rows]
+        d1 = date.fromisoformat(max(i["end"] for i in all_dated))
+        days = (d1 - d0).days + 2
+
+        def x(iso):
+            return (date.fromisoformat(iso) - d0).days
+
+        def short(t, n):
+            return t if len(t) <= n else t[:n - 1].rstrip() + "…"
+
+        # Dòng hiển thị từ trên xuống: tiêu đề mục tiêu rồi các hạng mục của nó
+        top = []
+        for o in objectives:
+            its = [i for i in items if i["objective"] == o["uid"]]
+            if not its:
+                continue
+            mine = [i for i in all_dated if i["objective"] == o["uid"]]
+            top.append({"kind": "obj", "o": o, "start": min(i["start"] for i in mine),
+                        "end": max(i["end"] for i in mine)})
+            top += [{"kind": "item", "i": i} for i in its]
+        rows = top[::-1]  # trục danh mục vẽ từ dưới lên
+        keys = [f"r{n}" for n in range(len(rows))]
+        labels = {}
+        for k, r in zip(keys, rows):
+            if r["kind"] == "obj":
+                o = r["o"]
+                pct = f"{(o['pct'] or 0) * 100:.0f}%"
+                labels[k] = f"{{oc|{o['code']}}} {{ot|{short(o['title'], 30)}}} {{op|{pct}}}"
+            else:
+                i = r["i"]
+                labels[k] = f"{{ic|{i['code'][-5:]}}} {{it|{short(i['title'], 36)}}}"
+
+        none = "-"
+        off_i, len_i, off_p, len_p, off_o, len_o = [], [], [], [], [], []
+        for r in rows:
+            if r["kind"] == "obj":
+                off_i.append(none), len_i.append(none), off_p.append(none), len_p.append(none)
+                o = r["o"]
+                off_o.append(x(r["start"]))
+                len_o.append({"value": x(r["end"]) - x(r["start"]) + 1, "tip": (
+                    f"<b>{html.escape(o['code'])} · {html.escape(o['title'])}</b><br/>{_vn(r['start'])} – "
+                    f"{_vn(r['end'])}<br/>{o['done']}/{o['total']} hạng mục xong"
+                    + (f" · {o['late']} trễ hạn" if o["late"] else ""))})
+                continue
+            i = r["i"]
+            off_o.append(none), len_o.append(none)
+            s, ln = x(i["start"]), x(i["end"]) - x(i["start"]) + 1
+            late = O.is_late(i, today)
+            doing = i["status"] == O.DOING and not late
+            prog = i.get("progress")
+            color = "#C2410C" if late else ("#BFD3FB" if doing else STATUS_COLOR[i["status"]])
+            status = "Trễ hạn · " + O.STATUS_LABEL[i["status"]] if late else O.STATUS_LABEL[i["status"]]
+            tip = (f"<b>{html.escape(i['code'])} · {html.escape(i['title'])}</b><br/>{_vn(i['start'])} – "
+                   f"{_vn(i['end'])} · {ln} ngày<br/>{status}" + (f" · {prog:.0f}%" if prog is not None else "")
+                   + f"<br/>PIC: {html.escape(i['pic'] or 'chưa có')}")
+            off_i.append(s)
+            len_i.append({"value": ln, "tip": tip, "itemStyle": {"color": color}})
+            if doing and prog:  # phần đã làm của thanh "đang làm"
+                off_p.append(s)
+                len_p.append({"value": max(1, round(ln * min(prog, 100) / 100)), "tip": tip})
+            else:
+                off_p.append(none), len_p.append(none)
+
+        # Nền xen kẽ theo tháng + nhãn tháng ở đầu cột
+        bands, m = [], date(d0.year, d0.month, 1)
+        while m <= d1:
+            nm = date(m.year + (m.month == 12), m.month % 12 + 1, 1)
+            a, b = max(0, (m - d0).days), min(days, (nm - d0).days)
+            bands.append([{"xAxis": a, "name": f"Tháng {m.month}",
+                           "itemStyle": {"color": "rgba(31,34,30,0.035)" if m.month % 2 else "rgba(0,0,0,0)"}},
+                          {"xAxis": b}])
+            m = nm
         today_x = (today - d0).days
-        days = max((date.fromisoformat(i["end"]) - d0).days for i in all_dated) + 2
-        labels = [(d0 + timedelta(days=k)).strftime("%d/%m") for k in range(days)]
-        # Nền xen kẽ theo mục tiêu để dễ thấy hạng mục nào thuộc O nào
-        bands, k = [], 0
-        while k < len(rows):
-            j = k
-            while j + 1 < len(rows) and rows[j + 1]["objective"] == rows[k]["objective"]:
-                j += 1
-            obj = rows[k]["objective"]
-            if obj in objs and objs.index(obj) % 2 == 0:
-                bands.append([{"yAxis": cats[k]}, {"yAxis": cats[j]}])
-            k = j + 1
+        ticks = [(d0 + timedelta(days=k)).strftime("%d/%m") for k in range(days)]
+        hidden = {"color": "transparent"}
+        bar = {"type": "bar", "barWidth": 12, "barGap": "-100%"}
         ui.echart({
             "animation": False,
-            "grid": {"left": 250, "right": 24, "top": 24, "bottom": 28},
-            "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}, "confine": True,
-                        ":formatter": "ps => { const p = ps.find(x => x.seriesIndex === 1); "
-                                      "return p ? p.name + '<br/>' + p.data.tip : ''; }"},
+            "grid": {"left": 300, "right": 28, "top": 46, "bottom": 30},
+            "tooltip": {"trigger": "item", "confine": True, "backgroundColor": "#fff", "borderColor": "#E7E5DC",
+                        "textStyle": {"color": "#1F221E", "fontSize": 12},
+                        ":formatter": "p => (p.data && p.data.tip) || ''"},
             "xAxis": {"type": "value", "min": 0, "max": days, "interval": 7, "position": "top",
-                      "splitLine": {"lineStyle": {"color": "#EEECE4"}},
-                      "axisLabel": {":formatter": f"v => ({json.dumps(labels)})[v] || ''"}},
-            "yAxis": {"type": "category", "data": cats, "axisTick": {"show": False},
-                      "axisLabel": {"fontSize": 11, "color": "#3A3B35", "width": 236, "overflow": "truncate",
-                                    "ellipsis": "…"}},
+                      "splitLine": {"lineStyle": {"color": "#EEECE4"}}, "axisLine": {"show": False},
+                      "axisTick": {"show": False},
+                      "axisLabel": {"color": "#8C8A7E", "fontSize": 10,
+                                    ":formatter": f"v => ({json.dumps(ticks)})[v] || ''"}},
+            "yAxis": {"type": "category", "data": keys, "axisTick": {"show": False},
+                      "axisLine": {"lineStyle": {"color": "#E7E5DC"}},
+                      "axisLabel": {":formatter": f"v => ({json.dumps(labels, ensure_ascii=False)})[v] || ''",
+                                    "align": "left", "margin": 290,
+                                    "rich": {"oc": {"fontWeight": 700, "fontSize": 12, "color": "#1E7C31"},
+                                             "ot": {"fontWeight": 700, "fontSize": 12, "color": "#1F221E"},
+                                             "op": {"fontSize": 11, "color": "#6B6A5E", "padding": [0, 0, 0, 4]},
+                                             "ic": {"fontSize": 11, "color": "#8C8A7E", "padding": [0, 0, 0, 14]},
+                                             "it": {"fontSize": 11.5, "color": "#3A3B35"}}}},
             "series": [
-                {"type": "bar", "stack": "g", "data": offset, "itemStyle": {"color": "transparent"},
-                 "silent": True,
-                 "markArea": {"silent": True, "itemStyle": {"color": "rgba(31,34,30,0.035)"}, "data": bands}},
-                {"type": "bar", "stack": "g", "barWidth": 12,
-                 "data": [{"value": ln, "tip": f"{_vn(i['start'])} – {_vn(i['end'])} · "
-                                              f"{O.STATUS_LABEL[i['status']]} · {i['pic'] or 'chưa có PIC'}",
-                           "itemStyle": {"color": "#C2410C" if O.is_late(i, today)
-                                         else STATUS_COLOR[i["status"]], "borderRadius": 4}}
-                          for i, ln in zip(rows, length)],
+                {**bar, "stack": "i", "data": off_i, "itemStyle": hidden, "silent": True, "tooltip": {"show": False},
+                 "markArea": {"silent": True, "data": bands,
+                              "label": {"show": True, "position": "insideTop", "color": "#6B6A5E", "fontSize": 11,
+                                        "fontWeight": 600, "offset": [0, -40]}},
                  "markLine": {"silent": True, "symbol": "none",
-                              "lineStyle": {"color": "#C2410C", "type": "solid", "width": 1.5},
-                              "label": {"formatter": "Hôm nay", "color": "#C2410C", "fontSize": 10,
+                              "lineStyle": {"color": "#C2410C", "width": 1.5, "type": "solid"},
+                              "label": {"formatter": f"Hôm nay {today:%d/%m}", "color": "#C2410C", "fontSize": 10,
                                         "position": "start"},
                               "data": [{"xAxis": today_x}]} if 0 <= today_x <= days else {}},
+                {**bar, "stack": "i", "data": len_i, "itemStyle": {"borderRadius": 6}},
+                {**bar, "stack": "p", "data": off_p, "itemStyle": hidden, "silent": True, "tooltip": {"show": False}},
+                {**bar, "stack": "p", "data": len_p, "itemStyle": {"color": "#2563EB", "borderRadius": 6}},
+                {**bar, "barWidth": 5, "stack": "o", "data": off_o, "itemStyle": hidden, "silent": True,
+                 "tooltip": {"show": False}},
+                {**bar, "barWidth": 5, "stack": "o", "data": len_o, "itemStyle": {"color": "#1F221E", "borderRadius": 3}},
             ],
-        }).classes("w-full").style(f"height:{max(200, 22 * len(rows) + 60)}px")
+        }).classes("w-full").style(f"height:{max(220, 24 * len(rows) + 80)}px")
 
     @ui.refreshable
     def week_block(tasks, late):
         ps, pe = cur_week if view["week"] == "now" else (ws, we)
         with connect() as c:
-            p = O.overview(c, today, (ps, pe))["period"]
+            p = O.overview(c, today, (ps, pe), cycle=view["cycle"])["period"]
         week_tasks = [t for t in tasks if t["week"] == ps.isoformat()]
         with T.section(ui, f"Tuần {ps:%d/%m} – {pe:%d/%m}", "date_range"):
             if cur_week != (ws, we):

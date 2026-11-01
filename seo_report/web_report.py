@@ -1,4 +1,4 @@
-"""Màn Báo cáo (tab Tuần | Tháng): bản gửi sếp của màn Tổng quan, thêm nhận xét và nút xuất Excel."""
+"""Màn Báo cáo (tab Tuần | Tháng): bản gửi quản lý / khách hàng của màn Tổng quan, thêm nhận xét và nút xuất Excel."""
 from .web_overview import build_overview_page
 
 

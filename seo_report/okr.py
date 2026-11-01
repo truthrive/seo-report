@@ -3,6 +3,9 @@
 Đọc qua Google Sheets API (quyền spreadsheets.readonly). Khi chưa cấp quyền, dùng tạm bản xuất CSV công khai nếu sheet
 đang để "ai có link đều xem được".
 
+Mỗi tab có tên bắt đầu bằng "OKRs" là một đợt OKR (ví dụ "OKRs 3 tháng", "OKRs Q1-2027"); thêm đợt mới = thêm tab
+mới cùng định dạng. Mã hạng mục trùng giữa hai đợt vẫn được phân biệt (khóa nội bộ uid = "<tên tab>|<mã>").
+
 Dữ liệu chép vào SQLite mỗi lần đồng bộ, kèm ảnh chụp trạng thái theo ngày (okr_status_log). Sheet không có cột ngày
 hoàn thành, nên "hoàn thành trong kỳ" lấy ngày đầu tiên tool thấy trạng thái Hoàn thành; việc đã xong trước ngày tool
 bắt đầu theo dõi thì không biết ngày xong thật (ghi rõ trên màn).
@@ -19,8 +22,10 @@ from datetime import date, datetime, timedelta, timezone
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS okr_items (
-    code TEXT PRIMARY KEY,
-    objective TEXT NOT NULL,
+    uid TEXT PRIMARY KEY,       -- mã hạng mục, thêm "<đợt>|" phía trước khi mã trùng giữa các đợt
+    cycle TEXT NOT NULL,        -- tên tab OKR (một đợt 3 tháng)
+    code TEXT NOT NULL,
+    objective TEXT NOT NULL,    -- uid của mục tiêu cha
     is_objective INTEGER NOT NULL,
     grp TEXT, title TEXT, details TEXT, qty TEXT, unit TEXT, month_text TEXT,
     start TEXT, end TEXT, pic TEXT, status TEXT, status_raw TEXT, progress REAL, link TEXT, note TEXT, sort INTEGER
@@ -112,7 +117,7 @@ def fetch_tables(cfg) -> tuple[dict[str, list[list]], str]:
     """{tên tab: các dòng} và nguồn ("api" / "public"). Thử API trước, không có quyền thì thử bản CSV công khai."""
     sid = sheet_id(cfg.okr.sheet)
     if not sid:
-        raise SystemExit("Chưa khai báo sheet OKR: điền [okr] sheet = \"<link Google Sheet>\" trong config.toml")
+        raise SystemExit("Chưa khai báo sheet OKR: gắn link sheet cho dự án ở màn Dự án")
     try:
         return _fetch_api(cfg, sid), "api"
     except (Exception, SystemExit) as e:  # noqa: BLE001  (chưa cấp quyền / chưa bật API: thử bản công khai)
@@ -125,6 +130,14 @@ def fetch_tables(cfg) -> tuple[dict[str, list[list]], str]:
                            f"Lỗi API: {api_error}. Lỗi đọc công khai: {e}") from e
 
 
+def okr_tab_names(titles: list[str], cfg) -> list[str]:
+    """Các tab OKR theo thứ tự trong sheet: tên bắt đầu bằng "OKR" (hoặc đúng tên okr_tab), trừ tab Weekly."""
+    weekly = cfg.okr.weekly_tab.strip().lower()
+    want = cfg.okr.okr_tab.strip().lower()
+    return [t for t in titles if t.strip().lower() != weekly and
+            (t.strip().lower() == want or t.strip().lower().startswith("okr"))]
+
+
 def _fetch_api(cfg, sid: str) -> dict[str, list[list]]:
     from googleapiclient.discovery import build
 
@@ -134,14 +147,12 @@ def _fetch_api(cfg, sid: str) -> dict[str, list[list]]:
     meta = svc.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(title))").execute()
     titles = [s["properties"]["title"] for s in meta["sheets"]]
     out = {}
-    for want in (cfg.okr.okr_tab, cfg.okr.weekly_tab):
-        title = next((t for t in titles if t.strip().lower() == want.strip().lower()), None)
-        if not title:
-            continue
+    weekly = next((t for t in titles if t.strip().lower() == cfg.okr.weekly_tab.strip().lower()), None)
+    for title in okr_tab_names(titles, cfg) + ([weekly] if weekly else []):
         rng = "'" + title.replace("'", "''") + "'!A1:Z500"
         resp = svc.spreadsheets().values().get(spreadsheetId=sid, range=rng, valueRenderOption="UNFORMATTED_VALUE",
                                                dateTimeRenderOption="SERIAL_NUMBER").execute()
-        out[want] = resp.get("values", [])
+        out[cfg.okr.weekly_tab if title == weekly else title.strip()] = resp.get("values", [])
     return out
 
 
@@ -149,15 +160,13 @@ def _fetch_public(cfg, sid: str) -> dict[str, list[list]]:
     """Bản xuất CSV của từng tab (chỉ được khi sheet để công khai). Tìm gid của tab theo tên trong trang htmlview."""
     page = urllib.request.urlopen(f"https://docs.google.com/spreadsheets/d/{sid}/htmlview", timeout=30).read().decode(
         "utf-8", "replace")
-    gids = {name.strip().lower(): gid for name, gid in re.findall(r'name: "([^"]+)", pageUrl: "[^"]*?gid=(\d+)', page)}
+    tabs = {name.strip(): gid for name, gid in re.findall(r'name: "([^"]+)", pageUrl: "[^"]*?gid=(\d+)', page)}
+    weekly = next((t for t in tabs if t.lower() == cfg.okr.weekly_tab.strip().lower()), None)
     out = {}
-    for want in (cfg.okr.okr_tab, cfg.okr.weekly_tab):
-        gid = gids.get(want.strip().lower())
-        if gid is None:
-            continue
-        url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+    for title in okr_tab_names(list(tabs), cfg) + ([weekly] if weekly else []):
+        url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={tabs[title]}"
         text = urllib.request.urlopen(url, timeout=30).read().decode("utf-8")
-        out[want] = list(csv.reader(io.StringIO(text)))
+        out[cfg.okr.weekly_tab if title == weekly else title] = list(csv.reader(io.StringIO(text)))
     if not out:
         raise RuntimeError("không tìm thấy tab hoặc sheet không công khai")
     return out
@@ -241,22 +250,43 @@ def parse_weekly(rows: list[list], today: date) -> list[dict]:
 # ---- Lưu, đồng bộ ----
 
 def ensure_tables(con: sqlite3.Connection) -> None:
+    cols = [r[1] for r in con.execute("PRAGMA table_info(okr_items)")]
+    if cols and "uid" not in cols:  # bảng kiểu cũ (một đợt): dữ liệu lấy lại từ sheet mỗi lần đồng bộ nên tạo lại
+        con.execute("DROP TABLE okr_items")
     con.executescript(SCHEMA)
+
+
+def combine(cycles: list[tuple[str, list[dict]]]) -> list[dict]:
+    """Gộp hạng mục của nhiều đợt (tab). uid = mã; mã xuất hiện ở hơn một đợt thì uid = "<đợt>|<mã>"."""
+    seen: dict[str, int] = {}
+    for _, its in cycles:
+        for code in {i["code"] for i in its}:
+            seen[code] = seen.get(code, 0) + 1
+    out, sort = [], 0
+    for name, its in cycles:
+        uid = {i["code"]: (f"{name}|{i['code']}" if seen[i["code"]] > 1 else i["code"]) for i in its}
+        for i in its:
+            out.append({**i, "uid": uid[i["code"]], "cycle": name, "sort": sort,
+                        "objective": uid.get(i["objective"], i["objective"])})
+            sort += 1
+    return out
 
 
 def save(con: sqlite3.Connection, items: list[dict], tasks: list[dict], today: date, source: str) -> None:
     ensure_tables(con)
+    if items and "uid" not in items[0]:  # hạng mục của một tab chưa gộp: coi là một đợt
+        items = combine([("OKRs 3 tháng", items)])
     with con:
         con.execute("DELETE FROM okr_items")
         con.executemany(
-            "INSERT INTO okr_items VALUES (:code, :objective, :is_objective, :grp, :title, :details, :qty, :unit, "
+            "INSERT INTO okr_items VALUES (:uid, :cycle, :code, :objective, :is_objective, :grp, :title, :details, :qty, :unit, "
             ":month_text, :start, :end, :pic, :status, :status_raw, :progress, :link, :note, :sort)", items)
         con.execute("DELETE FROM okr_tasks")
         con.executemany(
             "INSERT INTO okr_tasks VALUES (:row, :week, :kind, :okr_code, :item, :task, :link, :issue, :pic, "
             ":priority, :start, :deadline, :status, :status_raw, :progress, :note)", tasks)
         con.executemany("INSERT OR REPLACE INTO okr_status_log VALUES (?, ?, ?)",
-                        [(today.isoformat(), i["code"], i["status"]) for i in items if not i["is_objective"]])
+                        [(today.isoformat(), i["uid"], i["status"]) for i in items if not i["is_objective"]])
         con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         con.execute("INSERT OR REPLACE INTO app_settings VALUES ('okr_synced', ?)", (json.dumps(
             {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": source,
@@ -266,10 +296,12 @@ def save(con: sqlite3.Connection, items: list[dict], tasks: list[dict], today: d
 def sync(con: sqlite3.Connection, cfg, today: date | None = None) -> dict:
     today = today or date.today()
     tables, source = fetch_tables(cfg)
-    items = parse_okr(tables.get(cfg.okr.okr_tab, []), today) if tables.get(cfg.okr.okr_tab) else []
+    cycles = [(name, parse_okr(rows, today)) for name, rows in tables.items()
+               if name != cfg.okr.weekly_tab and rows]
+    items = combine(cycles)
     tasks = parse_weekly(tables.get(cfg.okr.weekly_tab, []), today) if tables.get(cfg.okr.weekly_tab) else []
     save(con, items, tasks, today, source)
-    return {"items": len(items), "tasks": len(tasks), "source": source}
+    return {"items": len(items), "tasks": len(tasks), "source": source, "cycles": [n for n, _ in cycles]}
 
 
 def sync_info(con: sqlite3.Connection) -> dict | None:
@@ -305,26 +337,54 @@ def first_snapshot(con: sqlite3.Connection) -> str | None:
     return con.execute("SELECT MIN(day) FROM okr_status_log").fetchone()[0]
 
 
+def cycles(all_items: list[dict], today: date) -> list[dict]:
+    """Các đợt OKR: tên, ngày bắt đầu/kết thúc (theo hạng mục), có phải đợt hiện tại."""
+    out = []
+    for name in dict.fromkeys(i["cycle"] for i in all_items):
+        its = [i for i in all_items if i["cycle"] == name]
+        starts = [i["start"] for i in its if i["start"]]
+        ends = [i["end"] for i in its if i["end"]]
+        out.append({"name": name, "start": min(starts) if starts else None, "end": max(ends) if ends else None})
+    return out
+
+
+def cycle_at(cs: list[dict], day: date) -> str | None:
+    """Đợt chứa ngày `day`; không có thì đợt gần nhất đã bắt đầu; chưa đợt nào bắt đầu thì đợt đầu tiên."""
+    if not cs:
+        return None
+    d = day.isoformat()
+    inside = [c for c in cs if c["start"] and c["end"] and c["start"] <= d <= c["end"]]
+    if inside:
+        return inside[-1]["name"]
+    started = [c for c in cs if c["start"] and c["start"] <= d]
+    return (max(started, key=lambda c: c["start"]) if started else cs[0])["name"]
+
+
 def is_late(it: dict, today: date) -> bool:
     return bool(it.get("end") and it["status"] != DONE and date.fromisoformat(it["end"]) < today)
 
 
-def overview(con: sqlite3.Connection, today: date, period: tuple[date, date] | None = None) -> dict:
+def overview(con: sqlite3.Connection, today: date, period: tuple[date, date] | None = None,
+             cycle: str | None = None) -> dict:
     """Số tổng, theo mục tiêu, và danh sách cho một kỳ (tuần/tháng): đến hạn trong kỳ, hoàn thành trong kỳ, trễ hạn,
-    kỳ tới."""
-    all_items = items(con)
+    kỳ tới. Chỉ tính một đợt OKR: `cycle`, mặc định đợt chứa cuối kỳ (hoặc hôm nay)."""
+    every = items(con)
+    cs = cycles(every, today)
+    cycle = cycle if cycle in {c["name"] for c in cs} else cycle_at(cs, period[1] if period else today)
+    all_items = [i for i in every if i["cycle"] == cycle]
     objs = [i for i in all_items if i["is_objective"]]
     leaf = [i for i in all_items if not i["is_objective"]]
     counts = {s: sum(1 for i in leaf if i["status"] == s) for s in (DONE, DOING, TODO, OTHER)}
     late = [i for i in leaf if is_late(i, today)]
     per_obj = []
     for o in objs:
-        kids = [i for i in leaf if i["objective"] == o["code"]]
+        kids = [i for i in leaf if i["objective"] == o["uid"]]
         done = sum(1 for i in kids if i["status"] == DONE)
         per_obj.append({**o, "total": len(kids), "done": done, "doing": sum(1 for i in kids if i["status"] == DOING),
                         "late": sum(1 for i in kids if is_late(i, today)),
                         "pct": done / len(kids) if kids else None})
-    out = {"total": len(leaf), "counts": counts, "late": late, "objectives": per_obj, "items": leaf}
+    out = {"total": len(leaf), "counts": counts, "late": late, "objectives": per_obj, "items": leaf,
+           "cycle": cycle, "cycles": cs}
     if period:
         s, e = period
         dd = done_dates(con)
@@ -339,9 +399,9 @@ def overview(con: sqlite3.Connection, today: date, period: tuple[date, date] | N
             "active": [i for i in leaf if overlaps(i, s, e)],
             # Xong trước khi tool bắt đầu theo dõi (thấy "Hoàn thành" ngay lần chụp đầu) thì không biết ngày xong:
             # chỉ tính vào kỳ nếu ngày kết thúc kế hoạch nằm trong kỳ.
-            "done": [i for i in leaf if i["status"] == DONE and dd.get(i["code"]) and (
-                (dd[i["code"]] != first and s.isoformat() <= dd[i["code"]] <= e.isoformat()) or
-                (dd[i["code"]] == first and i["end"] and s.isoformat() <= i["end"] <= e.isoformat()))],
+            "done": [i for i in leaf if i["status"] == DONE and dd.get(i["uid"]) and (
+                (dd[i["uid"]] != first and s.isoformat() <= dd[i["uid"]] <= e.isoformat()) or
+                (dd[i["uid"]] == first and i["end"] and s.isoformat() <= i["end"] <= e.isoformat()))],
             "next": [i for i in leaf if i["status"] != DONE and overlaps(i, *nxt)],
             "tracking_since": first,
         }

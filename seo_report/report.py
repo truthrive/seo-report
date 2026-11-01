@@ -1,4 +1,4 @@
-"""Số liệu báo cáo tuần / tháng cho sếp (spec, mục Xuất Excel → Xuất báo cáo). Dùng chung cho màn Báo cáo và file Excel.
+"""Số liệu báo cáo tuần / tháng gửi quản lý / khách hàng (spec, mục Xuất Excel → Xuất báo cáo). Dùng chung cho màn Báo cáo và file Excel.
 
 - KPI 4 chỉ số GSC của toàn site và của nhóm URL (mặc định SEO chủ lực), so với tuần trước, kèm xu hướng 8 tuần.
 - Top 10 URL tăng và top 10 URL giảm trong nhóm, theo số click tuyệt đối; chỉ xét URL có ≥ 20 click ở một trong hai tuần
@@ -53,6 +53,7 @@ class WeeklyReport:
     group_kpi: Kpi
     group_prev: Kpi
     trend: list[dict] = field(default_factory=list)  # [{week, site_clicks, group_clicks}], cũ → mới
+    trend_periods: list = field(default_factory=list)  # [(từ ngày, đến ngày)] của từng kỳ trong trend
     winners: list[dict] = field(default_factory=list)
     losers: list[dict] = field(default_factory=list)
     ranks: list[dict] = field(default_factory=list)
@@ -68,6 +69,9 @@ class WeeklyReport:
     top_queries: list[dict] = field(default_factory=list)
     index: dict | None = None  # {"ok", "bad", "total"}: index của URL trong nhóm (lần kiểm tra mới nhất)
     okr: dict | None = None  # tiến độ công việc từ sheet OKR; None khi chưa khai báo sheet / chưa đồng bộ
+    organic: dict | None = None  # phiên Organic Search (GA4) kỳ này / kỳ trước / xu hướng; None khi chưa có GA4
+    kpi: dict | None = None  # tiến độ KPI cam kết tại cuối kỳ (kpi.progress); None khi chưa có sheet KPI
+    committed: set | None = None  # bộ từ khóa cam kết (sheet KPI) có hiệu lực cuối kỳ; None = tính mọi từ đang theo dõi
 
 
 def ai_block(cfg, con, week: tuple[date, date]) -> dict | None:
@@ -89,6 +93,90 @@ def ai_block(cfg, con, week: tuple[date, date]) -> dict | None:
                 "warnings": [w["code"] for w in s["warnings"] + src["warnings"]]}
     except (Exception, SystemExit) as e:  # token thiếu quyền GA4, mất mạng…
         return {"error": str(e)}
+
+
+def organic_block(cfg, con, cur: tuple[date, date], prev: tuple[date, date],
+                  trend_periods: list[tuple[date, date]]) -> dict | None:
+    """Phiên GA4 kênh Organic Search toàn site: kỳ này, kỳ trước, % thay đổi, xu hướng theo kỳ. Một truy vấn theo ngày
+    cho cả khoảng rồi cộng theo kỳ. Lỗi GA4 không làm hỏng báo cáo: trả về {"error"}."""
+    if not cfg.ga4_property:
+        return None
+    try:
+        from . import ai_classifier as C, auth, ga4_query
+        client = ga4_query.GA4Client(auth.build_ga4_data(auth.get_credentials(cfg, need=auth.ALL_SCOPES)),
+                                     cfg.ga4_property, con)
+        periods = list(trend_periods) + [cur, prev]
+        lo, hi = min(p[0] for p in periods), max(p[1] for p in periods)
+        rep = client.run(["date"], ["sessions"], lo, hi, C.channel_filter("Organic Search"), limit=5000)
+        daily = {date(int(r["date"][:4]), int(r["date"][4:6]), int(r["date"][6:])): r["sessions"] for r in rep.rows}
+
+        def total(s, e):
+            return sum(v for d, v in daily.items() if s <= d <= e)
+        now, before = total(*cur), total(*prev)
+        return {"sessions": now, "prev": before, "change": change(now, before),
+                "spark": [total(s, e) for s, e in trend_periods]}
+    except (Exception, SystemExit) as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+def committed_keywords(con, day: date) -> set[str] | None:
+    """Bộ từ khóa cam kết (sheet KPI) có hiệu lực vào ngày `day`; None khi chưa có sheet KPI."""
+    from . import kpi as KP
+    try:
+        ver = KP.version_at(KP.versions(con), day)
+    except sqlite3.Error:
+        return None
+    if not ver or not ver.get("keywords"):
+        return None
+    return {k["keyword"].lower() for k in ver["keywords"]}
+
+
+def rank_summary(rep: "WeeklyReport", committed: set[str] | None = None) -> dict:
+    """Thứ hạng cho người đọc báo cáo: số từ khóa trong top 3/5/10 lần check này và lần trước, 3 từ tăng / giảm mạnh
+    nhất. Chỉ tính bộ từ khóa cam kết nếu có. Ngoài độ sâu check coi như hạng (độ sâu + 1) khi so sánh."""
+    ranks = [r for r in rep.ranks if not committed or r["keyword"].lower() in committed]
+
+    def pos(rank, depth):
+        return rank if rank is not None else (depth or 100) + 1
+
+    now = {n: sum(1 for r in ranks if r["rank"] is not None and r["rank"] <= n) for n in (3, 5, 10)}
+    with_prev = [r for r in ranks if r["prev_depth"] is not None]
+    prev = {n: sum(1 for r in with_prev if r["prev"] is not None and r["prev"] <= n) for n in (3, 5, 10)}
+    moves = [{"keyword": r["keyword"], "from": r["prev"], "to": r["rank"], "depth": r["depth"],
+              "prev_depth": r["prev_depth"], "diff": pos(r["prev"], r["prev_depth"]) - pos(r["rank"], r["depth"])}
+             for r in with_prev]
+    def dist(pairs):  # số từ khóa theo nhóm vị trí: top 3 / 4–10 / 11–30 / ngoài top 30 (kể cả ngoài độ sâu check)
+        out = [0, 0, 0, 0]
+        for rank in pairs:
+            out[0 if rank is not None and rank <= 3 else 1 if rank is not None and rank <= 10 else
+                2 if rank is not None and rank <= 30 else 3] += 1
+        return out
+
+    return {"total": len(ranks), "committed": bool(committed), "now": now, "prev": prev, "has_prev": bool(with_prev),
+            "dist": {"now": dist(r["rank"] for r in ranks), "prev": dist(r["prev"] for r in with_prev)},
+            "up": sorted([m for m in moves if m["diff"] > 0], key=lambda m: -m["diff"])[:3],
+            "down": sorted([m for m in moves if m["diff"] < 0], key=lambda m: m["diff"])[:3]}
+
+
+def kpi_for_report(cfg, con, rep: "WeeklyReport", with_ga4: bool = True) -> dict | None:
+    """Tiến độ KPI nhìn từ cuối kỳ báo cáo (tháng dự án chứa ngày cuối kỳ)."""
+    from . import kpi as KP
+    try:
+        if not KP.versions(con):
+            return None
+        day = min(date.today(), rep.week[1] + timedelta(days=1))
+        ga4 = None
+        if with_ga4:
+            try:
+                ga4 = KP.ga4_organic(cfg, con)
+            except (Exception, SystemExit):  # noqa: BLE001
+                ga4 = None
+        p = KP.progress(con, cfg.site_url, day, ga4)
+        if p is not None:
+            p["ga4"] = ga4 is not None
+        return p
+    except sqlite3.Error:
+        return None
 
 
 def _site_kpi(con, site: str, start: date, end: date) -> Kpi:
@@ -205,6 +293,7 @@ def _build(con, cfg, group_id, cur, prev, trend_periods, kind, with_ai) -> Weekl
     )
     rep.note = get_note(con, site, note_key(rep))
 
+    rep.trend_periods = list(trend_periods)
     for s, e in trend_periods:
         sk, gk = _site_kpi(con, site, s, e), _group_kpi(K.url_period(con, ids, s, e))
         rep.trend.append({"week": f"{s:%d/%m}" if kind == "week" else f"T{s.month}/{s:%y}",
@@ -240,6 +329,7 @@ def _build(con, cfg, group_id, cur, prev, trend_periods, kind, with_ai) -> Weekl
         if old:
             counts[_bucket(old[1])][1] += 1
     rep.ranks.sort(key=lambda r: (r["rank"] is None, r["rank"] or 0, r["keyword"]))
+    rep.committed = committed_keywords(con, we)
     rep.rank_buckets = counts
     from . import indexing as IX
     latest = IX.latest(con, ids)
@@ -247,6 +337,8 @@ def _build(con, cfg, group_id, cur, prev, trend_periods, kind, with_ai) -> Weekl
                  "bad": sum(1 for i in ids if i in latest and not latest[i]["indexed"]), "total": len(ids)}
     if with_ai:
         rep.ai = ai_block(cfg, con, (ws, we))
+        rep.organic = organic_block(cfg, con, (ws, we), rep.prev_week, trend_periods)
+        rep.kpi = kpi_for_report(cfg, con, rep)
     rep.aio = aio_block(con, cfg.site_url, (ws, we), rep.prev_week, trend_periods)
     rep.okr = okr_block(con, cfg, (ws, we))
     return rep
@@ -321,7 +413,10 @@ def aio_block(con: sqlite3.Connection, site: str, week: tuple[date, date], prev:
     periods = trend_periods or [(week[0] - timedelta(days=7 * i), week[1] - timedelta(days=7 * i))
                                 for i in range(7, -1, -1)]
     spark = [G.period_total(con, site, s, e)["impressions"] for s, e in periods]  # kỳ chưa đủ ngày là None
+    webs = [sum(G.web_daily(con, site, s, e).values()) for s, e in periods]
+    share_spark = [v / w if v is not None and w else None for v, w in zip(spark, webs)]
     return {"impressions": cur["impressions"], "prev": old["impressions"], "covered": cur["covered"], "spark": spark,
+            "share_spark": share_spark,
             "share": cur["impressions"] / web if cur["impressions"] is not None and web else None,
             "prev_share": old["impressions"] / web_prev if old["impressions"] is not None and web_prev else None,
             "change": change(cur["impressions"], old["impressions"]), "data_until": last}
@@ -392,14 +487,14 @@ def summary(rep: "WeeklyReport") -> dict:
     if rep.winners:
         w = rep.winners[0]
         seo_notes.append(note(f"{_path(w['url'], rep.site)} +{w['diff']}",
-                              f"URL tăng click nhiều nhất: {_path(w['url'], rep.site)} (+{w['diff']} click)", "up"))
+                              f"Trang tăng click nhiều nhất: {_path(w['url'], rep.site)} (+{w['diff']} click)", "up"))
     if rep.losers:
         lo = rep.losers[0]
         seo_notes.append(note(f"{_path(lo['url'], rep.site)} {lo['diff']}",
-                              f"URL giảm click nhiều nhất: {_path(lo['url'], rep.site)} ({lo['diff']} click)", "down"))
+                              f"Trang giảm click nhiều nhất: {_path(lo['url'], rep.site)} ({lo['diff']} click)", "down"))
     wrong = sum(1 for r in rep.ranks if r["target_url"] and r["ranking_url"] and r["ranking_url"] != r["target_url"])
     if wrong:
-        seo_notes.append(note(f"{wrong} keyword sai URL", f"{wrong} keyword đang xếp hạng bằng URL khác URL mục tiêu",
+        seo_notes.append(note(f"{wrong} từ khóa sai trang", f"{wrong} từ khóa đang xếp hạng bằng trang khác trang mục tiêu",
                               "warn"))
     if ai and ai["sources"]:
         top = ai["sources"][0]
@@ -414,7 +509,8 @@ def summary(rep: "WeeklyReport") -> dict:
 
 
 def _path(url: str, site: str) -> str:
-    return (url or "").replace(site.rstrip("/"), "") or "/"
+    p = (url or "").replace(site.rstrip("/"), "") or "/"
+    return "Trang chủ" if p == "/" else p
 
 
 def rank_change(date_, rank, depth, prev, prev_depth) -> tuple[str, str, int]:

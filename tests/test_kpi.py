@@ -32,10 +32,26 @@ class ParseTest(unittest.TestCase):
         self.assertEqual((m2["top10"], m3["top3"], m3["top5"], m3["top10"]), (0.25, 0.5, 0.5, 0.75))
         self.assertEqual(m3["sessions"], 59348)
 
+    def test_more_months_added_later(self):
+        rows = [r[:] for r in ROWS]
+        rows[5] = ["Tháng thứ dự án"] + list(range(1, 10))           # dự án kéo dài thành 9 tháng
+        rows[9] = ["Số lượng từ khóa vào top 10 (cam kết)"] + ["-"] * 8 + ["70%"]
+        d = KP.parse_kpi(rows, TODAY)
+        self.assertEqual([m["n"] for m in d["months"]], list(range(1, 10)))
+        self.assertEqual(d["months"][8]["top10"], 0.7)
+
     def test_keywords_dedup_and_header(self):
         kws = KP.parse_keywords([["Từ khóa", "URL mục tiêu"], ["kính A", "https://x.vn/a/"], ["Kính A", ""],
                                  ["kính B"], ["", "x"]])
-        self.assertEqual(kws, [{"keyword": "kính A", "url": "https://x.vn/a/"}, {"keyword": "kính B", "url": ""}])
+        self.assertEqual(kws, [{"keyword": "kính A", "url": "https://x.vn/a/", "target": None},
+                               {"keyword": "kính B", "url": "", "target": None}])
+
+    def test_keywords_by_header_with_top_target(self):
+        kws = KP.parse_keywords([["Ghi chú", "Từ khóa", "Top target", "URL mục tiêu"],
+                                 ["", "kính A", "Top 3", "https://x.vn/a/"], ["x", "kính B", 10, ""],
+                                 ["", "kính C", "", ""]])
+        self.assertEqual([(k["keyword"], k["target"], k["url"]) for k in kws],
+                         [("kính A", 3, "https://x.vn/a/"), ("kính B", 10, ""), ("kính C", None, "")])
 
     def test_month_window(self):
         self.assertEqual(KP.month_window(date(2026, 11, 1), 1), (date(2026, 11, 1), date(2026, 11, 30)))
@@ -53,7 +69,8 @@ class ProgressTest(unittest.TestCase):
                                    "VALUES (?, ?, NULL, 'kpi', 't', '2026-11-01')", (SITE, kw))
             self.ids[kw] = cur.lastrowid
         data = KP.parse_kpi(ROWS, TODAY)
-        data["keywords"] = [{"keyword": k, "url": ""} for k in ("a", "b", "c", "d")]
+        data["keywords"] = [{"keyword": k, "url": "", "target": t} for k, t in
+                            (("a", 3), ("b", 3), ("c", 10), ("d", None))]
         KP.save(self.con, data, date(2026, 11, 1))
 
     def tearDown(self):
@@ -80,6 +97,9 @@ class ProgressTest(unittest.TestCase):
         self.assertEqual(m3["actual_sessions"], 19000)    # 01/01 → 19/01 (hôm qua)
         self.assertEqual(m3["forecast"], 31000)           # 1000/ngày × 31 ngày
         self.assertFalse(ch["sessions"]["ok"])            # dự báo 31.000 < cam kết 59.348
+        self.assertEqual((m3["rank"]["target_set"], m3["rank"]["target_ok"]), (3, 1))  # a đạt top 3, b hạng 4
+        items = {x["keyword"]: x["ok"] for x in m3["rank"]["items"]}
+        self.assertEqual(items, {"a": True, "b": False, "c": False, "d": None})
         m1 = p["months"][0]
         self.assertEqual(m1["status"], "closed")
         self.assertIsNone(m1["checks"]["top10"]["ok"])    # tháng không cam kết: không chấm
@@ -106,7 +126,7 @@ class ProgressTest(unittest.TestCase):
         self.assertEqual(d["months"][5]["sessions"], 71228)
         self.assertIsNone(d["start"])
         kws = KP.parse_keywords([list(r) for r in wb[KP.KW_TAB].iter_rows(values_only=True)])
-        self.assertEqual(kws, [{"keyword": "kính A", "url": "https://x.vn/a/"}])
+        self.assertEqual(kws, [{"keyword": "kính A", "url": "https://x.vn/a/", "target": None}])
 
 
 if __name__ == "__main__":
