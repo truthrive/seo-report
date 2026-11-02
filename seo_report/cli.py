@@ -22,9 +22,12 @@ def cmd_login(cfg) -> None:
     if not any(s["siteUrl"] == cfg.site_url for s in sites):
         print(f"\nCảnh báo: site_url = '{cfg.site_url}' không có trong danh sách trên. "
               "Sửa config.toml cho đúng một dòng ở trên.")
-    if auth.DRIVE_SCOPE not in (creds.scopes or []):
-        print("\nCHƯA có quyền Google Drive (để lưu Google Sheets / Slides / PDF): ô 'Xem, sửa, tạo và xóa các tệp "
-              "Google Drive mà bạn dùng với ứng dụng này' chưa được tích. Chạy lại lệnh login nếu cần chức năng này.")
+    if auth.missing_scopes(creds.scopes or [], (auth.DRIVE_SCOPE,)):
+        print("\nCHƯA có quyền Google Drive (để lưu Google Sheets / Slides / PDF): ô Google Drive chưa được tích. "
+              "Chạy lại lệnh login nếu cần chức năng này.")
+    elif auth.missing_scopes(creds.scopes or [], (auth.DRIVE_FULL_SCOPE, auth.SHEETS_WRITE_SCOPE)):
+        print("\nCHƯA có quyền Google Drive đầy đủ / ghi Google Sheets: chưa tạo được sheet dự án từ sheet mẫu gốc "
+              "(xuất báo cáo và đọc sheet vẫn chạy). Chạy lại lệnh login và tích đủ các ô nếu cần.")
     if auth.GA4_SCOPE not in (creds.scopes or []):
         print("\nCHƯA có quyền đọc Google Analytics: trên màn hình đồng ý của Google, ô 'Xem dữ liệu Google "
               "Analytics' chưa được tích. Chạy lại lệnh login và tích đủ cả hai ô.")

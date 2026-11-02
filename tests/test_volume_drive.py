@@ -128,8 +128,10 @@ class DriveTest(unittest.TestCase):
 
     def test_login_requests_drive_scope(self):
         from seo_report import auth
-        self.assertIn(auth.DRIVE_SCOPE, auth.SCOPES)
+        # Đăng nhập xin quyền Drive đầy đủ (copy sheet mẫu gốc); quyền đó bao luôn drive.file của phần xuất báo cáo
+        self.assertEqual(auth.missing_scopes(auth.SCOPES, (auth.DRIVE_SCOPE,)), [])
         self.assertNotIn(auth.DRIVE_SCOPE, auth.ALL_SCOPES)  # chức năng GA4 không đòi quyền Drive
+        self.assertNotIn(auth.DRIVE_FULL_SCOPE, auth.ALL_SCOPES)
 
 
 class SlidesTest(unittest.TestCase):

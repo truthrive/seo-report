@@ -352,6 +352,42 @@ def set_budget(con: sqlite3.Connection, slug: str, usd: float, user: str) -> Non
     con.commit()
 
 
+# ---- Cài đặt chung của tool (file dữ liệu chính) ----
+
+def setting(con: sqlite3.Connection, key: str, value: str | None = None) -> str:
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    if value is not None:
+        con.execute("INSERT OR REPLACE INTO app_settings VALUES (?, ?)", (key, value))
+        con.commit()
+        return value
+    row = con.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else ""
+
+
+def master_sheet(con: sqlite3.Connection) -> str:
+    """ID Google Sheet mẫu gốc (OKRs, Weekly Task Tracker, Chi phí, Content…): tool copy thành sheet của dự án mới."""
+    return setting(con, "master_sheet")
+
+
+def set_master_sheet(con: sqlite3.Connection, link_or_id: str) -> str:
+    from .okr import sheet_id
+    sid = sheet_id((link_or_id or "").strip())
+    if sid and not re.fullmatch(r"[A-Za-z0-9_-]{20,}", sid):
+        raise ValueError("Không nhận ra link Google Sheet")
+    return setting(con, "master_sheet", sid or "")
+
+
+def set_sheet_link(con: sqlite3.Connection, slug: str, sheet: str, user: str) -> None:
+    """Gắn sheet dự án (OKRs + Weekly Task + KPI) cho một dự án: màn OKR đọc từ đây."""
+    p = get(con, slug)
+    if not p or p["slug"] != slug:
+        raise ValueError("Không có dự án này")
+    s = {**p["settings"], "okr_sheet": sheet}
+    con.execute("UPDATE projects SET settings = ?, updated_at = ?, updated_by = ? WHERE slug = ?",
+                (json.dumps(s, ensure_ascii=False), _now(), user, slug))
+    con.commit()
+
+
 def set_logo(con: sqlite3.Connection, slug: str, logo: str, user: str) -> None:
     con.execute("UPDATE projects SET logo = ?, updated_at = ?, updated_by = ? WHERE slug = ?", (logo, _now(), user, slug))
     con.commit()
@@ -371,7 +407,7 @@ def setup_steps(base: Config, project: dict, st: dict, people: int) -> list[tupl
     s = project["settings"]
     return [("Dữ liệu Search Console", bool(st["days"])), ("Gắn GA4", bool(project["ga4_property"])),
             ("Ngân sách check rank", bool(s.get("rank_budget_usd")) or bool(s.get("rank_paused"))),
-            ("Sheet KPI cam kết", kpi_sheet), ("Cấp tài khoản khách / team", people > 0)]
+            ("Sheet dự án (KPI cam kết)", kpi_sheet), ("Cấp tài khoản khách / team", people > 0)]
 
 
 def status(base: Config, project: dict) -> dict:

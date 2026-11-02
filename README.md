@@ -20,7 +20,7 @@ Tool báo cáo SEO và GEO tự chạy (self-hosted) cho người làm SEO và a
 2. **APIs & Services → Library**, bật các API:
    - Google Search Console API
    - Google Analytics Data API và Google Analytics Admin API (phần GEO, lượt truy cập)
-   - Google Drive API (lưu báo cáo lên Drive) và Google Sheets API (đọc sheet KPI / OKR)
+   - Google Drive API (lưu báo cáo lên Drive, copy sheet mẫu gốc) và Google Sheets API (đọc sheet OKR / KPI, ghi tab KPI vào sheet dự án)
 3. **APIs & Services → OAuth consent screen**:
    - **User type**: **Internal** nếu tài khoản Google thuộc Google Workspace của công ty; Gmail cá nhân thì **External**.
    - Điền tên app (ví dụ `SEO Report`) và email hỗ trợ.
@@ -70,7 +70,7 @@ Màn **Quản trị → Dự án**. Mỗi website là một dự án; website đ
 **Mỗi dự án có:**
 - File dữ liệu riêng `data/projects/<mã>.db`: số liệu các khách không bao giờ nằm chung một file.
 - Cấu hình riêng (sửa bằng ✏️): GSC, GA4, từ khóa thương hiệu, ngân sách và thiết bị check rank, sheet OKR, logo, quy tắc phân loại URL.
-- Sheet KPI cam kết gắn ở màn **KPI cam kết** của dự án đó.
+- Sheet dự án (OKRs, Weekly Task Tracker, KPI cam kết trong một file): dự án chưa có thì màn **KPI cam kết** có wizard tạo từ **sheet mẫu gốc** (cài ở cuối màn Dự án).
 
 **Lưu trữ** một dự án: ẩn khỏi danh sách, job hằng ngày bỏ qua, dữ liệu vẫn giữ, khôi phục được. Tool không có nút xóa dự án.
 
@@ -159,7 +159,7 @@ Gợi ý: Content, sếp dùng **Team xem**, SEO dùng **Được sửa**. **Ch�
 |---|---|
 | Tổng quan | Nhịp số liệu 7 / 28 / 90 ngày gần nhất so với cùng số ngày trước: click, lượt hiển thị (GSC), lượt truy cập mọi kênh / Organic / từ AI (GA4), tỷ lệ hiện trong AI; thứ hạng, index, OKR, KPI cam kết, việc cần xử lý (team) |
 | Báo cáo | Bản chốt gửi người nhận, chọn **Tuần** hoặc **Tháng** và kỳ so sánh (kỳ trước, cùng kỳ năm trước, hoặc một tuần / tháng bất kỳ trước đó): nhận xét, KPI, SEO, GEO, thứ hạng, công việc; xuất Excel / Sheets / Slides / PDF |
-| KPI cam kết | % từ khóa top 3/5/10 và phiên Organic theo tháng dự án, đọc từ sheet mẫu |
+| KPI cam kết | Mỗi cam kết một dòng: từ khóa top 3/5/10 (% hoặc số, bộ chung hay bộ riêng), phiên Organic Search / AI Assistant theo mức tháng hoặc tăng thêm cộng dồn; đọc từ sheet dự án |
 | Công việc & OKR | OKR và Weekly Task từ Google Sheet, Gantt, việc trễ hạn |
 | Hiệu suất URL | Từng URL: click, head KW, keyword phụ, target KW, cannibalization, index, xu hướng 12 tuần |
 | Từ khóa & rank | Check rank DataForSEO, lịch check, độ sâu, lịch sử vị trí, ngân sách |
@@ -179,9 +179,11 @@ Báo cáo gửi đi chỉ có chỉ số người đọc cần; chỉ số vận
 
 **Google Drive:** nút **Xuất** lưu Google Sheets / Slides / PDF vào folder "SEO Report – <tên miền>" do tool tạo (quyền `drive.file`: tool chỉ thấy file nó tạo).
 
-**KPI cam kết:** màn KPI cam kết → **Tạo sheet mẫu** (2 tab "KPI cam kết" và "Từ khóa cam kết") hoặc dán link sheet có 2 tab đúng tên. Tháng dự án tính từ ngày bắt đầu đến trước cùng ngày tháng sau; thứ hạng lấy lần check cuối trong tháng; mỗi lần sheet đổi tool lưu một phiên bản, tháng đã chốt không bị đổi.
+**KPI cam kết:** dự án chưa có sheet → màn KPI cam kết hiện wizard 4 bước (thông tin và số tháng → thứ hạng → traffic, baseline lấy từ GA4 → xem lại). Tool copy **sheet mẫu gốc** (dán link ở cuối màn Dự án; cần quyền Drive đầy đủ, chạy lại `login` một lần) thành "Sheet dự án – <tên miền>" trong folder Drive của dự án, ghi 2 tab "KPI cam kết" và "Từ khóa cam kết" và gắn luôn cho cả màn OKR. Chưa cài sheet mẫu gốc thì tool tạo file chỉ có 2 tab KPI. Cũng có thể dán link sheet đã có.
 
-**OKR:** link sheet ở cấu hình dự án. Mỗi tab tên bắt đầu bằng "OKRs" là một đợt; tab "Weekly Task Tracker" dùng chung.
+Tab KPI cam kết: khối thông tin (tên, ngày bắt đầu, số tháng, baseline Organic / AI Assistant) và bảng mỗi cam kết một dòng `Loại | Nguồn / Bộ | Đơn vị | tháng 1, 2, …`: **Top N** (% hoặc số từ khóa; *Bộ chung* tính trên cả danh sách, *Bộ riêng* chỉ từ khóa có Top target = N), **Mức tháng** (phiên phải đạt trong tháng), **Tăng thêm cộng dồn** (mức tăng so với baseline hoạch định cho tháng; thực tế = phiên − baseline, cộng dồn; tổng các ô = cam kết cả dự án). Nguồn: Organic Search hoặc kênh AI Assistant của GA4 (ChatGPT, Gemini, Claude…; click từ AI Overviews nằm trong Organic). Mẫu cũ (hàng "Tháng thứ dự án") vẫn đọc được. Tháng dự án tính từ ngày bắt đầu đến trước cùng ngày tháng sau; thứ hạng lấy lần check cuối trong tháng, báo cáo luôn hiện cả % lẫn số từ khóa; mỗi lần sheet đổi tool lưu một phiên bản, tháng đã chốt không bị đổi.
+
+**OKR:** link sheet dự án ở cấu hình dự án (wizard KPI tự điền). Mỗi tab tên bắt đầu bằng "OKRs" là một đợt; tab "Weekly Task Tracker" dùng chung.
 
 **DataForSEO (check rank, volume):**
 1. Đăng ký tại https://app.dataforseo.com/register.

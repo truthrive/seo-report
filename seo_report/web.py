@@ -570,7 +570,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("KPI cam kết", user, P, page_ctx(P), period=False, group=False)
-        build_kpi_page(ui, P.cfg, P.connect, user)
+        build_kpi_page(ui, P.cfg, P.connect, user, app_connect, P.project)
 
     @ui.page("/login")
     def login_page(request: Request, next: str = "/"):

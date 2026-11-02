@@ -13,10 +13,15 @@ from .config import Config
 
 GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
-DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"  # chỉ file/folder do tool tạo
-SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"  # đọc sheet OKR / task (chỉ đọc)
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"  # file/folder do tool tạo (xuất báo cáo, sheet mẫu)
+DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"  # copy sheet mẫu gốc của người dùng thành sheet dự án
+SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"  # đọc sheet OKR / KPI
+SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets"  # ghi tab KPI cam kết vào sheet dự án
 ALL_SCOPES = [GSC_SCOPE, GA4_SCOPE]  # quyền cho các chức năng đọc số liệu
-SCOPES = ALL_SCOPES + [DRIVE_SCOPE, SHEETS_SCOPE]  # quyền xin khi đăng nhập
+SCOPES = ALL_SCOPES + [DRIVE_FULL_SCOPE, SHEETS_WRITE_SCOPE]  # quyền xin khi đăng nhập
+# Quyền rộng hơn bao luôn quyền hẹp: token đã cấp drive (đầy đủ) thì không cần drive.file, spreadsheets thì đọc được.
+COVERS = {DRIVE_SCOPE: {DRIVE_FULL_SCOPE}, SHEETS_SCOPE: {SHEETS_WRITE_SCOPE, DRIVE_FULL_SCOPE},
+          SHEETS_WRITE_SCOPE: {DRIVE_FULL_SCOPE}}
 
 
 def _save(creds: Credentials, cfg: Config) -> None:
@@ -25,8 +30,13 @@ def _save(creds: Credentials, cfg: Config) -> None:
 
 
 def _missing(creds: Credentials, need) -> list[str]:
-    granted = set(creds.scopes or [])
-    return [s for s in need if s not in granted]
+    return missing_scopes(creds.scopes or [], need)
+
+
+def missing_scopes(granted, need) -> list[str]:
+    """Quyền trong `need` mà token chưa có (quyền rộng hơn tính là đã có)."""
+    granted = set(granted)
+    return [s for s in need if s not in granted and not (COVERS.get(s, set()) & granted)]
 
 
 def account_email(cfg: Config) -> str:
@@ -49,9 +59,12 @@ def get_credentials(cfg: Config, interactive: bool = False, need=(GSC_SCOPE,)) -
     if creds and _missing(creds, need):
         if not interactive:
             miss = _missing(creds, need)
-            what = ("Google Drive" if DRIVE_SCOPE in miss else "đọc Google Sheets" if SHEETS_SCOPE in miss
+            what = ("Google Drive đầy đủ (copy sheet mẫu gốc)" if DRIVE_FULL_SCOPE in miss
+                    else "ghi Google Sheets" if SHEETS_WRITE_SCOPE in miss
+                    else "Google Drive" if DRIVE_SCOPE in miss else "đọc Google Sheets" if SHEETS_SCOPE in miss
                     else "đọc Google Analytics")
-            raise SystemExit(f"Tài khoản chưa cấp quyền {what} cho tool. Chạy lại: python -m seo_report login")
+            raise SystemExit(f"Tài khoản chưa cấp quyền {what} cho tool. Chạy lại: python -m seo_report login "
+                             "(đăng nhập Google lại một lần, tích đủ các ô quyền)")
         creds = None  # đăng nhập lại để cấp thêm quyền
     if creds and creds.valid:
         return creds

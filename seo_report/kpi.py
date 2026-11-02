@@ -722,9 +722,9 @@ def template_xlsx(project: str, keywords: list[tuple[str, str]], data: dict | No
     for j, t in enumerate(["Từ khóa", "URL mục tiêu", "Top target", "Ghi chú"], start=1):
         c = kw.cell(1, j, t)
         c.fill, c.font, c.border = navy, white, box
-    for i, (k, u) in enumerate(keywords, start=2):
-        kw.cell(i, 1, k)
-        kw.cell(i, 2, u)
+    for i, row in enumerate(keywords, start=2):
+        for j, v in enumerate(row[:4], start=1):
+            kw.cell(i, j, v if v is not None else "")
     for col, w in zip("ABCD", (38, 60, 14, 30)):
         kw.column_dimensions[col].width = w
     kw.freeze_panes = "A2"
@@ -741,5 +741,225 @@ def create_template(con, cfg) -> dict:
     host = domain(cfg.site_url)
     kws = [(k["keyword"], k["target_url"] or "") for k in R.keywords(con, cfg.site_url, K.latest_date(con, cfg.site_url))]
     f = D.upload(svc, template_xlsx(f"SEO {host}", kws), f"KPI cam kết SEO – {host}", D.XLSX, folder, D.SHEET)
+    set_sheet(con, f["id"])
+    return f
+
+
+# ---- Thiết lập cam kết (wizard) và tạo sheet dự án ----
+
+def spread(final: float, count: int, start_value: float = 0.0, integer: bool = False) -> list:
+    """`count` giá trị tăng tuyến tính từ start_value tới final (giá trị cuối đúng bằng final), làm gợi ý theo tháng."""
+    if count <= 0:
+        return []
+    out = [start_value + (final - start_value) * (k + 1) / count for k in range(count)]
+    return [int(round(v)) for v in out] if integer else [round(v, 2) for v in out]
+
+
+def split_total(total: int, count: int) -> list[int]:
+    """Chia tổng thành count phần nguyên gần bằng nhau; phần cuối nhận phần dư."""
+    if count <= 0:
+        return []
+    base = int(total) // count
+    out = [base] * count
+    out[-1] += int(total) - base * count
+    return out
+
+
+def plan(spec: dict) -> dict:
+    """Dữ liệu tab KPI từ lựa chọn trên wizard. spec = {project, start, months (số tháng), baseline: {organic, ai},
+    rank: {tops: [3, 5, 10], mode: shared|per_tier, unit: pct|count, from: tháng bắt đầu chấm, finals: {top: mốc cuối}},
+    traffic: {organic: {level: mức tăng cuối dự án | None, cum: tổng tăng thêm | None}, ai: {…}}}.
+    Chỉ tiêu từng tháng chỉ là gợi ý chia đều; sửa trên sheet hoặc trên tool sau."""
+    n = max(1, int(spec.get("months") or 1))
+    months = list(range(1, n + 1))
+    base = spec.get("baseline") or {}
+    lines = []
+    rk = spec.get("rank") or {}
+    finals = {int(k): v for k, v in (rk.get("finals") or {}).items() if v is not None}
+    frm = max(1, min(n, int(rk.get("from") or 1)))
+    for top in sorted(int(t) for t in rk.get("tops") or []):
+        vals = spread(finals[top], n - frm + 1, 0, integer=rk.get("unit") == "count") if top in finals else []
+        targets = {str(m): None for m in months}
+        for k, m in enumerate(range(frm, n + 1)):
+            targets[str(m)] = vals[k] if vals else None
+        lines.append({"kind": "rank", "top": top, "mode": rk.get("mode") or "shared", "unit": rk.get("unit") or "pct",
+                      "targets": targets})
+    for src in ("organic", "ai"):
+        t = (spec.get("traffic") or {}).get(src) or {}
+        if t.get("level") is not None:
+            b = base.get(src) or 0
+            vals = spread(b + int(t["level"]), n, b, integer=True)
+            lines.append({"kind": "level", "source": src, "targets": {str(m): vals[m - 1] for m in months}})
+        if t.get("cum") is not None:
+            vals = split_total(int(t["cum"]), n)
+            lines.append({"kind": "cum", "source": src, "targets": {str(m): vals[m - 1] for m in months}})
+    return {"project": spec.get("project") or "", "start": spec.get("start") or None, "months": months,
+            "baseline": {"organic": base.get("organic"), "ai": base.get("ai")}, "lines": lines}
+
+
+def baseline_suggest(sessions, start: date, n_months: int = 3) -> dict:
+    """Baseline gợi ý = trung bình phiên/tháng của n_months tháng lịch trọn vẹn trước tháng bắt đầu, từng nguồn.
+    sessions(source, s, e) -> {ngày: phiên} (ga4_sessions)."""
+    first = start.replace(day=1)
+    windows = []
+    for _ in range(n_months):
+        end = first - timedelta(days=1)
+        first = end.replace(day=1)
+        windows.append((first, end))
+    windows.reverse()
+    out = {"months": []}
+    for s, e in windows:
+        row = {"label": f"{s:%m/%Y}"}
+        for src in SOURCES:
+            row[src] = sum(sessions(src, s, e).values())
+        out["months"].append(row)
+    for src in SOURCES:
+        out[src] = int(round(sum(m[src] for m in out["months"]) / len(out["months"]))) if out["months"] else None
+    return out
+
+
+def parse_keyword_text(text: str) -> list[tuple[str, str, int | None]]:
+    """Từ khóa dán trong wizard, mỗi dòng một từ: 'từ khóa | URL mục tiêu | Top 3' (URL và Top không bắt buộc, thứ tự
+    tùy ý; cũng nhận dấu tab)."""
+    out, seen = [], set()
+    for raw in (text or "").splitlines():
+        parts = [x.strip() for x in re.split(r"\||\t", raw) if x.strip()]
+        if not parts or parts[0].startswith("#"):
+            continue
+        kw, url, target = parts[0], "", None
+        for x in parts[1:]:
+            if x.lower().startswith("http"):
+                url = x
+            elif re.fullmatch(r"(?i)top\s*\d+|\d+", x):
+                target = _top(x)
+        if kw.lower() in seen:
+            continue
+        seen.add(kw.lower())
+        out.append((kw, url, target))
+    return out
+
+
+def sheet_values(data: dict, keywords: list[tuple]) -> dict[str, list[list]]:
+    """Các ô của hai tab KPI để ghi lên Google Sheet (hoặc file mẫu)."""
+    kw_rows = [["Từ khóa", "URL mục tiêu", "Top target", "Ghi chú"]]
+    for row in keywords:
+        kw, url, target = (list(row) + [None, None])[:3]
+        kw_rows.append([kw, url or "", f"Top {target}" if target else "", ""])
+    return {KPI_TAB: kpi_grid(data), KW_TAB: kw_rows}
+
+
+def _norm_tab(t: str) -> str:
+    t = t.strip().lower()
+    for p in ("bản sao của ", "copy of "):
+        t = t.removeprefix(p)
+    return t
+
+
+def _format_requests(tab: dict, rows: list[list], is_kpi: bool) -> list[dict]:
+    """Định dạng tab vừa ghi: tiêu đề đậm nền xanh, % cho dòng Top theo %, số có dấu phân cách, độ rộng cột."""
+    sid = tab["sheetId"]
+
+    def cell_fmt(r0, r1, c0, c1, fmt, fields):
+        return {"repeatCell": {"range": {"sheetId": sid, "startRowIndex": r0, "endRowIndex": r1,
+                                         "startColumnIndex": c0, "endColumnIndex": c1},
+                               "cell": {"userEnteredFormat": fmt}, "fields": fields}}
+
+    def width(c0, c1, px):
+        return {"updateDimensionProperties": {"range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": c0,
+                                                        "endIndex": c1}, "properties": {"pixelSize": px},
+                                              "fields": "pixelSize"}}
+
+    navy = {"red": 0.12, "green": 0.23, "blue": 0.41}
+    head = {"backgroundColor": navy, "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}}
+    if not is_kpi:
+        return [cell_fmt(0, 1, 0, 4, head, "userEnteredFormat(backgroundColor,textFormat)"),
+                width(0, 1, 280), width(1, 2, 420), width(2, 3, 100), width(3, 4, 220)]
+    h = next(i for i, r in enumerate(rows) if r and r[0] == "Loại")
+    ncol = len(rows[h])
+    out = [cell_fmt(0, 1, 0, 1, {"textFormat": {"bold": True, "fontSize": 14}}, "userEnteredFormat.textFormat"),
+           cell_fmt(2, h, 0, 1, {"textFormat": {"bold": True}}, "userEnteredFormat.textFormat"),
+           cell_fmt(h, h + 1, 0, ncol, head, "userEnteredFormat(backgroundColor,textFormat)"),
+           width(0, 1, 180), width(1, 2, 160), width(2, 3, 90), width(3, ncol, 90)]
+    for i in range(h + 1, len(rows)):
+        r = rows[i]
+        if not r:
+            break
+        pct = len(r) > 2 and r[2] == "%"
+        out.append(cell_fmt(i, i + 1, 3, ncol, {"numberFormat": {"type": "PERCENT" if pct else "NUMBER",
+                                                                  "pattern": "0%" if pct else "#,##0"},
+                                                 "horizontalAlignment": "CENTER"},
+                            "userEnteredFormat(numberFormat,horizontalAlignment)"))
+        out.append(cell_fmt(i, i + 1, 0, 1, {"textFormat": {"bold": True}}, "userEnteredFormat.textFormat"))
+    return out
+
+
+def write_tabs(sh, sid: str, values: dict[str, list[list]]) -> None:
+    """Ghi (đè) các tab KPI vào sheet dự án: tab chưa có thì thêm; tab 'Bản sao của …' vẫn nhận ra."""
+    meta = sh.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(sheetId,title))").execute()
+    tabs = {_norm_tab(p["title"]): p for p in (x["properties"] for x in meta["sheets"])}
+    reqs = [{"addSheet": {"properties": {"title": t}}} for t in values if _norm_tab(t) not in tabs]
+    if reqs:
+        resp = sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": reqs}).execute()
+        for r in resp.get("replies", []):
+            p = r["addSheet"]["properties"]
+            tabs[_norm_tab(p["title"])] = p
+    fmt = []
+    for title, rows in values.items():
+        tab = tabs[_norm_tab(title)]
+        rng = "'" + tab["title"].replace("'", "''") + "'"
+        sh.spreadsheets().values().clear(spreadsheetId=sid, range=rng, body={}).execute()
+        sh.spreadsheets().values().update(spreadsheetId=sid, range=rng + "!A1", valueInputOption="USER_ENTERED",
+                                          body={"values": rows}).execute()
+        fmt += _format_requests(tab, rows, title == KPI_TAB)
+    if fmt:
+        sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": fmt}).execute()
+
+
+def set_okr_start(sh, sid: str, start: str | None) -> bool:
+    """Điền ngày bắt đầu dự án vào ô cạnh nhãn 'Bắt đầu' ở tab OKRs (nếu có); lỗi gì cũng bỏ qua."""
+    if not start:
+        return False
+    try:
+        meta = sh.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(title))").execute()
+        title = next((x["properties"]["title"] for x in meta["sheets"]
+                      if _norm_tab(x["properties"]["title"]).startswith("okr")), None)
+        if not title:
+            return False
+        rng = "'" + title.replace("'", "''") + "'"
+        rows = sh.spreadsheets().values().get(spreadsheetId=sid, range=rng + "!A1:Z5").execute().get("values", [])
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                if "bắt đầu" in str(v).lower() and j + 1 < 26:
+                    cell = f"{rng}!{_col(j + 2)}{i + 1}"
+                    sh.spreadsheets().values().update(spreadsheetId=sid, range=cell, valueInputOption="USER_ENTERED",
+                                                      body={"values": [[f"{start[8:10]}/{start[5:7]}/{start[:4]}"]]}
+                                                      ).execute()
+                    return True
+    except Exception:  # noqa: BLE001  (tab OKR khác mẫu: không sao, người dùng tự điền)
+        return False
+    return False
+
+
+def create_project_sheet(con, cfg, data: dict, keywords: list[tuple], master: str = "") -> dict:
+    """Tạo sheet dự án trong folder Drive của dự án: copy sheet mẫu gốc (OKRs, Weekly Task, Chi phí, Content…) rồi ghi
+    hai tab KPI; chưa có sheet mẫu gốc thì tạo file chỉ có hai tab KPI. Gắn luôn làm sheet KPI của dự án."""
+    from googleapiclient.discovery import build
+
+    from . import auth
+    from . import drive as D
+    name = f"Sheet dự án – {domain(cfg.site_url)}"
+    if master:
+        creds = auth.get_credentials(cfg, need=(auth.DRIVE_FULL_SCOPE, auth.SHEETS_WRITE_SCOPE))
+        drv = build("drive", "v3", credentials=creds, cache_discovery=False)
+        folder = D.root_folder(con, drv, cfg.site_url)
+        f = drv.files().copy(fileId=master, body={"name": name, "parents": [folder]},
+                             fields="id, name, webViewLink").execute()
+        sh = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        write_tabs(sh, f["id"], sheet_values(data, keywords))
+        set_okr_start(sh, f["id"], data.get("start"))
+    else:
+        drv = D.build_service(cfg)
+        folder = D.root_folder(con, drv, cfg.site_url)
+        f = D.upload(drv, template_xlsx(data["project"], keywords, data), name, D.XLSX, folder, D.SHEET)
     set_sheet(con, f["id"])
     return f

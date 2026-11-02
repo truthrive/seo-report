@@ -8,6 +8,13 @@ from . import kpi as KP
 from . import ui_theme as T
 
 ICONS = {"green": "check_circle", "amber": "error_outline", "red": "error_outline", "grey": "hourglass_empty"}
+KT_STYLE = (".sr-kt{width:100%;border-collapse:collapse;font-size:13px}.sr-kt th{background:#1F221E;color:#fff;"
+            "font-weight:600;padding:8px;text-align:center}.sr-kt th .d{font-weight:400;font-size:11px;opacity:.75}"
+            ".sr-kt td{padding:7px 8px;border-bottom:1px solid #EEECE4;text-align:center}.sr-kt td.lab{text-align:left;"
+            "font-weight:600;white-space:nowrap}.sr-kt tr.sub td{background:#FAFAF7}.sr-kt tr.sub td.lab{font-weight:400;"
+            "color:#6B6A5E;padding-left:20px}.sr-kt td .d{font-size:11px;color:#6B6A5E}.sr-kt th .d{color:#D9D8CF}.sr-kt .ok{color:#1E7C31;"
+            "font-weight:700}.sr-kt .bad{color:#C2410C;font-weight:700}.sr-kt .warn{color:#8F5F14;font-weight:700}"
+            ".sr-kt .mut{color:#B8B6A8}")
 
 
 def _vn(iso) -> str:
@@ -196,13 +203,7 @@ def full_table(ui, p: dict) -> None:
     body = "".join(f'<tr class="{"sub" if lab == "Thực tế" else ""}"><td class="lab">{lab}</td>'
                    + "".join(f"<td>{c}</td>" for c in cells) + "</tr>" for lab, cells in rows)
     cur = next((i for i, m in enumerate(months) if m.get("status") == "running"), None)
-    style = (".sr-kt{width:100%;border-collapse:collapse;font-size:13px}.sr-kt th{background:#1F221E;color:#fff;"
-             "font-weight:600;padding:8px;text-align:center}.sr-kt th .d{font-weight:400;font-size:11px;opacity:.75}"
-             ".sr-kt td{padding:7px 8px;border-bottom:1px solid #EEECE4;text-align:center}.sr-kt td.lab{text-align:left;"
-             "font-weight:600;white-space:nowrap}.sr-kt tr.sub td{background:#FAFAF7}.sr-kt tr.sub td.lab{font-weight:400;"
-             "color:#6B6A5E;padding-left:20px}.sr-kt td .d{font-size:11px;color:#6B6A5E}.sr-kt th .d{color:#D9D8CF}.sr-kt .ok{color:#1E7C31;"
-             "font-weight:700}.sr-kt .bad{color:#C2410C;font-weight:700}.sr-kt .warn{color:#8F5F14;font-weight:700}"
-             ".sr-kt .mut{color:#B8B6A8}")
+    style = KT_STYLE
     if cur is not None:
         style += f".sr-kt tr td:nth-child({cur + 2}){{box-shadow:inset 2px 0 #1E7C31,inset -2px 0 #1E7C31}}"
     ui.add_head_html(f"<style>{style}</style>")  # ui.html lọc bỏ thẻ <style> nên đặt ở <head>
@@ -216,7 +217,7 @@ def full_table(ui, p: dict) -> None:
                  + " · tăng thêm = phiên tháng − baseline, cộng dồn qua các tháng").classes("text-xs muted q-mt-sm")
 
 
-def build_kpi_page(ui, cfg, connect, user) -> None:
+def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | None = None) -> None:
     from nicegui import run
 
     from .access import can_edit
@@ -257,7 +258,7 @@ def build_kpi_page(ui, cfg, connect, user) -> None:
         ui.navigate.reload()
 
     if not sid:
-        _setup(ui, cfg, connect, ed)
+        _setup(ui, cfg, connect, ed, user, app_connect, project)
         return
 
     with connect() as c:
@@ -343,43 +344,235 @@ def _local(iso: str) -> str:
     return f"{datetime.fromisoformat(iso).astimezone():%H:%M %d/%m}"
 
 
-def _setup(ui, cfg, connect, ed: bool) -> None:
+def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dict | None = None) -> None:
+    """Dự án chưa có sheet: wizard thiết lập cam kết rồi tạo sheet dự án trên Drive, hoặc dán link sheet đã có."""
     from nicegui import run
-    with T.section(ui, "Chưa có sheet KPI", "table_view",
-                   "Tool tạo một Google Sheet mẫu trong folder Drive của tool, điền sẵn ví dụ dự án 6 tháng"):
-        ui.label("Sheet gồm 2 tab: 'KPI cam kết' (ngày bắt đầu, baseline, mỗi cam kết một dòng: Top 3/5/10, mức phiên "
-                 "theo tháng hoặc tăng thêm cộng dồn của Organic Search / AI Assistant) và 'Từ khóa cam kết' (từ khóa, "
-                 "URL mục tiêu, Top target). Điền số rồi bấm Đồng bộ là tool hiện tiến độ.").classes("text-sm")
-        if not ed:
-            ui.label("Chỉ người được sửa mới tạo được sheet.").classes("text-sm muted")
-            return
 
-        async def create():
-            btn.props("loading")
-            try:
-                def work():
-                    with connect() as c:
-                        return KP.create_template(c, cfg)
-                f = await run.io_bound(work)
-                ui.notify("Đã tạo sheet mẫu trong folder Drive của tool", type="positive")
-                ui.navigate.to(f["webViewLink"], new_tab=True)
-                ui.navigate.reload()
-            except (Exception, SystemExit) as e:  # noqa: BLE001
-                from . import drive as D
-                ui.notify(f"Không tạo được sheet: {D.explain(e)}", type="negative", multi_line=True)
-            finally:
-                btn.props(remove="loading")
+    from . import projects as PJ
+    from .okr import parse_date
+    from .projects import domain
+    host = domain(cfg.site_url)
+    master = ""
+    if app_connect:
+        with app_connect() as c:
+            master = PJ.master_sheet(c)
+    if not ed:
+        with T.section(ui, "Chưa có sheet KPI", "table_view"):
+            ui.label("Chỉ người được sửa mới thiết lập được cam kết.").classes("text-sm muted")
+        return
 
-        def use_link():
-            try:
-                with connect() as c:
-                    KP.set_sheet(c, link.value)
-                ui.navigate.reload()
-            except ValueError as e:
-                ui.notify(str(e), type="warning")
+    def months_value() -> int:
+        return int(months_other.value or 0) if months_pick.value == 0 else int(months_pick.value)
 
-        with ui.row().classes("items-center gap-3 q-mt-sm"):
-            btn = ui.button("Tạo sheet mẫu", icon="add_chart", on_click=create).props("unelevated no-caps")
-            ui.label("hoặc").classes("muted")
+    def spec() -> dict:
+        d = parse_date(start.value, date.today())
+        if not d:
+            raise ValueError("Ngày bắt đầu chưa đúng (dd/mm/yyyy)")
+        n = months_value()
+        if n < 1 or n > 36:
+            raise ValueError("Số tháng phải từ 1 đến 36")
+        tops = [t for t, box in top_boxes.items() if box.value]
+        finals = {}
+        for t in tops:
+            v = top_finals[t].value
+            if v not in (None, ""):
+                finals[t] = float(v) / 100 if unit.value == "pct" else int(v)
+        traffic, baseline = {}, {}
+        for src, w in src_widgets.items():
+            traffic[src] = {
+                "level": int(w["level_v"].value) if w["level"].value and w["level_v"].value not in (None, "") else None,
+                "cum": int(w["cum_v"].value) if w["cum"].value and w["cum_v"].value not in (None, "") else None}
+            baseline[src] = int(w["base"].value) if w["base"].value not in (None, "") else None
+        return {"project": (name.value or "").strip() or f"SEO {host}", "start": d.isoformat(), "months": n,
+                "baseline": baseline, "rank": {"tops": tops, "mode": mode.value, "unit": unit.value,
+                                               "from": int(rank_from.value or 1), "finals": finals},
+                "traffic": traffic}
+
+    with T.section(ui, "Thiết lập cam kết KPI", "flag", "Chọn thời gian và các cam kết của dự án. Tool tạo sheet dự "
+                                                        "án trên Drive (copy từ sheet mẫu gốc), điền sẵn các dòng cam "
+                                                        "kết; chỉ tiêu từng tháng sửa tiếp trên sheet."):
+        with ui.stepper().props("flat animated header-nav").classes("w-full") as stepper:
+            with ui.step("Thông tin", icon="info"):
+                name = ui.input("Tên dự án", value=f"SEO {host}").props("outlined dense").classes("w-96")
+                with ui.row().classes("items-end gap-4"):
+                    start = ui.input("Ngày bắt đầu (dd/mm/yyyy)", value=f"{date.today():%d/%m/%Y}").props(
+                        "outlined dense").classes("w-56")
+                    with ui.column().classes("gap-1"):
+                        ui.label("Thời gian triển khai").classes("text-xs muted")
+                        months_pick = ui.toggle({3: "3 tháng", 6: "6 tháng", 9: "9 tháng", 12: "12 tháng", 0: "Khác"},
+                                                value=6).props("no-caps unelevated")
+                    months_other = ui.number("Số tháng", value=6, min=1, max=36, step=1).props(
+                        "outlined dense").classes("w-32")
+                    months_other.bind_visibility_from(months_pick, "value", backward=lambda v: v == 0)
+                ui.label("Tháng dự án tính từ ngày bắt đầu đến trước cùng ngày tháng sau (01/11 → 30/11).").classes(
+                    "text-xs muted")
+                with ui.stepper_navigation():
+                    ui.button("Tiếp", on_click=stepper.next).props("unelevated no-caps")
+            with ui.step("Thứ hạng", icon="leaderboard"):
+                ui.label("Cam kết từ khóa vào top. Bỏ tích hết nếu dự án không cam kết thứ hạng.").classes("text-sm")
+                top_boxes, top_finals = {}, {}
+                with ui.row().classes("items-center gap-6"):
+                    for t in (3, 5, 10):
+                        top_boxes[t] = ui.checkbox(f"Top {t}", value=True)
+                mode = ui.radio({"shared": "Bộ chung: mọi mốc top tính trên toàn bộ từ khóa cam kết (top 3 nằm trong "
+                                           "top 5)",
+                                 "per_tier": "Bộ riêng: mỗi mốc top có danh sách từ khóa riêng (cột Top target), chấm "
+                                             "độc lập"}, value="shared").props("dense")
+                with ui.row().classes("items-end gap-4"):
+                    unit = ui.radio({"pct": "Cam kết theo % bộ từ khóa", "count": "Cam kết theo số từ khóa"},
+                                    value="pct").props("dense inline")
+                    rank_from = ui.number("Chấm từ tháng", value=3, min=1, max=36, step=1).props(
+                        "outlined dense").classes("w-36")
+                ui.label("Mốc cuối dự án (tool chia đều ra các tháng làm gợi ý; sửa trên sheet sau):").classes(
+                    "text-xs muted")
+                with ui.row().classes("items-end gap-4"):
+                    for t in (3, 5, 10):
+                        top_finals[t] = ui.number(f"Top {t} cuối dự án", value=None, min=0, step=1).props(
+                            "outlined dense").classes("w-40")
+                        top_finals[t].bind_visibility_from(top_boxes[t], "value")
+                    ui.label("").bind_text_from(unit, "value", backward=lambda v: "% bộ từ khóa" if v == "pct"
+                                                else "số từ khóa").classes("text-sm muted q-pb-sm")
+                kw_text = ui.textarea("Từ khóa cam kết (không bắt buộc, điền sau trên sheet cũng được)",
+                                      placeholder="mỗi dòng một từ khóa · thêm | URL mục tiêu | Top 3 nếu có\n"
+                                                  "ví dụ: tròng kính zeiss | https://site.vn/trong-kinh/ | Top 3"
+                                      ).props("outlined autogrow").classes("w-full")
+                with ui.stepper_navigation():
+                    ui.button("Quay lại", on_click=stepper.previous).props("flat no-caps")
+                    ui.button("Tiếp", on_click=stepper.next).props("unelevated no-caps")
+            with ui.step("Traffic", icon="trending_up"):
+                ui.label("Cam kết phiên GA4 cho từng nguồn. Baseline = phiên/tháng trước khi bắt đầu, dùng cho dòng "
+                         "tăng thêm cộng dồn và để chia mức tháng.").classes("text-sm")
+                src_widgets = {}
+                base_note = ui.label("").classes("text-xs muted")
+                for src, label in KP.SOURCES.items():
+                    w = {}
+                    with ui.element("div").classes("sr-card q-pa-md w-full"):
+                        ui.label(f"Phiên {label}" + (" (GEO traffic: ChatGPT, Gemini, Claude… theo kênh AI Assistant "
+                                                      "của GA4)" if src == "ai" else " (kênh Organic Search của GA4)")
+                                 ).classes("text-sm font-semibold")
+                        w["base"] = ui.number("Baseline (phiên/tháng)", value=None, min=0, step=1).props(
+                            "outlined dense").classes("w-48")
+                        with ui.row().classes("items-end gap-4"):
+                            w["level"] = ui.checkbox("Mức tháng (tăng tiến)", value=src == "organic")
+                            w["level_v"] = ui.number("Tăng thêm phiên/tháng ở tháng cuối", value=None, min=0,
+                                                     step=100).props("outlined dense").classes("w-64")
+                            w["level_v"].bind_visibility_from(w["level"], "value")
+                        with ui.row().classes("items-end gap-4"):
+                            w["cum"] = ui.checkbox("Tăng thêm cộng dồn (tích lũy)", value=False)
+                            w["cum_v"] = ui.number("Tổng phiên tăng thêm cả dự án", value=None, min=0,
+                                                   step=100).props("outlined dense").classes("w-64")
+                            w["cum_v"].bind_visibility_from(w["cum"], "value")
+                    src_widgets[src] = w
+
+                async def fill_baseline():
+                    d = parse_date(start.value, date.today())
+                    if not d:
+                        ui.notify("Nhập ngày bắt đầu ở bước 1 trước", type="warning")
+                        return
+                    if not cfg.ga4_property:
+                        ui.notify("Dự án chưa gắn GA4: nhập baseline tay", type="warning")
+                        return
+                    base_btn.props("loading")
+                    try:
+                        def work():
+                            with connect() as c:
+                                return KP.baseline_suggest(KP.ga4_sessions(cfg, c), d)
+                        b = await run.io_bound(work)
+                        for src, w in src_widgets.items():
+                            w["base"].value = b[src]
+                        base_note.text = "GA4 3 tháng trước khi bắt đầu: " + " · ".join(
+                            f"{m['label']}: Organic {F.n(m['organic'])}, AI {F.n(m['ai'])}" for m in b["months"])
+                    except (Exception, SystemExit) as e:  # noqa: BLE001
+                        ui.notify(f"Không lấy được từ GA4: {str(e)[:200]}", type="negative", multi_line=True)
+                    finally:
+                        base_btn.props(remove="loading")
+
+                base_btn = ui.button("Lấy baseline từ GA4 (trung bình 3 tháng trước)", icon="query_stats",
+                                     on_click=fill_baseline).props("outline no-caps")
+                with ui.stepper_navigation():
+                    ui.button("Quay lại", on_click=stepper.previous).props("flat no-caps")
+                    ui.button("Xem lại", on_click=lambda: (preview.refresh(), stepper.next())).props(
+                        "unelevated no-caps")
+            with ui.step("Xem lại và tạo", icon="check"):
+                @ui.refreshable
+                def preview():
+                    try:
+                        sp = spec()
+                    except ValueError as e:
+                        ui.label(str(e)).classes("text-sm").style(f"color:{T.RED}")
+                        return
+                    data = KP.plan(sp)
+                    kws = KP.parse_keyword_text(kw_text.value)
+                    if not data["lines"]:
+                        ui.label("Chưa chọn cam kết nào: sheet sẽ chỉ có khối thông tin, thêm dòng trên sheet sau."
+                                 ).classes("text-sm muted")
+                    head = "".join(f"<th>T{n}</th>" for n in data["months"])
+                    body = ""
+                    for ln in data["lines"]:
+                        cells = "".join(f"<td>{KP.fmt_target(ln, ln['targets'][str(n)])}</td>" for n in data["months"])
+                        body += f'<tr><td class="lab">{KP.line_label(ln)}</td>{cells}</tr>'
+                    base = data["baseline"]
+                    ui.add_head_html(f"<style>{KT_STYLE}</style>")
+                    ui.html(f'<table class="sr-kt"><thead><tr><th style="text-align:left">Cam kết</th>{head}</tr>'
+                            f'</thead><tbody>{body}</tbody></table>').classes("w-full")
+                    ui.label(f"{data['project']} · bắt đầu {_vn(data['start'])}/{data['start'][:4]} · "
+                             f"{len(data['months'])} tháng · baseline Organic "
+                             f"{F.n(base['organic']) if base['organic'] is not None else 'chưa nhập'}, AI "
+                             f"{F.n(base['ai']) if base['ai'] is not None else 'chưa nhập'} · {len(kws)} từ khóa dán sẵn"
+                             ).classes("text-xs muted")
+                    if master:
+                        ui.label("Tool copy sheet mẫu gốc (OKRs, Weekly Task Tracker, Chi phí, Content…) vào folder "
+                                 f"Drive của dự án, đặt tên 'Sheet dự án – {host}', rồi ghi 2 tab KPI.").classes(
+                            "text-sm")
+                    else:
+                        ui.label("Chưa cài sheet mẫu gốc (màn Dự án): tool tạo file chỉ có 2 tab KPI cam kết và Từ "
+                                 "khóa cam kết.").classes("text-sm").style(f"color:{T.AMBER}")
+
+                preview()
+
+                async def create():
+                    try:
+                        sp = spec()
+                    except ValueError as e:
+                        ui.notify(str(e), type="warning")
+                        return
+                    data, kws = KP.plan(sp), KP.parse_keyword_text(kw_text.value)
+                    create_btn.props("loading")
+                    try:
+                        def work():
+                            with connect() as c:
+                                f = KP.create_project_sheet(c, cfg, data, kws, master)
+                                KP.sync(c, cfg, user)
+                            if app_connect and project:  # một link sheet dự án: màn OKR đọc cùng file
+                                with app_connect() as ac:
+                                    if master or not project["settings"].get("okr_sheet"):
+                                        PJ.set_sheet_link(ac, project["slug"], f["id"], user)
+                            return f
+                        f = await run.io_bound(work)
+                        ui.notify("Đã tạo sheet dự án trên Drive và đồng bộ", type="positive")
+                        ui.navigate.to(f["webViewLink"], new_tab=True)
+                        ui.navigate.reload()
+                    except (Exception, SystemExit) as e:  # noqa: BLE001
+                        from . import drive as D
+                        ui.notify(f"Không tạo được sheet: {D.explain(e)}", type="negative", multi_line=True)
+                    finally:
+                        create_btn.props(remove="loading")
+
+                with ui.stepper_navigation():
+                    ui.button("Quay lại", on_click=stepper.previous).props("flat no-caps")
+                    create_btn = ui.button("Tạo sheet dự án", icon="add_chart", on_click=create).props(
+                        "unelevated no-caps")
+
+    def use_link():
+        try:
+            with connect() as c:
+                KP.set_sheet(c, link.value)
+            ui.navigate.reload()
+        except ValueError as e:
+            ui.notify(str(e), type="warning")
+
+    with T.section(ui, "Đã có sheet", "link", "Sheet có 2 tab 'KPI cam kết' và 'Từ khóa cam kết' (mẫu cũ hay mới "
+                                              "đều đọc được)"):
+        with ui.row().classes("items-center gap-3"):
             link = ui.input(placeholder="Dán link Google Sheet đã có").props("outlined dense").classes("w-96")
             ui.button("Dùng sheet này", on_click=use_link).props("outline no-caps")

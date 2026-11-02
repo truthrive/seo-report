@@ -285,5 +285,96 @@ class JudgeTest(unittest.TestCase):
                          ("3 từ khóa (75%)", "50% (2/4 từ khóa)", "Thiếu 1 từ khóa"))
 
 
+class WizardTest(unittest.TestCase):
+    SPEC = {"project": "SEO x.vn", "start": "2026-12-01", "months": 6, "baseline": {"organic": 5000, "ai": 120},
+            "rank": {"tops": [3, 10], "mode": "per_tier", "unit": "pct", "from": 3, "finals": {"3": 0.2, "10": 0.6}},
+            "traffic": {"organic": {"level": 10000, "cum": 10000}, "ai": {"level": 480, "cum": None}}}
+
+    def test_plan_spreads_targets(self):
+        d = KP.plan(self.SPEC)
+        ln = by_id(d)
+        self.assertEqual(list(ln), ["top3", "top10", "level:organic", "cum:organic", "level:ai"])
+        self.assertEqual(ln["top3"]["targets"], {"1": None, "2": None, "3": 0.05, "4": 0.1, "5": 0.15, "6": 0.2})
+        self.assertEqual((ln["top3"]["mode"], ln["top3"]["unit"]), ("per_tier", "pct"))
+        self.assertEqual(ln["level:organic"]["targets"]["6"], 15000)      # baseline + mức tăng
+        self.assertEqual(ln["level:organic"]["targets"]["1"], 6667)
+        self.assertEqual(sum(ln["cum:organic"]["targets"].values()), 10000)  # tổng các ô = cam kết tích lũy
+        self.assertEqual(ln["level:ai"]["targets"], {str(i): v for i, v in enumerate((200, 280, 360, 440, 520, 600), 1)})
+        self.assertEqual(KP.parse_kpi(KP.kpi_grid(d), TODAY), d)   # ghi ra tab rồi đọc lại ra đúng dữ liệu
+
+    def test_plan_without_finals_or_rank(self):
+        d = KP.plan({"project": "P", "months": 3, "rank": {"tops": [5], "unit": "count"}, "traffic": {}})
+        self.assertEqual(by_id(d)["top5"]["targets"], {"1": None, "2": None, "3": None})
+        self.assertEqual(KP.plan({"months": 2})["lines"], [])
+        self.assertEqual(KP.split_total(10, 3), [3, 3, 4])
+        self.assertEqual(KP.spread(0.6, 4), [0.15, 0.3, 0.45, 0.6])
+        self.assertEqual(KP.spread(16, 3, 0, integer=True), [5, 11, 16])
+
+    def test_baseline_three_full_months_before_start(self):
+        calls = []
+
+        def fn(src, s, e):
+            calls.append((src, s.isoformat(), e.isoformat()))
+            return {s.isoformat(): 300 if src == "organic" else 30, e.isoformat(): 0}
+        b = KP.baseline_suggest(fn, date(2026, 12, 15))
+        self.assertEqual([m["label"] for m in b["months"]], ["09/2026", "10/2026", "11/2026"])
+        self.assertIn(("organic", "2026-09-01", "2026-09-30"), calls)
+        self.assertIn(("ai", "2026-11-01", "2026-11-30"), calls)
+        self.assertEqual((b["organic"], b["ai"]), (300, 30))
+
+    def test_keyword_text_and_sheet_values(self):
+        kws = KP.parse_keyword_text("kính A | https://x.vn/a/ | Top 3\nkính B\tTop 10\n# bỏ\nKÍNH A\n\nkính C | 5")
+        self.assertEqual(kws, [("kính A", "https://x.vn/a/", 3), ("kính B", "", 10), ("kính C", "", 5)])
+        v = KP.sheet_values(KP.plan(self.SPEC), kws)
+        self.assertEqual(v[KP.KW_TAB][0], ["Từ khóa", "URL mục tiêu", "Top target", "Ghi chú"])
+        self.assertEqual(v[KP.KW_TAB][1], ["kính A", "https://x.vn/a/", "Top 3", ""])
+        self.assertEqual(KP.parse_keywords(v[KP.KW_TAB])[1], {"keyword": "kính B", "url": "", "target": 10})
+        self.assertEqual(v[KP.KPI_TAB][8][:3], ["Loại", "Nguồn / Bộ", "Đơn vị"])
+
+    def test_format_requests_percent_rows_only(self):
+        rows = KP.kpi_grid(KP.plan(self.SPEC))
+        reqs = KP._format_requests({"sheetId": 7}, rows, True)
+        fmts = [r["repeatCell"]["cell"]["userEnteredFormat"].get("numberFormat", {}).get("type")
+                for r in reqs if "repeatCell" in r and "numberFormat" in r["repeatCell"]["cell"]["userEnteredFormat"]]
+        self.assertEqual(fmts, ["PERCENT", "PERCENT", "NUMBER", "NUMBER", "NUMBER"])
+        self.assertTrue(all(r["repeatCell"]["range"]["sheetId"] == 7 for r in reqs if "repeatCell" in r))
+
+    def test_template_from_plan_roundtrip(self):
+        import io
+
+        from openpyxl import load_workbook
+        d = KP.plan(self.SPEC)
+        wb = load_workbook(io.BytesIO(KP.template_xlsx("SEO x.vn", [("kính A", "https://x.vn/a/", 3)], d)))
+        got = KP.parse_kpi([list(r) for r in wb[KP.KPI_TAB].iter_rows(values_only=True)], TODAY)
+        self.assertEqual(got["baseline"], {"organic": 5000, "ai": 120})
+        self.assertEqual(by_id(got)["cum:organic"]["targets"], by_id(d)["cum:organic"]["targets"])
+        kws = KP.parse_keywords([list(r) for r in wb[KP.KW_TAB].iter_rows(values_only=True)])
+        self.assertEqual(kws, [{"keyword": "kính A", "url": "https://x.vn/a/", "target": 3}])
+
+
+class ScopeTest(unittest.TestCase):
+    def test_wider_scope_covers_narrower(self):
+        from seo_report import auth as A
+        full = [A.GSC_SCOPE, A.GA4_SCOPE, A.DRIVE_FULL_SCOPE, A.SHEETS_WRITE_SCOPE]
+        self.assertEqual(A.missing_scopes(full, (A.DRIVE_SCOPE, A.SHEETS_SCOPE, A.SHEETS_WRITE_SCOPE)), [])
+        old = [A.GSC_SCOPE, A.DRIVE_SCOPE, A.SHEETS_SCOPE]
+        self.assertEqual(A.missing_scopes(old, (A.DRIVE_SCOPE, A.SHEETS_SCOPE)), [])   # token cũ vẫn đọc / xuất được
+        self.assertEqual(A.missing_scopes(old, (A.DRIVE_FULL_SCOPE, A.SHEETS_WRITE_SCOPE)),
+                         [A.DRIVE_FULL_SCOPE, A.SHEETS_WRITE_SCOPE])
+
+
+class MasterSheetTest(unittest.TestCase):
+    def test_master_sheet_setting(self):
+        from seo_report import projects as PJ
+        con = sqlite3.connect(":memory:")
+        self.assertEqual(PJ.master_sheet(con), "")
+        sid = PJ.set_master_sheet(con, "https://docs.google.com/spreadsheets/d/1Zv0NHbM71a80uvshJ-NNGoB8YTxp_RXCZ1O/edit#gid=1")
+        self.assertEqual(sid, "1Zv0NHbM71a80uvshJ-NNGoB8YTxp_RXCZ1O")
+        self.assertEqual(PJ.master_sheet(con), sid)
+        with self.assertRaises(ValueError):
+            PJ.set_master_sheet(con, "abc")
+        self.assertEqual(PJ.set_master_sheet(con, ""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

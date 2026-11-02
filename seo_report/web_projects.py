@@ -63,8 +63,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                    step=5).props("outlined dense").classes("col")
                 device = ui.select({"mobile": "Điện thoại", "desktop": "Máy tính"}, value=s["device"],
                                    label="Thiết bị check rank").props("outlined dense").classes("col")
-            okr = ui.input("Link Google Sheet OKR / Weekly Task (không bắt buộc)", value=s["okr_sheet"]).props(
-                "outlined dense").classes("w-full")
+            okr = ui.input("Link Sheet dự án: OKRs, Weekly Task Tracker, KPI cam kết (không bắt buộc)",
+                           value=s["okr_sheet"]).props("outlined dense").classes("w-full")
             if project:  # logo: tự lấy từ website hoặc tải ảnh lên (dự án mới: tool tự lấy sau khi lưu)
                 logo = {"value": project["logo"]}
 
@@ -125,7 +125,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                         "outlined autogrow").classes("w-full").style("font-family: var(--mono); font-size: 12.5px")
                     deep = ui.checkbox("Đường dẫn nhiều cấp không khớp quy tắc nào là URL cũ/kỹ thuật",
                                        value=cur_rules["deep_legacy"]).props("dense")
-            ui.label("Sheet KPI cam kết gắn ở màn KPI cam kết của từng dự án.").classes("text-xs muted")
+            ui.label("Dự án chưa có sheet: màn KPI cam kết có wizard tạo sheet dự án từ sheet mẫu gốc. Dán link ở "
+                     "đây thì tab KPI cam kết trong cùng file (nếu có) cũng được dùng.").classes("text-xs muted")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
             async def save():
@@ -140,6 +141,17 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                              else PJ.create(c, base, fields, user))
                         if project and logo["value"] != project["logo"]:
                             PJ.set_logo(c, p["slug"], logo["value"], user)
+                    if okr.value and okr.value != s.get("okr_sheet"):  # sheet dự án mới: dùng luôn cho KPI nếu chưa có
+                        from contextlib import closing as _closing
+
+                        from . import db as _DB
+                        from . import kpi as KP
+                        with _closing(_DB.connect(PJ.config_for(base, p).db_path)) as pc:
+                            if not KP.sheet_id(pc):
+                                try:
+                                    KP.set_sheet(pc, okr.value)
+                                except ValueError:
+                                    pass
                     if project and (rules_box.value or "", deep.value) != (U.rules_text(cur_rules),
                                                                           cur_rules["deep_legacy"]):
                         with closing(DB.connect(PJ.config_for(base, p).db_path)) as pc:
@@ -363,6 +375,29 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                             ui.label("đang đọc…").classes("text-sm muted")
                         else:
                             ui.label("chưa đọc được (kiểm tra đăng nhập Google của tool)").classes("text-sm muted")
+                    with app_connect() as c:
+                        master_now = PJ.master_sheet(c)
+                    with ui.row().classes("items-center gap-2 w-full no-wrap"):
+                        ui.label("Sheet mẫu gốc cho dự án mới:").classes("text-sm font-semibold").style(
+                            "white-space:nowrap")
+                        master_in = ui.input(placeholder="Dán link Google Sheet mẫu (OKRs, Weekly Task, Chi phí…)",
+                                             value=f"https://docs.google.com/spreadsheets/d/{master_now}/edit"
+                                             if master_now else "").props("outlined dense").classes("col")
+
+                        def save_master():
+                            try:
+                                with app_connect() as c:
+                                    sid = PJ.set_master_sheet(c, master_in.value)
+                            except ValueError as e:
+                                ui.notify(str(e), type="warning")
+                                return
+                            ui.notify("Đã lưu sheet mẫu gốc" if sid else "Đã bỏ sheet mẫu gốc", type="positive")
+                            body.refresh()
+
+                        ui.button("Lưu", on_click=save_master).props("outline no-caps")
+                    ui.label("Wizard ở màn KPI cam kết copy file này thành sheet của dự án mới (giữ nguyên công thức), "
+                             "rồi ghi 2 tab KPI. Tool cần quyền Google Drive đầy đủ: nếu báo thiếu quyền, chạy lại "
+                             "python -m seo_report login một lần.").classes("text-xs muted")
 
     body()
 
