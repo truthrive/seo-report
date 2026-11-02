@@ -246,6 +246,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, save_tar
                         with ui.row().classes("items-center gap-1 no-wrap"):
                             ui.element("span").classes("sr-dot").style(f"background:{T.TONES[tone][1]}")
                             ui.label(label).classes("text-xs muted")
+                            T.info_icon(ui, label)
                         ui.label(value).classes("sr-metric-value num")
                         if hint:
                             ui.label(hint).classes("text-xs muted")

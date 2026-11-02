@@ -285,3 +285,15 @@ class DayValuesTest(unittest.TestCase):
         self.assertEqual(report.day_values(daily, (date(2026, 10, 1), date(2026, 10, 5))), [5, 0, 7, None, None])
         self.assertEqual(report.day_values({}, (date(2026, 10, 1), date(2026, 10, 2))), [None, None])
         self.assertEqual(len(report.day_list((date(2026, 7, 1), date(2026, 7, 31)))), 31)
+
+
+class MetricHelpTest(unittest.TestCase):
+    def test_dashboard_metrics_have_help(self):
+        from seo_report.metric_help import help_for
+        for label in ("Click từ Google", "Lượt hiển thị", "Lượt truy cập (mọi kênh)", "Lượt truy cập Organic",
+                      "Truy cập từ AI", "Tỷ lệ hiện trong AI", "Lượt truy cập", "Click", "Lượt hiện trong AI",
+                      "Trong top 10", "Xong trong tuần", "Nhóm SEO chủ lực", "Session key event rate"):
+            got = help_for(label)
+            self.assertIsNotNone(got, label)
+            self.assertEqual(len(got), 3)
+        self.assertIsNone(help_for("Chỉ số lạ"))

@@ -48,6 +48,11 @@ HEAD = """
             display: flex; flex-direction: column; border-radius: 12px !important; }
   .sr-kpi-hint { margin-top: auto; padding-top: 6px; line-height: 1.3; }
   /* Khối so sánh dưới số chính (như GSC): kỳ so sánh · số của kỳ đó · chênh lệch tô màu */
+  .sr-info { color: #A3A194; cursor: help; flex: none; border-radius: 50%; }
+  .sr-info:hover, .sr-info:focus { color: #4A4A40; outline: none; }
+  .sr-info-tip { font-size: 12.5px; line-height: 1.45; padding: 8px 10px; background: #2B2E29; }
+  .sr-info-head { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: #C9D88A; }
   .sr-cmp { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; margin-top: 8px; padding-top: 6px;
             border-top: 1px dashed #DEDCD2; white-space: nowrap; min-width: 0; }
   .sr-cmp .lab { flex-basis: 100%; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
@@ -349,6 +354,26 @@ def compare_line(ui, parts: dict, good: bool | None) -> None:
     box.props["title"] = f"{parts['label']}: {parts['value']}" + (f" ({parts['diff']})" if parts.get("diff") else "")
 
 
+def info_icon(ui, label: str, info: tuple | None = None):
+    """Nút (i) cạnh tên chỉ số: rê chuột (điện thoại: chạm giữ) hiện chỉ số là gì, cho biết điều gì, đo thế nào.
+    info mặc định tra theo tên chỉ số trong metric_help; không có giải thích thì không vẽ gì."""
+    from .metric_help import help_for
+    info = info or help_for(label)
+    if not info:
+        return None
+    icon = ui.icon("info_outline", size="15px").classes("sr-info")
+    icon.props["tabindex"] = "0"
+    icon.props["aria-label"] = f"Giải thích: {label}"
+    icon.on("click.stop", lambda: None)  # trong ô bấm được (bật / tắt đường): bấm (i) không bật / tắt
+    with icon, ui.tooltip().classes("sr-info-tip").props("max-width=320px anchor='bottom middle' "
+                                                         "self='top middle'"):
+        for head, text in zip(("Là gì", "Cho biết", "Đo thế nào"), info):
+            with ui.element("div").classes("q-mb-xs"):
+                ui.label(head).classes("sr-info-head")
+                ui.label(text)
+    return icon
+
+
 def change_text(delta: str, prev: dict | None) -> str:
     """Nhãn cạnh số chính: chênh tuyệt đối kèm % ("+177 (+3,3%)"); không có số kỳ trước thì giữ nguyên delta."""
     diff = (prev or {}).get("diff")
@@ -446,6 +471,7 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
                             (m.get("icon") or "insights")
                         ui.icon(icon, size="18px").classes("sr-trend-check")
                         ui.label(m["label"]).classes("sr-trend-label")
+                        info_icon(ui, m["label"], m.get("info"))
                     # Số chính rồi nhãn chênh ở dòng riêng: ô nào cũng cùng bố cục (ô hẹp, số lớn không bị lệch hàng)
                     with ui.column().classes("items-start gap-1 q-mt-xs"):
                         ui.label(m["value"]).classes("sr-trend-value num")
@@ -567,7 +593,7 @@ def _has(m: dict) -> bool:
 def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | None = None, hint: str = "",
         spark: list | None = None, tone: str = "green", href: str | None = None, spark_kind: str = "bar",
         spark_labels: list | None = None, spark_fmt: str = "num", prev: dict | None = None,
-        spark_compare: list | None = None, spark_compare_labels: list | None = None):
+        spark_compare: list | None = None, spark_compare_labels: list | None = None, info: tuple | None = None):
     """Thẻ KPI: icon + nhãn, số lớn, nhãn thay đổi (xanh/đỏ), sparkline, dòng phụ. Có href thì bấm để đi sâu.
     Bố cục cố định để mọi thẻ cùng hàng cao bằng nhau: spark=[] giữ chỗ biểu đồ dù không có số, dòng phụ luôn có
     chỗ (để trống nếu không có)."""
@@ -581,6 +607,7 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
             with ui.element("div").classes("sr-icon-bubble").style(f"background:{bg}"):
                 ui.icon(icon, size="18px").style(f"color:{fg}")
             ui.label(label).classes("text-sm muted").style("line-height:1.2")
+            info_icon(ui, label, info)  # (i): chỉ số là gì, đo thế nào
         with ui.row().classes("items-baseline gap-2 q-mt-sm").style("row-gap:2px"):  # hẹp thì nhãn chênh xuống dòng
             ui.label(value).classes("sr-kpi-value num")
             delta_badge(ui, change_text(delta, prev), good)
