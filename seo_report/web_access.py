@@ -7,6 +7,7 @@ phải xác nhận. Mọi thay đổi ghi vào Nhật ký.
 from datetime import datetime
 
 from . import access as A
+from . import live as LIVE
 from . import presence as PR
 from . import projects as PJ
 from . import ui_theme as T
@@ -118,6 +119,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 try:
                     with connect() as c:
                         A.set_password(c, A.effective(c, cfg.access), email, value, must_change=force.value, by=user)
+                    LIVE.kick(email=email, keep=ui.context.client.id)  # đặt lại mật khẩu: ngắt trang đang mở
                 except ValueError as e:
                     err.text = str(e)
                     return
@@ -234,6 +236,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                             for s_ in mine:
                                 if s_ not in pl["want"]:
                                     A.remove_member(c, e, s_, user)
+                    LIVE.kick(email=e, keep=ui.context.client.id)  # quyền đổi: trang đang mở của người này dựng lại
                 except ValueError as ex:
                     err.text = str(ex)
                     return
@@ -284,6 +287,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 def go():
                     with connect() as c:
                         A.remove_user(c, em, user)
+                    LIVE.kick(email=em, keep=ui.context.client.id)
                     dlg.close()
                     ui.notify(f"Đã gỡ tài khoản {em}", type="positive")
                     body.refresh()
@@ -316,9 +320,9 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
 
     # Chấm trạng thái (online / vắng mặt / offline) tự cập nhật mỗi 20 giây, không dựng lại cả danh sách
     @ui.refreshable
-    def presence_avatar(email: str, last_seen: str | None, tone: str) -> None:
+    def presence_avatar(email: str, last_seen: str | None, tone: str, name: str = "", photo: str = "") -> None:
         st, text = PR.describe(email, last_seen)
-        T.presence_avatar(ui, email, st, text, size=32, tone=tone)
+        T.presence_avatar(ui, name or email, st, text, size=32, tone=tone, photo=photo)
 
     @ui.refreshable
     def presence_text(email: str, last_seen: str | None) -> None:
@@ -331,12 +335,18 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
 
     def person_row(u: dict, mine: dict, k: str) -> None:
         tone = {"admin": "green", "team": "blue", "client": "amber"}[k]
+        with connect() as c:
+            pf = A.profiles(c).get(u["email"], {})  # tên / ảnh người dùng tự đặt ở màn Hồ sơ
         with ui.column().classes("sr-access-row w-full gap-0"):
             with ui.row().classes("w-full items-center no-wrap gap-3"):
-                presence_avatar(u["email"], u.get("last_seen"), tone)
+                presence_avatar(u["email"], u.get("last_seen"), tone, pf.get("name", ""), pf.get("avatar", ""))
                 with ui.column().classes("col gap-0").style("min-width:0"):
                     with ui.row().classes("items-center gap-2 no-wrap"):
-                        ui.label(u["email"]).classes("text-sm font-medium ellipsis")
+                        if pf.get("name"):
+                            ui.label(pf["name"]).classes("text-sm font-medium ellipsis")
+                            ui.label(u["email"]).classes("text-xs muted ellipsis")
+                        else:
+                            ui.label(u["email"]).classes("text-sm font-medium ellipsis")
                         if u.get("title"):
                             T.status_chip(ui, u["title"], "grey")
                         presence_text(u["email"], u.get("last_seen"))

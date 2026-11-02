@@ -235,8 +235,15 @@ HEAD = """
   .sr-mini-num { font-family: var(--head); font-size: 26px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.15; }
   .sr-mini-num span { font-size: 14px; font-weight: 600; color: var(--muted); letter-spacing: 0; }
   /* Dòng website ở màn Ngân sách check rank */
-  .sr-budget-row { display: grid; grid-template-columns: minmax(200px, 1.1fr) minmax(180px, 1.4fr) auto auto auto;
-                   align-items: center; column-gap: 16px; }
+  .sr-budget-row { display: grid; align-items: center; column-gap: 16px;
+                   grid-template-columns: minmax(200px, 1.1fr) minmax(180px, 1.4fr) 160px 150px 76px; }
+  /* Dòng dự án: logo | thông tin | người | 3 ô nút icon cố định (thẳng hàng giữa các dòng) */
+  .sr-proj-row { display: grid; align-items: center; column-gap: 12px;
+                 grid-template-columns: 36px minmax(0, 1fr) 128px repeat(3, 36px); }
+  .sr-proj-row .sr-link { justify-self: end; }
+  .sr-icon-slot { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; }
+  @media (max-width: 700px) { .sr-proj-row { grid-template-columns: 36px minmax(0, 1fr) repeat(3, 36px); }
+                              .sr-proj-row .sr-link { grid-area: 2 / 2; justify-self: start; } }
   @media (max-width: 900px) {
     /* Điện thoại: hàng 1 website | trạng thái, hàng 2 thanh ngân sách, hàng 3 ô ngân sách | công tắc */
     .sr-budget-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 10px; }
@@ -250,7 +257,10 @@ HEAD = """
   .q-drawer--mini .sr-account { justify-content: center; padding: 6px 0; }
   .sr-account-menu { border-radius: 14px !important; border: 1px solid var(--line);
                      box-shadow: 0 12px 32px rgba(31,34,30,.14) !important; }
-  .sr-account-menu .q-item { min-height: 40px; padding: 6px 16px; }
+  .sr-account-menu .q-item { min-height: 40px; padding: 6px 10px; margin: 1px 6px; border-radius: 10px; }
+  .sr-account-menu .q-item .q-focus-helper { display: none; }  /* lớp phủ xám mặc định của Quasar: thay bằng nền nhẹ */
+  .sr-account-menu .q-item:hover, .sr-account-menu .q-item:focus-visible { background: #F1F0EA; }
+  .sr-account-menu .q-item.sr-current { background: #EEF6F0; }
   /* Biểu tượng dự án (logo website) */
   .sr-proj-icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;
                   background: #fff; border: 1px solid var(--line); color: var(--green); font-weight: 700;
@@ -398,8 +408,8 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230) -
                     hint = ui.label(m.get("hint") or " ").classes("sr-trend-hint")
                     full = " · ".join(x for x in (m.get("hint"), m.get("source")) if x)
                     if full:  # chữ phụ có thể bị cắt "…" và nguồn số liệu: rê chuột để đọc đủ
-                        hint.props(f'title="{full}"')
-                        tile.props(f'aria-description="{full}"')
+                        hint.props["title"] = full  # gán thẳng, không ghép vào chuỗi props
+                        tile.props["aria-description"] = full
         shown = [m for m in metrics if m["key"] in on]
         if not shown:
             return
@@ -561,8 +571,9 @@ def avatar_group(ui, people: list[dict], max_shown: int = 4, size: int = 28, rin
     shown = people if len(people) <= max_shown else people[:max_shown - 1]
     hidden = len(people) - len(shown)
     total = len(shown) + (1 if hidden else 0)
-    box = ui.element("div").classes("sr-avatar-group").props(
-        f'role=button tabindex=0 aria-haspopup=menu aria-label="{escape(label)}"').style(f"--ring:{ring}")
+    box = ui.element("div").classes("sr-avatar-group").props("role=button tabindex=0 aria-haspopup=menu").style(
+        f"--ring:{ring}")
+    box.props["aria-label"] = label  # gán thẳng, không ghép vào chuỗi props
     with box:
         for i, p in enumerate(shown):
             bg, fg = avatar_color(p["name"])
@@ -588,18 +599,20 @@ def avatar_group(ui, people: list[dict], max_shown: int = 4, size: int = 28, rin
 
 
 def presence_avatar(ui, name: str, status: str, label: str, size: int = 32, ring: str = "#fff",
-                    tone: str = "green", colors: tuple[str, str] | None = None):
+                    tone: str = "green", colors: tuple[str, str] | None = None, photo: str = ""):
     """Avatar chữ cái đầu + chấm trạng thái. Màu chấm chỉ theo một giá trị `status` (available xanh, away vàng, busy
     đỏ, offline xám); ý nghĩa nằm trong tên đọc được (aria-label, tooltip) và dòng chữ cạnh đó, không chỉ bằng màu.
     `ring` là màu nền phía sau avatar (viền 2px tách chấm khỏi avatar)."""
     bg, fg = colors or TONES[tone]
     dot = max(8, round(size * 0.3))
     text = f"{name} · {label}"
-    box = ui.element("div").classes("sr-presence").props(f'role=img aria-label="{escape(text)}"').style(
-        f"--ring:{ring}")
+    box = ui.element("div").classes("sr-presence").props("role=img").style(f"--ring:{ring}")
+    box.props["aria-label"] = text
     with box:
+        inner = (f'<img src="{escape(photo)}" alt="" style="width:100%;height:100%;object-fit:cover;'
+                 f'border-radius:50%">' if photo else escape(name[:1].upper()))
         ui.html(f'<div class="sr-presence-avatar" style="width:{size}px;height:{size}px;background:{bg};color:{fg};'
-                f'font-size:{round(size * 0.44)}px" aria-hidden="true">{escape(name[:1].upper())}</div>')
+                f'font-size:{round(size * 0.44)}px;overflow:hidden" aria-hidden="true">{inner}</div>')
         halo = '<span class="halo"></span>' if status == "available" else ""
         ui.html(f'<span class="sr-presence-dot" style="--dot:{PRESENCE_COLOR.get(status, PRESENCE_COLOR["offline"])};'
                 f'width:{dot}px;height:{dot}px" aria-hidden="true">{halo}<span class="core"></span></span>')

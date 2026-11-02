@@ -1,6 +1,7 @@
 """Màn Dự án (Quản trị): mỗi dự án là một website có GSC, GA4, ngân sách check rank, sheet OKR và file dữ liệu riêng."""
 from datetime import datetime
 
+from . import live as LIVE
 from . import projects as PJ
 from . import ui_theme as T
 
@@ -148,6 +149,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                     err.text = str(e)
                     return
                 dlg.close()
+                if project:  # cấu hình đổi (GSC, GA4, ngân sách…): trang đang mở dự án này dựng lại
+                    LIVE.kick(project=project["slug"], keep=ui.context.client.id)
                 if not project:  # dự án mới: tự lấy logo của website (chạy nền)
                     fetch_logo_bg(p)
                 ui.notify(f"Đã lưu dự án {p['name']}", type="positive")
@@ -248,6 +251,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                     try:
                         with app_connect() as c:
                             PJ.archive(c, p["slug"], user)
+                        LIVE.kick(project=p["slug"], keep=ui.context.client.id)
                     except ValueError as e:
                         ui.notify(str(e), type="warning")
                         return
@@ -279,7 +283,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                 n_team = sum(1 for m in mem.values() if m.get(p["slug"]) in (A.VIEWER, A.EDITOR)) + team_all
                 steps = PJ.setup_steps(base, p, st, n_clients + n_team)
                 todo = [name for name, done in steps if not done]
-                with ui.row().classes("sr-access-row w-full items-center no-wrap gap-3"):
+                with ui.element("div").classes("sr-access-row sr-proj-row w-full"):
                     T.project_icon(ui, p, 36)
                     with ui.column().classes("col gap-0").style("min-width:0"):
                         with ui.row().classes("items-center gap-2 no-wrap"):
@@ -299,19 +303,24 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                             "text-xs muted")
                     ui.link(f"{n_team} team · {n_clients} khách", f"/access?project={p['slug']}").classes(
                         "sr-link text-xs").tooltip("Người vào được website này (chưa tính quản trị). Bấm để xem / sửa")
-                    if p["slug"] in _syncing:
-                        ui.spinner(size="20px")
-                    elif not st["days"]:
-                        ui.button("Lấy dữ liệu", icon="cloud_download", on_click=lambda _, p=p: start_sync(p)).props(
-                            "outline dense no-caps")
-                    if not current or p["slug"] != current["slug"]:
-                        ui.button("Mở", icon="open_in_browser", on_click=lambda _, s=p["slug"]: open_project(s)).props(
-                            "flat dense no-caps")
-                    ui.button("Sửa", icon="edit", on_click=lambda _, p=p: edit_dialog(p)).props(
-                        "flat dense no-caps color=grey-9").tooltip("Sửa cấu hình: GSC, GA4, ngân sách, logo, quy tắc URL")
-                    if len(active) > 1:
-                        ui.button("Lưu trữ", icon="inventory_2", on_click=lambda _, p=p: ask_archive(p)).props(
-                            "flat dense no-caps color=grey-9").tooltip("Ẩn dự án, không xóa dữ liệu; khôi phục được")
+                    # Cột nút cố định (ô trống khi không có nút) để các dòng thẳng hàng
+                    icon_btn = "flat round dense color=grey-8"
+                    with ui.element("div").classes("sr-icon-slot"):
+                        if p["slug"] in _syncing:
+                            ui.spinner(size="20px").tooltip("Đang lấy dữ liệu Search Console")
+                        elif not st["days"]:
+                            ui.button(icon="cloud_download", on_click=lambda _, p=p: start_sync(p)).props(
+                                icon_btn).tooltip("Lấy dữ liệu Search Console")
+                        elif not current or p["slug"] != current["slug"]:
+                            ui.button(icon="open_in_browser", on_click=lambda _, s=p["slug"]: open_project(s)).props(
+                                icon_btn).tooltip("Mở website này")
+                    with ui.element("div").classes("sr-icon-slot"):
+                        ui.button(icon="edit", on_click=lambda _, p=p: edit_dialog(p)).props(icon_btn).tooltip(
+                            "Sửa cấu hình: GSC, GA4, ngân sách, logo, quy tắc URL")
+                    with ui.element("div").classes("sr-icon-slot"):
+                        if len(active) > 1:
+                            ui.button(icon="inventory_2", on_click=lambda _, p=p: ask_archive(p)).props(
+                                icon_btn).tooltip("Lưu trữ: ẩn dự án, không xóa dữ liệu, khôi phục được")
         if archived:
             with T.section(ui, f"Đã lưu trữ · {len(archived)}", "inventory_2"):
                 for p in archived:
@@ -331,7 +340,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                 PJ.restore(c, s, user)
                             ui.notify(f"Đã khôi phục {n}", type="positive")
                             body.refresh()
-                        ui.button("Khôi phục", icon="unarchive", on_click=restore).props("flat dense no-caps")
+                        ui.button(icon="unarchive", on_click=restore).props("flat round dense color=grey-8").tooltip(
+                            "Khôi phục dự án")
         with ui.element("div").classes("sr-card q-pa-md w-full").style(f"background:{T.TONES['amber'][0]};"
                                                                        "border-color:#EAD7AE"):
             with ui.row().classes("items-start gap-2 no-wrap"):
@@ -346,8 +356,9 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                         ui.label("Email Google của tool:").classes("text-sm font-semibold")
                         if email:
                             ui.label(email).classes("text-sm").style("font-family: var(--mono)")
-                            ui.button("Chép", icon="content_copy", on_click=lambda e=email: (
-                                ui.clipboard.write(e), ui.notify("Đã chép email"))).props("flat dense no-caps")
+                            ui.button(icon="content_copy", on_click=lambda e=email: (
+                                ui.clipboard.write(e), ui.notify("Đã chép email"))).props(
+                                "flat round dense color=grey-8").tooltip("Chép email")
                         elif email is None:
                             ui.label("đang đọc…").classes("text-sm muted")
                         else:

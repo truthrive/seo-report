@@ -256,7 +256,11 @@ def data_uri(content: bytes, mime: str, size: int = 192) -> str:
         raise ValueError(f"Ảnh logo phải nhỏ hơn {MAX_LOGO_BYTES // 1000} KB")
     if not mime.startswith("image/"):
         raise ValueError("File logo phải là ảnh (PNG, JPG, SVG, WEBP, ICO)")
-    if mime != "image/svg+xml":
+    if mime == "image/svg+xml":  # SVG giữ nguyên nhưng phải đúng là SVG (không lưu file bất kỳ dưới tên ảnh)
+        head = content[:4096].lower()
+        if b"<svg" not in head:
+            raise ValueError("File SVG không hợp lệ")
+    else:
         try:
             from PIL import Image
             img = Image.open(io.BytesIO(content))
@@ -267,8 +271,8 @@ def data_uri(content: bytes, mime: str, size: int = 192) -> str:
             out = io.BytesIO()
             img.save(out, "PNG", optimize=True)
             content, mime = out.getvalue(), "image/png"
-        except Exception:  # noqa: BLE001  (không đọc được thì giữ ảnh gốc)
-            pass
+        except Exception as e:  # noqa: BLE001  (không đọc được như ảnh: từ chối, không lưu byte gốc)
+            raise ValueError("Không đọc được file ảnh logo") from e
     return f"data:{mime};base64,{base64.b64encode(content).decode()}"
 
 
@@ -277,13 +281,20 @@ def fetch_logo(site_url: str, timeout: int = 10) -> str | None:
     Trả data URI, hoặc None khi không lấy được."""
     import urllib.request
     from html import unescape
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlsplit
 
     home = f"https://{domain(site_url)}/"
     headers = {"User-Agent": "Mozilla/5.0 (SEO Report logo fetch)"}
+    # Chỉ HTTP(S): trang chủ của website (do khách kiểm soát) không được khiến tool đọc file trên máy (file:) hay FTP
+    opener = urllib.request.OpenerDirector()
+    for h in (urllib.request.HTTPHandler, urllib.request.HTTPSHandler, urllib.request.HTTPRedirectHandler,
+              urllib.request.HTTPDefaultErrorHandler, urllib.request.HTTPErrorProcessor):
+        opener.add_handler(h())
 
     def get(url: str) -> tuple[bytes, str]:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+        if urlsplit(url).scheme not in ("http", "https"):
+            raise ValueError("chỉ tải logo qua http(s)")
+        with opener.open(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
             return r.read(MAX_LOGO_BYTES + 1), r.headers.get("Content-Type", "").split(";")[0].strip().lower()
 
     candidates = []
@@ -307,10 +318,13 @@ def fetch_logo(site_url: str, timeout: int = 10) -> str | None:
         except Exception:  # noqa: BLE001
             continue
         if not mime.startswith("image/"):
-            ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
+            ext = urlsplit(url).path.rsplit(".", 1)[-1].lower()  # theo đường dẫn, bỏ ?query và #fragment
             mime = LOGO_TYPES.get(ext, "")
         if mime.startswith("image/") and 0 < len(content) <= MAX_LOGO_BYTES:
-            return data_uri(content, mime)
+            try:
+                return data_uri(content, mime)
+            except ValueError:  # không phải ảnh thật: thử ứng viên tiếp theo
+                continue
     return None
 
 

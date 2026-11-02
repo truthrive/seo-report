@@ -17,7 +17,7 @@ def b64(data: bytes) -> str:
 
 class IdentifyTest(unittest.TestCase):
     def test_local_is_owner(self):
-        u, why = A.identify({}, S, "Truong Thinh", "127.0.0.1")
+        u, why = A.identify({"host": "127.0.0.1:8080"}, S, "Truong Thinh", "127.0.0.1")
         self.assertEqual((str(u), u.role, why), ("Truong Thinh", A.LOCAL, ""))
         self.assertTrue(A.can_edit(u))
 
@@ -337,3 +337,50 @@ class IpThrottleTest(unittest.TestCase):
         self.assertTrue(A.ip_blocked("1.2.3.4", now=1101))
         self.assertFalse(A.ip_blocked("5.5.5.5", now=1101))
         self.assertFalse(A.ip_blocked("1.2.3.4", now=1100 + A.IP_WINDOW))
+
+
+class ProfileTest(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+        self.con = sqlite3.connect(":memory:")
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_set_profile_for_config_owner_and_member(self):
+        A.set_profile(self.con, S, "marketing@vidushop.com", "  Chủ   Tool ", "data:image/png;base64,AA==")
+        self.assertEqual(A.profiles(self.con)["marketing@vidushop.com"],
+                         {"name": "Chủ Tool", "avatar": "data:image/png;base64,AA=="})
+        self.assertEqual(A.display_name({}, "x@y.vn"), "x@y.vn")
+        with self.assertRaises(ValueError):
+            A.set_profile(self.con, S, "marketing@vidushop.com", "x" * 61, "")
+        with self.assertRaises(ValueError):
+            A.set_profile(self.con, S, "marketing@vidushop.com", "Tên", "javascript:alert(1)")
+        with self.assertRaises(ValueError):
+            A.set_profile(self.con, S, "nguoi-la@abc.vn", "Tên", "")
+
+    def test_photo_is_square_png(self):
+        import base64
+        import io
+
+        from PIL import Image
+
+        from seo_report.web_profile import photo_uri
+        buf = io.BytesIO()
+        Image.new("RGB", (300, 200), "red").save(buf, "JPEG")
+        uri = photo_uri(buf.getvalue())
+        img = Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1])))
+        self.assertEqual((img.format, img.size), ("PNG", (128, 128)))
+        with self.assertRaises(ValueError):
+            photo_uri(b"not an image")
+
+
+class LocalHostTest(unittest.TestCase):
+    def test_loopback_owner_requires_loopback_host(self):
+        for host in ("127.0.0.1:8080", "localhost:8080", "[::1]:8080", "LOCALHOST"):
+            self.assertTrue(A.is_local("127.0.0.1", {"host": host}), host)
+        # DNS rebinding: trang lạ trỏ tên miền về 127.0.0.1 nhưng Host vẫn là tên miền đó
+        for host in ("evil.example:8080", "evil.example", "127.0.0.1.evil.example", ""):
+            self.assertFalse(A.is_local("127.0.0.1", {"host": host}), host)
+        self.assertFalse(A.is_local("127.0.0.1", {}))
+        self.assertIsNone(A.identify({"host": "rebind.example:8080"}, S, "me", "127.0.0.1")[0])

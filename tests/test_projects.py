@@ -207,3 +207,37 @@ class BudgetProjectionTest(unittest.TestCase):
         self.assertAlmostEqual(projected(0.09, 0.30, date(2026, 11, 2)), 0.09 + 0.30 * 28 / 30)
         self.assertEqual(projected(0.09, 0.30, date(2026, 11, 30)), 0.09)
         self.assertEqual(projected(0.09, 0.30, date(2026, 11, 2), paused=True), 0.09)
+
+
+class LogoSafetyTest(unittest.TestCase):
+    def test_non_image_bytes_are_rejected(self):
+        with self.assertRaises(ValueError):
+            PJ.data_uri(b'{"refresh_token": "x"}', "image/png")
+        with self.assertRaises(ValueError):
+            PJ.data_uri(b"not svg", "image/svg+xml")
+        self.assertTrue(PJ.data_uri(b'<svg xmlns="http://www.w3.org/2000/svg"/>', "image/svg+xml").startswith(
+            "data:image/svg+xml;base64,"))
+
+    def test_file_scheme_icon_is_never_opened(self):
+        import io
+        import urllib.request
+        from unittest import mock
+        opened = []
+
+        class Resp(io.BytesIO):
+            headers = {"Content-Type": "text/html"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_open(self, req, timeout=None):
+            opened.append(req.full_url)
+            if req.full_url == "https://example.test/":
+                return Resp(b'<link rel="apple-touch-icon" sizes="999" href="file:secrets/token.json#.png">')
+            raise OSError("offline")
+        with mock.patch.object(urllib.request.OpenerDirector, "open", fake_open):
+            self.assertIsNone(PJ.fetch_logo("https://example.test/"))
+        self.assertFalse([u for u in opened if u.startswith("file:")])

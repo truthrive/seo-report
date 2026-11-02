@@ -4,6 +4,7 @@ from contextlib import closing
 from types import SimpleNamespace
 
 from . import access as A
+from . import live as LIVE
 from . import db
 from . import urls as U
 from .config import Config
@@ -146,6 +147,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return None
         app.storage.client["only_links"] = list(A.CLIENT_PAGES) if A.is_client(P.user) else None  # T.link_allowed
         track_presence(acct)
+        LIVE.register(ui.context.client, str(acct), P.project["slug"])  # đổi quyền / tạm ngưng: ngắt trang này
         return P.user, P
 
     def gate(request: Request) -> "A.User | None":
@@ -206,6 +208,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 first = PJ.list_projects(c)[0]["slug"]
                 people = A.people_in_project(c, base.access, P.project["slug"], first)
                 seen = {u["email"]: u.get("last_seen") for u in A.users(c, base.access)}
+                profs = A.profiles(c)
             me = str(user).strip().lower()
             rows = []
             for p in people:
@@ -213,8 +216,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     continue
                 st, st_text = PR.describe(p["email"], seen.get(p["email"]))
                 who = role_label[p["role"]] + (f" · {p['title']}" if p.get("title") else "")
-                rows.append({"name": p["email"], "status": st, "status_text": st_text, "who": who,
-                             "text": f"{p['email']} · {who} · {st_text}"})
+                pf = profs.get(p["email"], {})
+                name = A.display_name(pf, p["email"])
+                rows.append({"name": name, "email": p["email"], "photo": pf.get("avatar", ""), "status": st,
+                             "status_text": st_text, "who": who, "text": f"{name} · {who} · {st_text}"})
             rows.sort(key=lambda r: rank[r["status"]])  # sắp xếp ổn định: giữ thứ tự quyền / email trong từng nhóm
             if not rows:
                 return
@@ -233,9 +238,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             with ui.row().classes("items-center gap-3 no-wrap q-px-md").style("padding-top:6px;"
                                                                                                "padding-bottom:6px"):
                                 T.presence_avatar(ui, r["name"], r["status"], r["status_text"], size=30,
-                                                  colors=T.avatar_color(r["name"]))
+                                                  colors=T.avatar_color(r["email"]), photo=r["photo"])
                                 with ui.column().classes("gap-0 col").style("min-width:0"):
-                                    ui.label(r["name"]).classes("text-sm ellipsis")
+                                    ui.label(r["name"]).classes("text-sm ellipsis").props["title"] = r["email"]
                                     ui.label(f"{r['who']} · {r['status_text']}").classes("text-xs muted ellipsis")
                     if A.is_admin(user):
                         ui.separator()
@@ -252,6 +257,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         """Góc dưới menu trái: avatar + tên + trạng thái; bấm vào mở menu tài khoản (thông tin, website của tôi, đổi
         mật khẩu / đăng xuất, lối tắt quản trị)."""
         st, st_text = PR.describe(user)
+        with app_connect() as c:
+            prof = A.profiles(c).get(str(user), {})
+        name, photo = A.display_name(prof, user), prof.get("avatar", "")
         href = next((h for _, items in NAV for label, h, _ in items if label == active), "/")
         role_text = ("Chủ tool · trên máy chạy tool" if user.role == A.LOCAL else
                      "Chủ tool · toàn quyền" if A.is_admin(user) else A.PROJECT_ROLES.get(user.role, ""))
@@ -267,18 +275,21 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         with ui.row().classes("sr-account w-full items-center gap-2 q-mt-sm no-wrap").props(
                 'tabindex=0 role=button aria-haspopup=menu aria-label="Tài khoản và cài đặt"').style(
                 "flex-shrink:0; min-width:0") as acc_row:  # w-full: email dài thì cắt "…" thay vì tràn khỏi menu
-            T.presence_avatar(ui, str(user), st, st_text, size=28, ring=T.CREAM)
+            T.presence_avatar(ui, name, st, st_text, size=28, ring=T.CREAM, colors=T.avatar_color(str(user)),
+                              photo=photo)
             with ui.column().classes("gap-0 sr-mini-hide col items-stretch").style("min-width:0"):
-                ui.label(user).classes("text-sm ellipsis").props(f'title="{user}"')
+                ui.label(name).classes("text-sm ellipsis").props["title"] = str(user)
                 ui.label(" · ".join(x for x in (role_text.split(" · ")[0] if user.role != A.LOCAL else "", st_text)
                                     if x)).classes("text-xs muted ellipsis")
             ui.icon("unfold_more", size="18px").classes("muted sr-mini-hide")
             with ui.menu().props('anchor="top left" self="bottom left" :offset="[0, 8]"').classes(
                     "sr-account-menu").style("width: 300px") as acc_menu:
                 with ui.row().classes("items-center gap-3 no-wrap q-pa-md"):
-                    T.presence_avatar(ui, str(user), st, st_text, size=40)
+                    T.presence_avatar(ui, name, st, st_text, size=40, colors=T.avatar_color(str(user)), photo=photo)
                     with ui.column().classes("gap-0").style("min-width:0"):
-                        ui.label(user).classes("text-sm font-semibold ellipsis")
+                        ui.label(name).classes("text-sm font-semibold ellipsis")
+                        if name != str(user):
+                            ui.label(str(user)).classes("text-xs muted ellipsis")
                         ui.label(role_text).classes("text-xs muted")
                         ui.label(st_text).classes("text-xs").style(
                             f"color:{T.GREEN if st == PR.AVAILABLE else T.MUTED}")
@@ -288,7 +299,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     for p in P.projects:
                         cur = p["slug"] == P.project["slug"]
                         with ui.menu_item(on_click=lambda _, s_=p["slug"]: go_project(s_)).classes(
-                                "items-center gap-3 no-wrap"):
+                                "items-center gap-3 no-wrap" + (" sr-current" if cur else "")):
                             T.project_icon(ui, p, 26)
                             with ui.column().classes("gap-0 col").style("min-width:0"):
                                 ui.label(p["name"]).classes("text-sm ellipsis" + (" font-semibold" if cur else ""))
@@ -305,11 +316,11 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         with ui.menu_item(on_click=lambda _, t=to: ui.navigate.to(t)).classes("items-center gap-3"):
                             ui.icon(icon, size="18px").classes("muted")
                             ui.label(label).classes("text-sm")
+                ui.separator()
+                with ui.menu_item(on_click=lambda: ui.navigate.to("/tai-khoan")).classes("items-center gap-3"):
+                    ui.icon("account_circle", size="18px").classes("muted")
+                    ui.label("Hồ sơ của tôi").classes("text-sm")
                 if user.via == "password":
-                    ui.separator()
-                    with ui.menu_item(on_click=lambda: ui.navigate.to("/doi-mat-khau")).classes("items-center gap-3"):
-                        ui.icon("key", size="18px").classes("muted")
-                        ui.label("Đổi mật khẩu").classes("text-sm")
                     with ui.menu_item(on_click=logout).classes("items-center gap-3"):
                         ui.icon("logout", size="18px").style(f"color:{T.RED}")
                         ui.label("Đăng xuất").classes("text-sm").style(f"color:{T.RED}")
@@ -589,6 +600,15 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         shell("Phân quyền", user, P, page_ctx(P), period=False, group=False)
         build_access_page(ui, base, app_connect, user, P.project["slug"], request.query_params.get("project"))
+
+    @ui.page("/tai-khoan")
+    def profile_page(request: Request):
+        from .web_profile import build_profile_page
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        shell("Hồ sơ của tôi", user, P, page_ctx(P), period=False, group=False)
+        build_profile_page(ui, base, app_connect, user)
 
     @ui.page("/budget")
     def budget_page(request: Request):

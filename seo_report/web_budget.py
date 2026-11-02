@@ -9,6 +9,7 @@ from datetime import date
 
 from . import db
 from . import keywords as K
+from . import live as LIVE
 from . import projects as PJ
 from . import rank as R
 from . import ui_theme as T
@@ -135,6 +136,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         try:
                             with app_connect() as c:
                                 PJ.set_budget(c, s_, box.value, user)
+                            LIVE.kick(project=s_, keep=ui.context.client.id)  # trang đang mở dùng ngân sách mới
                         except (ValueError, TypeError) as e:
                             ui.notify(str(e), type="warning")
                             return
@@ -148,6 +150,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     def toggle_pause(e, s_=p["slug"], name=p["name"]):
                         with app_connect() as c:
                             PJ.set_paused(c, s_, not e.value, user)
+                        LIVE.kick(project=s_, keep=ui.context.client.id)  # tạm ngưng có hiệu lực cả trang đang mở
                         ui.notify(f"{name}: {'chạy lại' if e.value else 'tạm ngưng'} check rank", type="positive")
                         body.refresh()
 
@@ -155,14 +158,14 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     with ui.row().classes("items-center gap-1 no-wrap"):
                         inp = ui.number(value=r["budget"], min=0, step=5, format="%.0f", suffix="USD").props(
                             "outlined dense").classes("w-28").tooltip("Ngân sách USD/tháng")
-                        btn = ui.button("Lưu", on_click=lambda _, box=inp, f=save: f(box)).props(
-                            "unelevated dense no-caps")
+                        btn = ui.button(icon="check", on_click=lambda _, box=inp, f=save: f(box)).props(
+                            "flat round dense color=positive").tooltip("Lưu ngân sách")
                         btn.disable()
                         inp.on_value_change(lambda e, b=btn, old=r["budget"]: b.set_enabled(
                             e.value is not None and float(e.value) != float(old)))
                     with ui.row().classes("items-center gap-1 no-wrap"):
-                        ui.switch("Chạy" if not r["paused"] else "Tạm ngưng", value=not r["paused"],
-                                  on_change=toggle_pause).props("dense color=positive").classes("text-xs").tooltip(
+                        ui.switch(value=not r["paused"], on_change=toggle_pause).props(
+                            "dense color=positive").tooltip(
                             "Bật: check rank và lấy volume theo lịch. Tắt: tạm ngưng mọi chi phí DataForSEO của "
                             "website này (dữ liệu cũ vẫn giữ). Có hiệu lực ngay, không cần bấm Lưu")
                         ui.button(icon="leaderboard", on_click=open_rank).props(

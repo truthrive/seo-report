@@ -168,9 +168,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             elif ix and not ix["indexed"]:
                 flags.append(("#C2410C", "Chưa được Google index"))
             text, color = _delta(r["clicks_w"], r["clicks_prev"], percent=False)
-            with ui.element("div").classes("sr-url-item" + (" selected" if selected else "")).props(
-                    f'title="{r["url"]}" tabindex="0" role="button"').on(
-                    "click", lambda _, rid=r["id"]: select(rid)):
+            item = ui.element("div").classes("sr-url-item" + (" selected" if selected else "")).props(
+                'tabindex="0" role="button"')
+            # Gán thẳng vào props (không ghép chuỗi): URL có dấu " không thể chèn thêm thuộc tính / JavaScript
+            item.props["title"] = r["url"]
+            with item.on("click", lambda _, rid=r["id"]: select(rid)):
                 with ui.element("div").classes("sr-url-line"):
                     ui.label(r["path"]).classes("sr-url-path")
                     ui.label(_n(r["clicks_w"])).classes("sr-url-clicks num")
@@ -286,6 +288,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                         "flat dense no-caps")
 
         async def check_now():
+            if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                return
             from nicegui import run as nrun
 
             from . import auth
@@ -316,6 +320,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 "outlined dense" + ("" if ed else " readonly")).classes("col")
 
             def save_target():
+                if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                    return
                 with connect() as c:
                     K.set_target(c, site, rid, target_input.value or "", user)
                     state["targets"] = K.targets(c, [r["id"] for r in state["rows"]])
@@ -429,6 +435,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     "unelevated no-caps")
 
         async def add_committed():
+            if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                return
             from nicegui import run as nrun
             items = [(line.split("|")[0].strip(), row["url"]) for line in (new_kw.value or "").splitlines()
                      if line.split("|")[0].strip()]
@@ -486,6 +494,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 </q-td>""")
 
             def on_star(e):
+                if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                    return
                 with connect() as c:
                     ok, msg = R.toggle_star(c, site, cfg.rank, end, rid, e.args["query"], user)
                 ui.notify(msg, type="positive" if ok else "negative", multi_line=True, timeout=6000)

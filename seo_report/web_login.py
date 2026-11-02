@@ -96,6 +96,8 @@ def build_change_password_page(ui, cfg, connect, user, next_url: str = "/") -> N
                     return
                 _, _, sess = A.login(c, settings, str(user), new.value)
             app.storage.user["auth"] = sess  # phiên mới gắn với mật khẩu mới
+            from .live import kick
+            kick(email=str(user), keep=ui.context.client.id)  # trang ở máy khác (mật khẩu cũ): ngắt
             ui.notify("Đã đổi mật khẩu", type="positive")
             ui.navigate.to(target)
 

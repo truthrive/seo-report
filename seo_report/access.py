@@ -35,7 +35,7 @@ LOCAL, EDITOR, VIEWER, CLIENT = "local", "editor", "viewer", "client"
 # Loại tài khoản (cột role của access_users): EDITOR = quản trị mọi dự án, VIEWER = chỉ các dự án được gắn.
 ADMIN, MEMBER = EDITOR, VIEWER
 PROJECT_ROLES = {CLIENT: "Khách hàng", VIEWER: "Team xem", EDITOR: "Được sửa"}  # quyền trong một dự án
-CLIENT_PAGES = ("/", "/report", "/kpi", "/okr")  # màn khách hàng được mở
+CLIENT_PAGES = ("/", "/report", "/kpi", "/okr", "/tai-khoan")  # màn khách hàng được mở
 MAX_FAILED, LOCK_MINUTES, MIN_PASSWORD = 5, 15, 10
 
 
@@ -75,10 +75,23 @@ def is_admin(user) -> bool:
 def is_client(user) -> bool:
     return getattr(user, "role", LOCAL) == CLIENT
 
+LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _host_name(host: str) -> str:
+    """Tên máy trong header Host, bỏ cổng: '127.0.0.1:8080' → '127.0.0.1', '[::1]:8080' → '::1'."""
+    host = (host or "").strip().lower()
+    if host.startswith("["):
+        return host[1:host.find("]")] if "]" in host else host
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
 def is_local(client_host: str | None, headers) -> bool:
-    """Kết nối thẳng từ chính máy này: địa chỉ loopback và không đi qua proxy (Cloudflare, Tailscale…)."""
-    return (client_host or "") in ("127.0.0.1", "::1", "localhost") and not (
-        headers.get("cf-ray") or headers.get("x-forwarded-for") or headers.get("tailscale-user-login"))
+    """Kết nối thẳng từ chính máy này: địa chỉ loopback, không đi qua proxy (Cloudflare, Tailscale…), và trình duyệt
+    đang mở đúng địa chỉ localhost / 127.0.0.1. Kiểm tra Host chặn DNS rebinding: một trang web lạ trỏ tên miền của nó
+    về 127.0.0.1 sẽ gửi Host là tên miền đó, nên không được coi là chủ máy."""
+    return ((client_host or "") in LOOPBACK and _host_name(headers.get("host", "")) in LOOPBACK and not (
+        headers.get("cf-ray") or headers.get("x-forwarded-for") or headers.get("tailscale-user-login")))
 
 
 def client_ip(client_host: str | None, headers) -> str:
@@ -130,7 +143,9 @@ PASSWORD_COLS = {"pw_hash": "TEXT", "pw_set_at": "TEXT", "must_change": "INTEGER
                  "title": "TEXT NOT NULL DEFAULT ''",
                  # Team mọi dự án: quyền (viewer / editor) áp cho mọi website, kể cả website thêm sau
                  "team_role": "TEXT",
-                 "last_seen": "TEXT"}  # lúc đóng trang tool gần nhất (chấm trạng thái: "offline · lần cuối …")
+                 "last_seen": "TEXT",  # lúc đóng trang tool gần nhất (chấm trạng thái: "offline · lần cuối …")
+                 # hồ sơ do chính người dùng sửa ở màn Hồ sơ: tên hiển thị và ảnh đại diện (data URI PNG nhỏ)
+                 "display_name": "TEXT NOT NULL DEFAULT ''", "avatar": "TEXT NOT NULL DEFAULT ''"}
 EMAIL_RE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 USERNAME_RE = r"^[a-z0-9][a-z0-9._-]{2,31}$"  # tài khoản không cần email: tên đăng nhập 3–32 ký tự
 ROLE_LABEL = {EDITOR: "Chủ tool", VIEWER: "Theo dự án"}  # loại tài khoản
@@ -213,6 +228,37 @@ def users(con, settings: AccessSettings) -> list[dict]:
                   "team_role": (r[12] if r and u["role"] == VIEWER else None),
                   "last_seen": (r[14] if r else None) or (r[10] if r else None)})
     return sorted(out.values(), key=lambda u: (u["role"] != EDITOR, u["email"]))
+
+
+MAX_NAME = 60
+
+
+def profiles(con) -> dict[str, dict]:
+    """Hồ sơ mọi tài khoản: {email: {"name": tên hiển thị hoặc "", "avatar": data URI hoặc ""}}."""
+    _ensure(con)
+    return {r[0]: {"name": r[1] or "", "avatar": r[2] or ""}
+            for r in con.execute("SELECT email, display_name, avatar FROM access_users")}
+
+
+def display_name(profile: dict | None, email: str) -> str:
+    return (profile or {}).get("name") or str(email)
+
+
+def set_profile(con, settings: AccessSettings, email: str, name: str, avatar: str) -> None:
+    """Người dùng tự sửa tên hiển thị / ảnh đại diện của mình. Tài khoản trong config.toml chưa có dòng thì tạo."""
+    email = _clean_email(email)
+    name = " ".join((name or "").split())
+    if len(name) > MAX_NAME:
+        raise ValueError(f"Tên hiển thị tối đa {MAX_NAME} ký tự")
+    if avatar and not avatar.startswith("data:image/"):
+        raise ValueError("Ảnh đại diện không hợp lệ")
+    u = next((x for x in users(con, settings) if x["email"] == email), None)
+    if not u:
+        raise ValueError("Tài khoản không còn quyền dùng tool")
+    with con:
+        con.execute("INSERT INTO access_users (email, role, note, added_by, added_at) VALUES (?, ?, '', 'config.toml', ?) "
+                    "ON CONFLICT(email) DO NOTHING", (email, u["role"], _now()))
+        con.execute("UPDATE access_users SET display_name = ?, avatar = ? WHERE email = ?", (name, avatar, email))
 
 
 def mark_seen(con, email: str) -> None:

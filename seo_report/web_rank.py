@@ -115,6 +115,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
         cb.on_selection_change(lambda _: update_schedule_view())
 
     def save_schedule():
+        if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+            return
         s = current_schedule()
         if s["type"] == "weekdays" and not s["weekdays"]:
             ui.notify("Chọn ít nhất một thứ trong tuần", type="warning")
@@ -318,6 +320,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
             on_budget_change()
 
     async def add():
+        if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+            return
         from nicegui import run
 
         from . import volume as V
@@ -351,6 +355,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
             ui.notify(add_result.text, type="positive")
 
     def remove():
+        if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+            return
         if not table.selected:
             ui.notify("Tích chọn keyword cần bỏ", type="warning")
             return
@@ -360,6 +366,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
         refresh()
 
     async def check_now():
+        if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+            return
         from nicegui import run
 
         ids = [r["id"] for r in table.selected] or [r["id"] for r in table.rows]
