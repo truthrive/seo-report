@@ -444,9 +444,14 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
                             (m.get("icon") or "insights")
                         ui.icon(icon, size="18px").classes("sr-trend-check")
                         ui.label(m["label"]).classes("sr-trend-label")
-                    with ui.row().classes("items-baseline gap-2 q-mt-xs").style("row-gap:2px"):  # hẹp thì % xuống dòng
+                    # Số chính rồi nhãn chênh ở dòng riêng: ô nào cũng cùng bố cục (ô hẹp, số lớn không bị lệch hàng)
+                    with ui.column().classes("items-start gap-1 q-mt-xs"):
                         ui.label(m["value"]).classes("sr-trend-value num")
-                        delta_badge(ui, change_text(m.get("delta") or "", m.get("prev")), m.get("good"))
+                        text = change_text(m.get("delta") or "", m.get("prev"))
+                        if text:
+                            delta_badge(ui, text, m.get("good"))
+                        else:
+                            ui.label(" ").classes("sr-delta flat").style("visibility:hidden")  # giữ chỗ cho đều
                     if m.get("prev"):
                         compare_line(ui, m["prev"], m.get("good"))
                     hint = ui.label(m.get("hint") or " ").classes("sr-trend-hint")
