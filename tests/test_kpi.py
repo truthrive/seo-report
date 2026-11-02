@@ -351,6 +351,27 @@ class WizardTest(unittest.TestCase):
         kws = KP.parse_keywords([list(r) for r in wb[KP.KW_TAB].iter_rows(values_only=True)])
         self.assertEqual(kws, [{"keyword": "kính A", "url": "https://x.vn/a/", "target": 3}])
 
+    def test_workbook_from_master_replaces_kpi_tabs_and_sets_start(self):
+        import io
+
+        from openpyxl import Workbook, load_workbook
+        wb = Workbook()
+        okr = wb.active
+        okr.title = "OKRs 3 tháng"
+        okr["M1"], okr["O2"] = "Bắt đầu →", '=IF($N$1="","",$N$1)'
+        wb.create_sheet("Weekly Task Tracker")["A1"] = "Ngày"
+        wb.create_sheet("Bản sao của KPI cam kết")["A1"] = "cũ"
+        buf = io.BytesIO()
+        wb.save(buf)
+        d = KP.plan(self.SPEC)
+        out = load_workbook(io.BytesIO(KP.workbook_from_master(buf.getvalue(), d, [("kính A", "", 3)])))
+        self.assertEqual(out.sheetnames, ["OKRs 3 tháng", "Weekly Task Tracker", KP.KPI_TAB, KP.KW_TAB])
+        self.assertEqual(out["OKRs 3 tháng"]["N1"].value.date(), date(2026, 12, 1))   # ô cạnh "Bắt đầu →"
+        self.assertEqual(out["OKRs 3 tháng"]["O2"].value, '=IF($N$1="","",$N$1)')
+        got = KP.parse_kpi([list(r) for r in out[KP.KPI_TAB].iter_rows(values_only=True)], TODAY)
+        self.assertEqual(by_id(got)["level:ai"]["targets"], by_id(d)["level:ai"]["targets"])
+        self.assertEqual(out[KP.KW_TAB]["C2"].value, 3)
+
 
 class ScopeTest(unittest.TestCase):
     def test_wider_scope_covers_narrower(self):

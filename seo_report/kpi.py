@@ -667,22 +667,18 @@ def sample_data(project: str) -> dict:
             "lines": lines}
 
 
-def template_xlsx(project: str, keywords: list[tuple[str, str]], data: dict | None = None) -> bytes:
-    """File Excel mẫu (Drive chuyển thành Google Sheet). Không có `data` thì điền số của dự án mẫu, ngày bắt đầu để
-    trống: điền ngày bắt đầu thì tool mới bắt đầu chấm."""
-    import io
-
-    from openpyxl import Workbook
+def fill_workbook(wb, data: dict, keywords: list[tuple]) -> None:
+    """Tạo (hoặc thay) hai tab KPI trong một workbook openpyxl: tab KPI cam kết theo bố cục mới và tab Từ khóa cam
+    kết. Dùng cho file mẫu, cho sheet dự án dựng từ sheet mẫu gốc (xuất xlsx) khi tool chưa có quyền ghi Sheets."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-    data = data or sample_data(project)
     navy, white = PatternFill("solid", fgColor="1F3A68"), Font(color="FFFFFF", bold=True)
     tint, yellow = PatternFill("solid", fgColor="EEF2F8"), PatternFill("solid", fgColor="FFF6CC")
     thin = Side(style="thin", color="C9CED8")
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = KPI_TAB
+    for t in [x.title for x in wb.worksheets if _norm_tab(x.title) in (KPI_TAB.lower(), KW_TAB.lower())]:
+        del wb[t]
+    ws = wb.create_sheet(KPI_TAB)
     grid = kpi_grid(data)
     header = next(i for i, r in enumerate(grid) if r and r[0] == "Loại")
     n_lines = len(data["lines"])
@@ -728,6 +724,38 @@ def template_xlsx(project: str, keywords: list[tuple[str, str]], data: dict | No
     for col, w in zip("ABCD", (38, 60, 14, 30)):
         kw.column_dimensions[col].width = w
     kw.freeze_panes = "A2"
+
+
+def template_xlsx(project: str, keywords: list[tuple], data: dict | None = None) -> bytes:
+    """File Excel chỉ có hai tab KPI (Drive chuyển thành Google Sheet). Không có `data` thì điền số của dự án mẫu,
+    ngày bắt đầu để trống: điền ngày bắt đầu thì tool mới bắt đầu chấm."""
+    import io
+
+    from openpyxl import Workbook
+    wb = Workbook()
+    del wb[wb.active.title]
+    fill_workbook(wb, data or sample_data(project), keywords)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def workbook_from_master(xlsx: bytes, data: dict, keywords: list[tuple]) -> bytes:
+    """Sheet dự án dựng từ bản xlsx của sheet mẫu gốc: thay hai tab KPI, điền ngày bắt đầu vào ô cạnh nhãn 'Bắt đầu'
+    của tab OKRs. Đường này chỉ cần quyền drive.file (xuất rồi tải lên lại), nên chạy được với token cũ."""
+    import io
+
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(xlsx))
+    fill_workbook(wb, data, keywords)
+    start = data.get("start")
+    okr = next((x for x in wb.worksheets if _norm_tab(x.title).startswith("okr")), None)
+    if okr is not None and start:
+        for row in okr.iter_rows(min_row=1, max_row=5, max_col=26):
+            for c in row:
+                if isinstance(c.value, str) and "bắt đầu" in c.value.lower():
+                    okr.cell(c.row, c.column + 1, date.fromisoformat(start)).number_format = "dd/mm/yyyy"
+                    break
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -944,22 +972,32 @@ def create_project_sheet(con, cfg, data: dict, keywords: list[tuple], master: st
     """Tạo sheet dự án trong folder Drive của dự án: copy sheet mẫu gốc (OKRs, Weekly Task, Chi phí, Content…) rồi ghi
     hai tab KPI; chưa có sheet mẫu gốc thì tạo file chỉ có hai tab KPI. Gắn luôn làm sheet KPI của dự án."""
     from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
 
     from . import auth
     from . import drive as D
     name = f"Sheet dự án – {domain(cfg.site_url)}"
-    if master:
-        creds = auth.get_credentials(cfg, need=(auth.DRIVE_FULL_SCOPE, auth.SHEETS_WRITE_SCOPE))
-        drv = build("drive", "v3", credentials=creds, cache_discovery=False)
-        folder = D.root_folder(con, drv, cfg.site_url)
+    creds = auth.get_credentials(cfg, need=(auth.DRIVE_SCOPE,))
+    drv = build("drive", "v3", credentials=creds, cache_discovery=False)
+    folder = D.root_folder(con, drv, cfg.site_url)
+    if not master:
+        f = D.upload(drv, template_xlsx(data["project"], keywords, data), name, D.XLSX, folder, D.SHEET)
+    elif not auth.missing_scopes(creds.scopes or [], (auth.DRIVE_FULL_SCOPE, auth.SHEETS_WRITE_SCOPE)):
+        # Đủ quyền: copy trên Drive (giữ nguyên mọi thứ) rồi ghi hai tab KPI bằng Sheets API
         f = drv.files().copy(fileId=master, body={"name": name, "parents": [folder]},
                              fields="id, name, webViewLink").execute()
         sh = build("sheets", "v4", credentials=creds, cache_discovery=False)
         write_tabs(sh, f["id"], sheet_values(data, keywords))
         set_okr_start(sh, f["id"], data.get("start"))
     else:
-        drv = D.build_service(cfg)
-        folder = D.root_folder(con, drv, cfg.site_url)
-        f = D.upload(drv, template_xlsx(data["project"], keywords, data), name, D.XLSX, folder, D.SHEET)
+        # Token cũ (drive.file): chỉ xuất được sheet mẫu gốc do tool tạo; dựng xlsx rồi tải lên thành Google Sheet
+        try:
+            xlsx = drv.files().export(fileId=master, mimeType=D.XLSX).execute()
+        except HttpError as e:
+            if e.resp.status in (403, 404):
+                raise SystemExit("Tool chưa có quyền Google Drive đầy đủ để copy sheet mẫu gốc này. Chạy lại: python "
+                                 "-m seo_report login (đăng nhập Google lại một lần, tích đủ các ô quyền)") from e
+            raise
+        f = D.upload(drv, workbook_from_master(xlsx, data, keywords), name, D.XLSX, folder, D.SHEET)
     set_sheet(con, f["id"])
     return f
