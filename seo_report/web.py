@@ -572,6 +572,15 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("KPI cam kết", user, P, page_ctx(P), period=False, group=False)
         build_kpi_page(ui, P.cfg, P.connect, user, app_connect, P.project)
 
+    @ui.page("/kpi/sua")
+    def kpi_edit_page(request: Request):
+        if not (opened := open_page(request, edit=True)):
+            return
+        user, P = opened
+        from .web_kpi import build_kpi_edit_page
+        shell("KPI cam kết", user, P, page_ctx(P), period=False, group=False)
+        build_kpi_edit_page(ui, P.cfg, P.connect, user)
+
     @ui.page("/login")
     def login_page(request: Request, next: str = "/"):
         from .web_login import build_login_page, safe_next

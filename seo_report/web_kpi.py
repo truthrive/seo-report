@@ -232,6 +232,8 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
             ui.button("Mở sheet", icon="open_in_new", on_click=lambda: ui.navigate.to(
                 f"https://docs.google.com/spreadsheets/d/{sid}/edit", new_tab=True)).props("outline no-caps")
         if sid and ed:
+            ui.button("Sửa cam kết", icon="edit", on_click=lambda: ui.navigate.to("/kpi/sua")).props(
+                "outline no-caps")
             sync_btn = ui.button("Đồng bộ ngay", icon="sync", on_click=lambda: do_sync()).props("unelevated no-caps")
 
     async def do_sync():
@@ -576,3 +578,222 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
         with ui.row().classes("items-center gap-3"):
             link = ui.input(placeholder="Dán link Google Sheet đã có").props("outlined dense").classes("w-96")
             ui.button("Dùng sheet này", on_click=use_link).props("outline no-caps")
+
+
+# ---- Sửa cam kết trên tool ----
+
+LINE_CHOICES = {  # khóa chọn khi thêm dòng → định nghĩa dòng
+    "top3": "Top 3", "top5": "Top 5", "top10": "Top 10",
+    "level:organic": "Mức tháng · Organic Search", "cum:organic": "Tăng thêm cộng dồn · Organic Search",
+    "level:ai": "Mức tháng · AI Assistant", "cum:ai": "Tăng thêm cộng dồn · AI Assistant",
+}
+
+
+def _new_line(lid: str, mode: str, unit: str) -> dict:
+    if lid.startswith("top"):
+        return {"kind": "rank", "top": int(lid[3:]), "mode": mode, "unit": unit, "targets": {}}
+    kind, src = lid.split(":")
+    return {"kind": kind, "source": src, "targets": {}}
+
+
+def build_kpi_edit_page(ui, cfg, connect, user) -> None:
+    """Form sửa cam kết: khối thông tin, mỗi cam kết một dòng với ô theo tháng, từ khóa. Lưu = ghi vào sheet (bố cục
+    mới) rồi đồng bộ; sheet bị sửa trong lúc mở form thì hỏi lại trước khi ghi đè."""
+    from nicegui import run
+
+    from .okr import parse_date
+    with connect() as c:
+        sid = KP.sheet_id(c)
+    right = T.page_header(ui, "edit", "Sửa cam kết KPI",
+                          "Sửa trên tool rồi Lưu: tool ghi vào sheet (bố cục mới) và đồng bộ lại. Sheet vẫn là nơi "
+                          "lưu cam kết.", eyebrow="KPI")
+    with right:
+        ui.button("Quay lại", icon="arrow_back", on_click=lambda: ui.navigate.to("/kpi")).props("flat no-caps")
+    if not sid:
+        T.empty_state(ui, "flag", "Chưa có sheet KPI", "Thiết lập cam kết ở màn KPI cam kết trước.")
+        return
+    box = ui.column().classes("w-full gap-4")
+    with box:
+        T.skeleton(ui).classes("w-full").style("height: 260px; border-radius: 14px")
+
+    async def load():
+        try:
+            loaded = await run.io_bound(lambda: KP.load_for_edit(cfg, sid))
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            box.clear()
+            with box:
+                T.status_chip(ui, f"Không đọc được sheet: {str(e)[:200]}", "red", "error")
+            return
+        box.clear()
+        with box:
+            _edit_form(ui, cfg, connect, user, sid, loaded)
+
+    from nicegui import background_tasks
+    background_tasks.create(load())
+
+
+def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
+    from nicegui import run
+
+    from .okr import parse_date
+    data = loaded["data"]
+    state = {"months": list(data["months"]) or [1], "lines": [dict(ln, targets=dict(ln["targets"])) for ln in
+                                                             data["lines"]], "fp": loaded["fingerprint"]}
+    if loaded["old_format"]:
+        T.status_chip(ui, "Sheet đang ở mẫu cũ: bấm Lưu thì tab KPI cam kết được ghi lại theo bố cục mới (mỗi cam "
+                         "kết một dòng)", "amber", "info")
+    with T.section(ui, "Thông tin dự án", "info"):
+        with ui.row().classes("items-end gap-4 wrap"):
+            name = ui.input("Tên dự án", value=data["project"]).props("outlined dense").classes("w-72")
+            start = ui.input("Ngày bắt đầu (dd/mm/yyyy)", value=(f"{data['start'][8:10]}/{data['start'][5:7]}/"
+                                                               f"{data['start'][:4]}" if data["start"] else "")
+                             ).props("outlined dense").classes("w-52")
+            n_months = ui.number("Số tháng", value=len(state["months"]), min=1, max=36, step=1).props(
+                "outlined dense").classes("w-28")
+            base_org = ui.number("Baseline Organic (phiên/tháng)", value=data["baseline"].get("organic"), min=0,
+                                 step=1).props("outlined dense").classes("w-60")
+            base_ai = ui.number("Baseline AI Assistant", value=data["baseline"].get("ai"), min=0, step=1).props(
+                "outlined dense").classes("w-52")
+        with ui.row().classes("items-center gap-4"):
+            mode = ui.radio({"shared": "Bộ chung (top 3 nằm trong top 5, tính trên cả danh sách)",
+                             "per_tier": "Bộ riêng theo mốc (từ khóa có Top target = N, chấm độc lập)"},
+                            value=next((ln.get("mode") for ln in state["lines"] if ln["kind"] == "rank"), "shared")
+                            ).props("dense inline")
+            unit = ui.radio({"pct": "Thứ hạng theo %", "count": "Thứ hạng theo số từ khóa"},
+                            value=next((ln.get("unit") for ln in state["lines"] if ln["kind"] == "rank"), "pct")
+                            ).props("dense inline")
+
+        def resize():
+            n = int(n_months.value or 1)
+            state["months"] = list(range(1, max(1, min(36, n)) + 1))
+            grid.refresh()
+
+        n_months.on("change", lambda _: resize())
+        unit.on("change", lambda _: grid.refresh())
+
+    cells: dict[tuple[int, int], object] = {}
+
+    with T.section(ui, "Các cam kết", "flag", "Ô trống = tháng đó không cam kết. % nhập số 0–100; phiên và số từ khóa "
+                                               "nhập số nguyên; dòng tích lũy nhập mức tăng thêm so với baseline của "
+                                               "từng tháng."):
+        @ui.refreshable
+        def grid():
+            cells.clear()
+            months = state["months"]
+            if not state["lines"]:
+                ui.label("Chưa có cam kết nào. Thêm dòng bên dưới.").classes("text-sm muted")
+            for i, ln in enumerate(state["lines"]):
+                pct = ln["kind"] == "rank" and unit.value == "pct"
+                with ui.row().classes("items-center gap-2 no-wrap w-full").style("overflow-x:auto"):
+                    ui.label(KP.line_label({**ln, "mode": mode.value} if ln["kind"] == "rank" else ln)).classes(
+                        "text-sm font-semibold").style("min-width: 190px")
+                    ui.label("%" if pct else ("từ" if ln["kind"] == "rank" else "phiên")).classes(
+                        "text-xs muted").style("min-width: 36px")
+                    for n in months:
+                        v = ln["targets"].get(str(n))
+                        if v is not None and pct and ln.get("unit", "pct") == "pct":
+                            v = round(v * 100, 1)
+                        cells[(i, n)] = ui.number(value=v, step=1 if pct or ln["kind"] == "rank" else 100).props(
+                            "outlined dense").classes("w-24").tooltip(f"Tháng {n}")
+
+                    def remove(_, i=i):
+                        state["lines"].pop(i)
+                        grid.refresh()
+
+                    ui.button(icon="delete", on_click=remove).props("flat round dense color=grey-7").tooltip(
+                        "Bỏ cam kết này")
+            with ui.row().classes("items-center gap-1 no-wrap q-ml-xs"):
+                ui.label("").style("min-width: 230px")
+                for n in months:
+                    ui.label(f"T{n}").classes("text-xs muted text-center").style("width: 96px")
+
+        grid()
+        with ui.row().classes("items-center gap-3 q-mt-sm"):
+            pick = ui.select(LINE_CHOICES, value="top3", label="Thêm cam kết").props("outlined dense").classes(
+                "w-80")
+
+            def add():
+                lid = pick.value
+                if any(KP.line_id(ln) == lid for ln in state["lines"]):
+                    ui.notify("Đã có dòng này", type="warning")
+                    return
+                _collect_targets()
+                state["lines"].append(_new_line(lid, mode.value, unit.value))
+                grid.refresh()
+
+            ui.button("Thêm dòng", icon="add", on_click=add).props("outline no-caps")
+
+    def _collect_targets() -> None:
+        """Đọc ô tháng vào state (trước khi vẽ lại lưới)."""
+        for (i, n), w in cells.items():
+            if i >= len(state["lines"]):
+                continue
+            ln = state["lines"][i]
+            v = w.value
+            if v in (None, ""):
+                ln["targets"][str(n)] = None
+            elif ln["kind"] == "rank" and unit.value == "pct":
+                ln["targets"][str(n)] = round(float(v) / 100, 4)
+            else:
+                ln["targets"][str(n)] = int(v)
+            if ln["kind"] == "rank":
+                ln["unit"], ln["mode"] = unit.value, mode.value
+
+    with T.section(ui, "Từ khóa cam kết", "search", "Mỗi dòng một từ khóa: từ khóa | URL mục tiêu | Top 3 (URL và "
+                                                    "Top không bắt buộc)"):
+        kw_text = ui.textarea(value=KP.keyword_text(loaded["keywords"])).props("outlined autogrow").classes(
+            "w-full").style("font-family: var(--mono); font-size: 12.5px")
+
+    def build() -> tuple[dict, list]:
+        d = parse_date(start.value, date.today())
+        if start.value and not d:
+            raise ValueError("Ngày bắt đầu chưa đúng (dd/mm/yyyy)")
+        _collect_targets()
+        months = state["months"]
+        lines = []
+        for ln in state["lines"]:
+            out = {k: v for k, v in ln.items() if k != "targets"}
+            out["targets"] = {str(n): ln["targets"].get(str(n)) for n in months}
+            lines.append(out)
+        new = {"project": (name.value or "").strip(), "start": d.isoformat() if d else None, "months": months,
+               "baseline": {"organic": int(base_org.value) if base_org.value not in (None, "") else None,
+                            "ai": int(base_ai.value) if base_ai.value not in (None, "") else None},
+               "lines": lines}
+        return new, KP.parse_keyword_text(kw_text.value)
+
+    async def save(force: bool = False):
+        try:
+            new, kws = build()
+        except ValueError as e:
+            ui.notify(str(e), type="warning")
+            return
+        save_btn.props("loading")
+        try:
+            def work():
+                fp = KP.write_sheet(cfg, sid, new, kws, expect=state["fp"], force=force)
+                with connect() as c:
+                    KP.sync(c, cfg, user)
+                return fp
+            state["fp"] = await run.io_bound(work)
+            ui.notify("Đã ghi vào sheet và đồng bộ", type="positive")
+            ui.navigate.to("/kpi")
+        except KP.SheetChanged:
+            with ui.dialog() as dlg, ui.card().style("border-radius:16px; max-width:520px"):
+                ui.label("Sheet đã bị sửa từ lúc bạn mở form").classes("text-lg font-semibold")
+                ui.label("Ai đó vừa đổi tab KPI cam kết hoặc Từ khóa cam kết trên Google Sheet. Tải lại để xem bản "
+                         "mới (mất phần bạn vừa sửa ở đây), hoặc ghi đè bằng bản trên tool.").classes("text-sm")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Tải lại", on_click=lambda: ui.navigate.reload()).props("flat no-caps")
+                    ui.button("Ghi đè", on_click=lambda: (dlg.close(), save(force=True))).props(
+                        "unelevated no-caps color=negative")
+            dlg.open()
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            ui.notify(f"Không ghi được: {str(e)[:300]}", type="negative", multi_line=True)
+        finally:
+            save_btn.props(remove="loading")
+
+    with ui.row().classes("items-center gap-3 q-mt-sm"):
+        save_btn = ui.button("Lưu vào sheet", icon="save", on_click=lambda: save()).props("unelevated no-caps")
+        ui.button("Hủy", on_click=lambda: ui.navigate.to("/kpi")).props("flat no-caps")
+        ui.label("Tool ghi lại hai tab KPI cam kết và Từ khóa cam kết; các tab khác không đụng tới. Cần quyền ghi "
+                 "Google Sheets (đăng nhập Google lại một lần nếu tool báo thiếu quyền).").classes("text-xs muted")

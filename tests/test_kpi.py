@@ -397,5 +397,53 @@ class MasterSheetTest(unittest.TestCase):
         self.assertEqual(PJ.set_master_sheet(con, ""), "")
 
 
+class EditTest(unittest.TestCase):
+    def test_keyword_text_roundtrip(self):
+        kws = [("kính A", "https://x.vn/a/", 3), ("kính B", "", None), ("kính C", "", 10)]
+        text = KP.keyword_text(kws)
+        self.assertEqual(text.splitlines(), ["kính A | https://x.vn/a/ | Top 3", "kính B", "kính C | Top 10"])
+        self.assertEqual(KP.parse_keyword_text(text), kws)
+        self.assertEqual(KP.keyword_text([{"keyword": "k", "url": "", "target": 5}]), "k | Top 5")
+
+    def test_fingerprint_changes_with_content(self):
+        a = {KP.KPI_TAB: NEW_ROWS, KP.KW_TAB: [["Từ khóa"], ["a"]]}
+        b = {KP.KPI_TAB: NEW_ROWS, KP.KW_TAB: [["Từ khóa"], ["b"]]}
+        self.assertEqual(KP.fingerprint(a), KP.fingerprint(dict(a)))
+        self.assertNotEqual(KP.fingerprint(a), KP.fingerprint(b))
+
+    def test_load_for_edit_detects_old_format(self):
+        from unittest import mock
+        with mock.patch.object(KP, "fetch", return_value={KP.KPI_TAB: OLD_ROWS, KP.KW_TAB: [["Từ khóa", "URL mục tiêu"],
+                                                                                            ["a", "https://x.vn/"]]}):
+            ld = KP.load_for_edit(None, "sid", TODAY)
+        self.assertTrue(ld["old_format"])
+        self.assertEqual(ld["keywords"], [("a", "https://x.vn/", None)])
+        self.assertEqual([KP.line_id(ln) for ln in ld["data"]["lines"]], ["top3", "top5", "top10", "level:organic"])
+        with mock.patch.object(KP, "fetch", return_value={KP.KPI_TAB: NEW_ROWS}):
+            self.assertFalse(KP.load_for_edit(None, "sid", TODAY)["old_format"])
+
+    def test_write_sheet_refuses_when_sheet_changed_unless_forced(self):
+        from unittest import mock
+
+        from seo_report import auth
+        before = {KP.KPI_TAB: NEW_ROWS, KP.KW_TAB: []}
+        after = {KP.KPI_TAB: NEW_ROWS, KP.KW_TAB: [["Từ khóa"], ["mới"]]}
+        creds = mock.Mock(scopes=[auth.SHEETS_WRITE_SCOPE])
+        written = []
+        with mock.patch.object(auth, "get_credentials", return_value=creds), \
+                mock.patch.object(KP, "fetch", return_value=after), \
+                mock.patch.object(KP, "write_tabs", side_effect=lambda sh, sid, values: written.append(values)), \
+                mock.patch("googleapiclient.discovery.build", return_value=object()):
+            d = KP.plan(WizardTest.SPEC)
+            with self.assertRaises(KP.SheetChanged):
+                KP.write_sheet(None, "sid", d, [], expect=KP.fingerprint(before))
+            self.assertEqual(written, [])
+            fp = KP.write_sheet(None, "sid", d, [("k", "", 3)], expect=KP.fingerprint(before), force=True)
+            self.assertEqual(fp, KP.fingerprint(after))
+            self.assertEqual(written[0][KP.KW_TAB][1], ["k", "", "Top 3", ""])
+            KP.write_sheet(None, "sid", d, [], expect=KP.fingerprint(after))   # không đổi: ghi bình thường
+            self.assertEqual(len(written), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

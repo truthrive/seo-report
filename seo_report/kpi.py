@@ -1001,3 +1001,51 @@ def create_project_sheet(con, cfg, data: dict, keywords: list[tuple], master: st
         f = D.upload(drv, workbook_from_master(xlsx, data, keywords), name, D.XLSX, folder, D.SHEET)
     set_sheet(con, f["id"])
     return f
+
+
+# ---- Sửa cam kết trên tool (ghi ngược vào sheet) ----
+
+class SheetChanged(Exception):
+    """Sheet đã bị sửa từ lúc mở form: không ghi đè khi chưa hỏi lại."""
+
+
+def fingerprint(tables: dict[str, list[list]]) -> str:
+    """Dấu vân nội dung hai tab KPI, để biết sheet có bị sửa trong lúc form đang mở không."""
+    import hashlib
+    raw = json.dumps({k: tables.get(k, []) for k in (KPI_TAB, KW_TAB)}, ensure_ascii=False, sort_keys=True,
+                     default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def keyword_text(keywords: list) -> str:
+    """Từ khóa cam kết → chữ dán được vào ô nhập (ngược với parse_keyword_text)."""
+    lines = []
+    for k in keywords:
+        kw, url, target = (k["keyword"], k.get("url"), k.get("target")) if isinstance(k, dict) else \
+            (list(k) + [None, None])[:3]
+        parts = [kw] + ([url] if url else []) + ([f"Top {target}"] if target else [])
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+def load_for_edit(cfg, sid: str, today: date | None = None) -> dict:
+    """Đọc sheet để sửa trên tool: {data, keywords (tuple), fingerprint, old_format}."""
+    tables = fetch(cfg, sid)
+    data = parse_kpi(tables[KPI_TAB], today or date.today())
+    kws = [(k["keyword"], k["url"], k["target"]) for k in parse_keywords(tables.get(KW_TAB, []))]
+    old = not any(_label(r).startswith("loại") for r in tables[KPI_TAB])
+    return {"data": data, "keywords": kws, "fingerprint": fingerprint(tables), "old_format": old}
+
+
+def write_sheet(cfg, sid: str, data: dict, keywords: list, expect: str | None = None, force: bool = False) -> str:
+    """Ghi hai tab KPI (bố cục mới) vào sheet đang gắn. Khi `expect` (dấu vân lúc mở form) khác sheet hiện tại và
+    không `force` thì raise SheetChanged. Cần quyền ghi Google Sheets. Trả về dấu vân mới."""
+    from googleapiclient.discovery import build
+
+    from . import auth
+    creds = auth.get_credentials(cfg, need=(auth.SHEETS_WRITE_SCOPE,))
+    if expect and not force and fingerprint(fetch(cfg, sid)) != expect:
+        raise SheetChanged("Sheet đã bị sửa từ lúc bạn mở form")
+    sh = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    write_tabs(sh, sid, sheet_values(data, keywords))
+    return fingerprint(fetch(cfg, sid))
