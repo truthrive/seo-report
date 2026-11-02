@@ -111,12 +111,16 @@ def main() -> None:
     ap.add_argument("xlsx")
     ap.add_argument("--out", default="")
     ap.add_argument("--upload", action="store_true", help="Tải lên Drive của tool và cài làm sheet mẫu gốc")
+    ap.add_argument("--as-is", action="store_true", help="File đã là bản mẫu gốc (ví dụ bản sao lưu): chỉ tải lên")
     ap.add_argument("--config", default="config.toml")
     args = ap.parse_args()
-    data = build_master(Path(args.xlsx).read_bytes())
-    out = Path(args.out or (Path(args.xlsx).with_name("sheet-mau-goc.xlsx")))
-    out.write_bytes(data)
-    print("Đã dựng", out)
+    if args.as_is:
+        data = Path(args.xlsx).read_bytes()
+    else:
+        data = build_master(Path(args.xlsx).read_bytes())
+        out = Path(args.out or (Path(args.xlsx).with_name("sheet-mau-goc.xlsx")))
+        out.write_bytes(data)
+        print("Đã dựng", out)
     if not args.upload:
         return
     from contextlib import closing
@@ -127,8 +131,12 @@ def main() -> None:
     svc = D.build_service(cfg)
     q = f"name = 'SEO Report – Sheet mẫu' and mimeType = '{D.FOLDER}' and trashed = false"
     found = svc.files().list(q=q, fields="files(id)").execute().get("files", [])
-    folder = found[0]["id"] if found else svc.files().create(
-        body={"name": "SEO Report – Sheet mẫu", "mimeType": D.FOLDER}, fields="id").execute()["id"]
+    body = {"name": "SEO Report – Sheet mẫu", "mimeType": D.FOLDER}
+    if cfg.drive_parent:  # folder của người dùng ([drive] parent_folder): cần quyền Drive đầy đủ
+        body["parents"] = [cfg.drive_parent]
+        found = [f for f in found if cfg.drive_parent in
+                 svc.files().get(fileId=f["id"], fields="parents").execute().get("parents", [])]
+    folder = found[0]["id"] if found else svc.files().create(body=body, fields="id").execute()["id"]
     f = D.upload(svc, data, "Sheet mẫu gốc – dự án SEO", D.XLSX, folder, D.SHEET)
     with closing(db.connect(cfg.db_path)) as con:
         PJ.set_master_sheet(con, f["id"])

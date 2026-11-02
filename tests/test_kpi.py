@@ -455,5 +455,70 @@ class EditTest(unittest.TestCase):
             self.assertEqual(len(written), 2)
 
 
+class ParentFolderTest(unittest.TestCase):
+    """Folder gốc của dự án nằm trong folder cha ([drive] parent_folder) khi có; thiếu quyền thì không hỏng."""
+
+    class FakeSvc:
+        def __init__(self, parents=None, fail=None):
+            self.parents, self.fail, self.calls = parents or {}, fail, []
+
+        def files(self):
+            return self
+
+        def create(self, body, fields):
+            self.calls.append(("create", body))
+            if self.fail == "create":
+                from googleapiclient.errors import HttpError
+                raise HttpError(type("R", (), {"status": 404, "reason": "x"})(), b"")
+            self.parents["new"] = list(body.get("parents", []))
+            return type("Q", (), {"execute": lambda s: {"id": "new"}})()
+
+        def get(self, fileId, fields):
+            if fileId not in self.parents:
+                from googleapiclient.errors import HttpError
+                raise HttpError(type("R", (), {"status": 404, "reason": "x"})(), b"")
+            return type("Q", (), {"execute": lambda s: {"id": fileId, "trashed": False,
+                                                        "parents": self.parents[fileId]}})()
+
+        def update(self, fileId, addParents, removeParents, fields):
+            self.calls.append(("move", fileId, addParents, removeParents))
+            self.parents[fileId] = [addParents]
+            return type("Q", (), {"execute": lambda s: {"id": fileId}})()
+
+    def test_new_root_created_under_parent(self):
+        from seo_report import drive as D
+        con = sqlite3.connect(":memory:")
+        svc = self.FakeSvc()
+        self.assertEqual(D.root_folder(con, svc, SITE, "PARENT"), "new")
+        self.assertEqual(svc.calls[0][1]["parents"], ["PARENT"])
+        self.assertEqual(D.root_folder(con, svc, SITE, "PARENT"), "new")   # lần sau: dùng lại, không tạo thêm
+        self.assertEqual(len([c for c in svc.calls if c[0] == "create"]), 1)
+
+    def test_existing_root_moved_under_parent_when_possible(self):
+        from seo_report import drive as D
+        con = sqlite3.connect(":memory:")
+        D._setting(con, "drive_root", "old")
+        svc = self.FakeSvc(parents={"old": ["mydrive"]})
+        self.assertEqual(D.root_folder(con, svc, SITE, "PARENT"), "old")
+        self.assertEqual(svc.calls, [("move", "old", "PARENT", "mydrive")])
+        self.assertEqual(D.root_folder(con, svc, SITE, "PARENT"), "old")   # đã đúng chỗ: không chuyển nữa
+        self.assertEqual(len(svc.calls), 1)
+        self.assertEqual(D.root_folder(con, svc, SITE), "old")             # không cài folder cha: giữ nguyên
+
+    def test_parent_not_accessible_gives_clear_message(self):
+        from seo_report import drive as D
+        con = sqlite3.connect(":memory:")
+        with self.assertRaises(SystemExit) as cm:
+            D.root_folder(con, svc := self.FakeSvc(fail="create"), SITE, "PARENT")
+        self.assertIn("login", str(cm.exception))
+        self.assertEqual(D._setting(con, "drive_root"), None)
+
+    def test_folder_id_from_link(self):
+        from seo_report.config import _folder_id
+        self.assertEqual(_folder_id("https://drive.google.com/drive/folders/1c-XjFa8_aT15?usp=sharing"), "1c-XjFa8_aT15")
+        self.assertEqual(_folder_id(" 1abc "), "1abc")
+        self.assertEqual(_folder_id(""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

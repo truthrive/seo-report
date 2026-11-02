@@ -67,7 +67,7 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 def upload():
                     svc = D.build_service(cfg)
                     with connect() as c:
-                        folder, folder_name = D.target_folder(c, svc, cfg.site_url)
+                        folder, folder_name = D.target_folder(c, svc, cfg.site_url, cfg.drive_parent)
                     if kind == "sheet":
                         f = D.upload(svc, xlsx, name, D.XLSX, folder, D.SHEET)
                         return [("Mở Google Sheets", f["webViewLink"])], folder_name, None
@@ -93,8 +93,8 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
         def load():
             svc = D.build_service(cfg)
             with connect() as c:
-                root = D.root_folder(c, svc, cfg.site_url)
-                current, _ = D.target_folder(c, svc, cfg.site_url)
+                root = D.root_folder(c, svc, cfg.site_url, cfg.drive_parent)
+                current, _ = D.target_folder(c, svc, cfg.site_url, cfg.drive_parent)
             return svc, root, current, D.list_folders(svc, root)
 
         try:

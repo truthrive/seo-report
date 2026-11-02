@@ -1,8 +1,9 @@
 """Lưu báo cáo lên Google Drive: Google Sheets (từ file Excel), Google Slides (từ file .pptx) và PDF (xuất từ chính bộ
 Slides nên nội dung giống hệt).
 
-Quyền chỉ là drive.file: tool chỉ thấy và sửa file/folder do chính nó tạo. Tool tạo một folder gốc
-"SEO Report – <site>" và các folder con; người dùng chọn folder con để lưu, tự chia sẻ hoặc di chuyển folder đó.
+Tool tạo một folder gốc "SEO Report – <site>" cho mỗi dự án (trong folder của người dùng nếu config.toml có
+[drive] parent_folder) và các folder con; người dùng chọn folder con để lưu, tự chia sẻ. Với quyền drive.file tool chỉ
+thấy file/folder do chính nó tạo; ghi vào folder của người dùng cần quyền Drive đầy đủ (đăng nhập lại một lần).
 Chuyển đổi định dạng do Google Drive làm (upload kèm mimeType đích), không cần bật Sheets/Slides API.
 """
 import io
@@ -58,14 +59,39 @@ def _exists(svc, file_id: str) -> bool:
         return False
 
 
-def root_folder(con, svc, site: str) -> str:
-    """Folder gốc của tool trên Drive (tạo nếu chưa có hoặc đã bị xóa)."""
+def root_folder(con, svc, site: str, parent: str = "") -> str:
+    """Folder gốc của dự án trên Drive (tạo nếu chưa có hoặc đã bị xóa). `parent` = folder của người dùng
+    ([drive] parent_folder): folder dự án được tạo trong đó; folder đã có ở chỗ khác thì chuyển vào (khi tool có
+    quyền Drive đầy đủ; thiếu quyền thì giữ nguyên chỗ cũ)."""
     fid = _setting(con, "drive_root")
     if fid and _exists(svc, fid):
+        if parent:
+            _ensure_parent(svc, fid, parent)
         return fid
-    name = f"SEO Report – {domain(site)}"
-    fid = svc.files().create(body={"name": name, "mimeType": FOLDER}, fields="id").execute()["id"]
+    body = {"name": f"SEO Report – {domain(site)}", "mimeType": FOLDER}
+    if parent:
+        body["parents"] = [parent]
+    try:
+        fid = svc.files().create(body=body, fields="id").execute()["id"]
+    except HttpError as e:
+        if parent and e.resp.status in (403, 404):
+            raise SystemExit("Tool chưa vào được folder Drive đã cài ở config.toml ([drive] parent_folder). Kiểm tra "
+                             "link folder và chạy lại: python -m seo_report login (cấp quyền Google Drive đầy "
+                             "đủ)") from e
+        raise
     return _setting(con, "drive_root", fid)
+
+
+def _ensure_parent(svc, fid: str, parent: str) -> bool:
+    """Chuyển folder/file vào `parent` nếu đang nằm chỗ khác. Không có quyền thì bỏ qua (trả False)."""
+    try:
+        cur = svc.files().get(fileId=fid, fields="parents").execute().get("parents", [])
+        if parent in cur:
+            return True
+        svc.files().update(fileId=fid, addParents=parent, removeParents=",".join(cur), fields="id").execute()
+        return True
+    except HttpError:
+        return False
 
 
 def list_folders(svc, root: str) -> list[dict]:
@@ -79,9 +105,9 @@ def create_folder(svc, name: str, parent: str) -> str:
                               fields="id").execute()["id"]
 
 
-def target_folder(con, svc, site: str) -> tuple[str, str]:
+def target_folder(con, svc, site: str, parent: str = "") -> tuple[str, str]:
     """(id, tên) folder đang chọn để lưu; mặc định là folder gốc."""
-    root = root_folder(con, svc, site)
+    root = root_folder(con, svc, site, parent)
     fid = _setting(con, "drive_folder")
     if fid and fid != root and _exists(svc, fid):
         return fid, svc.files().get(fileId=fid, fields="name").execute()["name"]

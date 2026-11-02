@@ -1,4 +1,5 @@
 """Đọc cấu hình từ config.toml."""
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,7 @@ class Config:
     access: AccessSettings = field(default_factory=AccessSettings)  # ai được vào / sửa khi mở qua Cloudflare
     logo: str = ""  # logo của website (data URI) cho báo cáo Excel / slide / bản tĩnh; đặt theo dự án
     backup_dir: Path = Path("backups")  # nơi lưu bản sao lưu hằng ngày ([backup] dir)
+    drive_parent: str = ""  # ID folder Drive của bạn chứa mọi folder / file tool tạo ([drive] parent_folder); trống = My Drive
     backup_keep: int = 7  # số bản sao lưu giữ lại ([backup] keep)
 
 
@@ -72,6 +74,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
         access=AccessSettings(**raw.get("access", {})),
         backup_dir=base / raw.get("backup", {}).get("dir", "backups"),
         backup_keep=max(1, int(raw.get("backup", {}).get("keep", 7))),
+        drive_parent=_folder_id(raw.get("drive", {}).get("parent_folder", "")),
     )
 
 
@@ -79,3 +82,10 @@ def _ga4_property(value) -> str:
     """Chấp nhận '123456789' hoặc 'properties/123456789'."""
     value = str(value).strip()
     return value if not value or value.startswith("properties/") else f"properties/{value}"
+
+
+def _folder_id(value) -> str:
+    """Link folder Drive (https://drive.google.com/drive/folders/<id>) hoặc ID → ID; trống → ''."""
+    v = str(value or "").strip()
+    m = re.search(r"/folders/([A-Za-z0-9_-]+)", v)
+    return m.group(1) if m else v.split("?")[0]

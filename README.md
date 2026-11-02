@@ -177,7 +177,7 @@ Báo cáo gửi đi chỉ có chỉ số người đọc cần; chỉ số vận
 
 **AI Overviews / AI Mode:** GSC chưa có API cho số này. Mỗi tuần: GSC → Hiệu suất → Generative AI (Search) → 3 tháng qua → Export → Download CSV, rồi kéo file .zip vào tab **AI trên Google** của màn AI Search & GEO.
 
-**Google Drive:** nút **Xuất** lưu Google Sheets / Slides / PDF vào folder "SEO Report – <tên miền>" do tool tạo (quyền `drive.file`: tool chỉ thấy file nó tạo).
+**Google Drive:** nút **Xuất** lưu Google Sheets / Slides / PDF vào folder "SEO Report – <tên miền>" do tool tạo. Muốn mọi folder / file tool tạo nằm trong một folder của bạn: điền link folder vào `[drive] parent_folder` trong config.toml và chạy lại `login` một lần (cần quyền Drive đầy đủ); folder dự án đã có ở chỗ khác được tool chuyển vào lần dùng kế tiếp. Với quyền `drive.file` tool chỉ thấy file nó tạo.
 
 **KPI cam kết:** dự án chưa có sheet → màn KPI cam kết hiện wizard 4 bước (thông tin và số tháng → thứ hạng → traffic, baseline lấy từ GA4 → xem lại). Tool copy **sheet mẫu gốc** (dán link ở cuối màn Dự án). Sheet mẫu gốc do tool tải lên (`python scripts/tao-sheet-mau-goc.py <file.xlsx> --upload`, dựng từ bản xuất xlsx của một sheet dự án đang chạy: giữ kế hoạch OKRs, công thức, Gantt theo ngày bắt đầu, xóa chi tiết dự án cũ) thì dùng được ngay với quyền hiện có; sheet mẫu do bạn tự đặt link thì cần quyền Drive đầy đủ, chạy lại `login` một lần thành "Sheet dự án – <tên miền>" trong folder Drive của dự án, ghi 2 tab "KPI cam kết" và "Từ khóa cam kết" và gắn luôn cho cả màn OKR. Chưa cài sheet mẫu gốc thì tool tạo file chỉ có 2 tab KPI. Cũng có thể dán link sheet đã có.
 

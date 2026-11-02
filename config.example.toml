@@ -52,3 +52,8 @@ editors = []
 viewers = []  # cách cũ: email chỉ xem website đầu tiên; tool tự chuyển vào màn Phân quyền
 team_domain = ""  # Cloudflare Access (không bắt buộc), ví dụ "congty.cloudflareaccess.com"
 aud = ""  # Application Audience (AUD) tag của ứng dụng trong Cloudflare Access
+
+[drive]
+# Folder Drive của bạn chứa mọi folder / file tool tạo (link hoặc ID). Trống = tạo ở My Drive của tài khoản tool.
+# Tool cần quyền Google Drive đầy đủ để ghi vào folder này: chạy lại `python -m seo_report login` một lần.
+parent_folder = ""

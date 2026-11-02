@@ -774,7 +774,7 @@ def create_template(con, cfg) -> dict:
     """Tạo sheet mẫu trong folder Drive của tool (quyền drive.file), điền sẵn các từ khóa đang check rank."""
     from . import drive as D, keywords as K, rank as R
     svc = D.build_service(cfg)
-    folder, _ = D.target_folder(con, svc, cfg.site_url)
+    folder, _ = D.target_folder(con, svc, cfg.site_url, cfg.drive_parent)
     host = domain(cfg.site_url)
     kws = [(k["keyword"], k["target_url"] or "") for k in R.keywords(con, cfg.site_url, K.latest_date(con, cfg.site_url))]
     f = D.upload(svc, template_xlsx(f"SEO {host}", kws), f"KPI cam kết SEO – {host}", D.XLSX, folder, D.SHEET)
@@ -988,7 +988,7 @@ def create_project_sheet(con, cfg, data: dict, keywords: list[tuple], master: st
     name = f"Sheet dự án – {domain(cfg.site_url)}"
     creds = auth.get_credentials(cfg, need=(auth.DRIVE_SCOPE,))
     drv = build("drive", "v3", credentials=creds, cache_discovery=False)
-    folder = D.root_folder(con, drv, cfg.site_url)
+    folder = D.root_folder(con, drv, cfg.site_url, cfg.drive_parent)
     if not master:
         f = D.upload(drv, template_xlsx(data["project"], keywords, data), name, D.XLSX, folder, D.SHEET)
     elif not auth.missing_scopes(creds.scopes or [], (auth.DRIVE_FULL_SCOPE, auth.SHEETS_WRITE_SCOPE)):
