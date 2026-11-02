@@ -235,6 +235,27 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
             ui.button("Sửa cam kết", icon="edit", on_click=lambda: ui.navigate.to("/kpi/sua")).props(
                 "outline no-caps")
             sync_btn = ui.button("Đồng bộ ngay", icon="sync", on_click=lambda: do_sync()).props("unelevated no-caps")
+            with ui.button(icon="more_vert").props("flat round dense color=grey-8"):
+                with ui.menu():
+                    ui.menu_item("Đổi sheet / tạo sheet dự án mới", on_click=lambda: ask_unlink())
+
+    def ask_unlink():
+        with ui.dialog() as dlg, ui.card().style("border-radius:16px; max-width:520px"):
+            ui.label("Gỡ sheet đang gắn?").classes("text-lg font-semibold")
+            ui.label("Tool thôi đọc sheet này; file trên Drive vẫn còn. Sau đó màn KPI hiện wizard tạo sheet dự án "
+                     "mới (hoặc ô dán link sheet khác). Phiên bản KPI đã lưu của sheet này vẫn giữ: dán lại link cũ "
+                     "là dùng tiếp.").classes("text-sm")
+
+            def go():
+                with connect() as c:
+                    KP.unlink_sheet(c)
+                dlg.close()
+                ui.navigate.reload()
+
+            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+                ui.button("Gỡ sheet", on_click=go).props("unelevated no-caps color=negative")
+        dlg.open()
 
     async def do_sync():
         sync_btn.props("loading")

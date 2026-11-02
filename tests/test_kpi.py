@@ -372,6 +372,16 @@ class WizardTest(unittest.TestCase):
         self.assertEqual(by_id(got)["level:ai"]["targets"], by_id(d)["level:ai"]["targets"])
         self.assertEqual(out[KP.KW_TAB]["C2"].value, 3)
 
+    def test_unlink_sheet_keeps_versions_of_old_sheet(self):
+        con = sqlite3.connect(":memory:")
+        KP.set_sheet(con, "https://docs.google.com/spreadsheets/d/1Zv0NHbM71a80uvshJ-NNGoB8YTxp_RXCZ1O/edit")
+        KP.save(con, KP.plan(WizardTest.SPEC), TODAY)
+        self.assertEqual(len(KP.versions(con)), 1)
+        self.assertEqual(KP.unlink_sheet(con), "1Zv0NHbM71a80uvshJ-NNGoB8YTxp_RXCZ1O")
+        self.assertEqual((KP.sheet_id(con), KP.sync_info(con), KP.versions(con)), ("", None, []))
+        KP.set_sheet(con, "1Zv0NHbM71a80uvshJ-NNGoB8YTxp_RXCZ1O")   # gắn lại link cũ: phiên bản cũ dùng tiếp
+        self.assertEqual(len(KP.versions(con)), 1)
+
 
 class ScopeTest(unittest.TestCase):
     def test_wider_scope_covers_narrower(self):

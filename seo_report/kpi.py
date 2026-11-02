@@ -74,6 +74,15 @@ def set_sheet(con, link_or_id: str) -> str:
     return _setting(con, "kpi_sheet", sid)
 
 
+def unlink_sheet(con) -> str:
+    """Gỡ sheet đang gắn (để tạo sheet dự án mới hoặc dán link khác). Phiên bản đã lưu của sheet cũ vẫn giữ, gắn lại
+    link cũ là dùng tiếp. Trả về ID vừa gỡ."""
+    old = sheet_id(con)
+    _setting(con, "kpi_sheet", "")
+    _setting(con, "kpi_synced", "")
+    return old
+
+
 def sync_info(con) -> dict | None:
     raw = _setting(con, "kpi_synced")
     return json.loads(raw) if raw else None

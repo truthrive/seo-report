@@ -25,7 +25,9 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict) -> None:
                           "Đọc từ Google Sheet của team · cập nhật trên sheet", eyebrow="Báo cáo công việc")
     from .access import can_edit
     with right:
-        if can_edit(user):  # người chỉ xem không mở được sheet (đã đóng link) và không đồng bộ
+        # Người chỉ xem không mở được sheet (đã đóng link) và không đồng bộ; chưa khai báo sheet thì không có nút
+        # (do_sync chỉ được định nghĩa khi có sheet: bấm nút lúc đó sẽ lỗi NameError)
+        if can_edit(user) and O.sheet_id(cfg.okr.sheet):
             ui.button("Mở sheet", icon="open_in_new", on_click=lambda: ui.navigate.to(sheet_url, new_tab=True)).props(
                 "outline no-caps")
             sync_btn = ui.button("Đồng bộ ngay", icon="sync", on_click=lambda: do_sync()).props("unelevated no-caps")
