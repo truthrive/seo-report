@@ -267,3 +267,12 @@ class ComparepartsTest(unittest.TestCase):
                          {"label": "Tuần 28/09", "value": "5.535", "diff": "+126"})
         self.assertEqual(F.vs_parts(0.263, 0.2253, "pct")["diff"], "")
         self.assertIsNone(F.vs_parts(1, None))
+
+
+class DayValuesTest(unittest.TestCase):
+    def test_days_after_last_data_are_empty(self):
+        from datetime import date
+        daily = {date(2026, 10, 1): 5, date(2026, 10, 3): 7}
+        self.assertEqual(report.day_values(daily, (date(2026, 10, 1), date(2026, 10, 5))), [5, 0, 7, None, None])
+        self.assertEqual(report.day_values({}, (date(2026, 10, 1), date(2026, 10, 2))), [None, None])
+        self.assertEqual(len(report.day_list((date(2026, 7, 1), date(2026, 7, 31)))), 31)

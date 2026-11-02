@@ -11,8 +11,8 @@ from . import ai_format as F
 from . import kpi as KP
 from .projects import domain
 from . import ui_theme as T
-from .report import (BUCKETS, build, build_month, change, note_key, period_short, period_text, rank_summary,
-                     save_note, trend_label)
+from .report import (BUCKETS, build, build_month, change, day_list, day_values, note_key, period_text, rank_summary,
+                     save_note)
 
 RANK_TONE = [(3, "green"), (10, "lime"), (30, "amber")]
 
@@ -126,14 +126,21 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
 
     # Thứ tự khối giống nhau ở màn Báo cáo, file Excel và slide: KPI cam kết → SEO → GEO → Thứ hạng → Công việc → Điểm
     # cần chú ý → (tháng) Phụ lục. Tổng quan dùng cùng các khối, thay Công việc / Điểm cần chú ý bằng "Cần xử lý".
-    wl = [t["week"] for t in rep.trend]
+    # Biểu đồ khối SEO / GEO: từng ngày của kỳ đang xem (nét liền) và kỳ so sánh (nét đứt, ngày thứ 1 với ngày thứ 1)
+    days_cur, days_prev = day_list((ws, we)), day_list((ps, pe))
+    wl = [f"{d:%d/%m}" for d in days_cur]
+    cl = [f"{d:%d/%m}" for d in days_prev]
+    with connect() as c:
+        from .report import aio_block
+        from .web_dashboard import gsc_daily
+        g = gsc_daily(c, site, min(ws, ps), max(we, pe))
+        aio_days = (aio_block(c, site, (ws, we), (ps, pe), [(d, d) for d in days_cur]),
+                    aio_block(c, site, (ps, pe), (ps, pe), [(d, d) for d in days_prev]))
+    gsc_clicks = {d: v[0] for d, v in g.items()}
+    gsc_impr = {d: v[1] for d, v in g.items()}
     cmp_label = (f"Tháng {ps:%m/%Y}" if month else f"Tuần {ps:%d/%m}" + (f"/{ps:%Y}" if ps.year != ws.year else ""))
     # ↑ dòng so sánh trong ô (gọn cho vừa ô): "Tuần 14/09: 73 · +15"; đủ ngày ở tiêu đề "So với tuần 14/09 – 20/09"
-    chart_marks = {trend_label(kind, (ws, we)): "Đang xem", trend_label(kind, (ps, pe)): "So sánh"}
-    trend_note = (f"Biểu đồ: {len(wl)} {unit} gần nhất đến {unit} đang xem; vạch đứt đánh dấu {unit} đang xem và "
-                  f"{unit} so sánh" + ("" if trend_label(kind, (ps, pe)) in wl else
-                                      f" ({period_short(kind, (ps, pe), ws.year).lower()} nằm ngoài khoảng biểu "
-                                      "đồ)") + ". ")
+    trend_note = (f"Biểu đồ: từng ngày {ws:%d/%m} – {we:%d/%m} (nét liền) so với {ps:%d/%m} – {pe:%d/%m} (nét đứt). ")
     prev_label = period_text(kind, (ps, pe), ws.year)
 
     @ui.refreshable
@@ -191,27 +198,32 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
             else:
                 o_metric = {"value": F.n(o["sessions"]), "delta": F.delta_pct(o["change"], o["prev"]),
                             "prev": F.vs_parts(o["sessions"], o["prev"], label=cmp_label),
-                            "good": T.good_of(o["change"]), "data": o["spark"], "hint": "Kênh Organic Search"}
+                            "good": T.good_of(o["change"]), "data": o.get("cur_days"),
+                            "compare": o.get("prev_days"), "hint": "Kênh Organic Search"}
             dc, di = change(sk.clicks, sp.clicks), change(sk.impressions, sp.impressions)
             T.trend_chart(ui, [
                 {"key": "sessions", "label": "Lượt truy cập", "color": T.GREEN, "icon": "groups", "on": True,
                  "axis": "traffic", "zero": True, "source": "Nguồn: Google Analytics (GA4)", **o_metric},
                 {"key": "clicks", "label": "Click", "color": T.BLUE, "value": F.n(sk.clicks), "delta": F.delta_pct(dc),
                  "prev": F.vs_parts(sk.clicks, sp.clicks, label=cmp_label),
-                 "good": T.good_of(dc), "data": [t["site_clicks"] for t in rep.trend], "on": True,
+                 "good": T.good_of(dc), "data": [gsc_clicks.get(d) for d in days_cur],
+                 "compare": [gsc_clicks.get(d) for d in days_prev], "on": True,
                  "axis": "traffic", "zero": True, "hint": "Lượt bấm vào site trên Google",
                  "source": "Nguồn: Google Search Console"},
                 {"key": "impr", "label": "Lượt hiển thị", "color": "#0E7C86", "value": F.n(sk.impressions),
-                 "delta": F.delta_pct(di), "good": T.good_of(di), "data": [t.get("site_impressions") for t in rep.trend],
+                 "delta": F.delta_pct(di), "good": T.good_of(di), "data": [gsc_impr.get(d) for d in days_cur],
+                 "compare": [gsc_impr.get(d) for d in days_prev],
                  "prev": F.vs_parts(sk.impressions, sp.impressions, label=cmp_label),
                  "zero": True, "hint": "Số lần site hiện trên Google", "source": "Nguồn: Google Search Console"},
-            ], wl, marks=chart_marks)
+            ], wl, compare_labels=cl)
             ui.label(trend_note + "Bấm ô để bật / tắt đường. Lượt truy cập và click đo bằng hai công cụ khác nhau nên "
                      "số không bằng nhau.").classes("text-xs muted")
 
     @ui.refreshable
     def geo_section():
         a, aio = rep.ai, rep.aio
+        ad, ap = aio_days
+        ad, ap = ad or {}, ap or {}
         with T.section(ui, "Kết quả GEO", "auto_awesome", "Có mặt trên ChatGPT, Gemini và câu trả lời AI của Google",
                        href="/ai", link_text="AI Search & GEO"):
             if state["ai_loading"]:
@@ -225,27 +237,28 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 total = sum(x["sessions"] for x in a["sources"]) or 1
                 ai_metric = {"value": F.n(k["sessions"]), "delta": F.delta_pct(dl.get("sessions"), pv.get("sessions")),
                              "prev": F.vs_parts(k["sessions"], pv.get("sessions"), label=cmp_label),
-                             "good": T.good_of(dl.get("sessions")), "data": state["ai_trend"],
+                             "good": T.good_of(dl.get("sessions")), "data": (state["ai_trend"] or (None, None))[0],
+                             "compare": (state["ai_trend"] or (None, None))[1],
                              "hint": (f"Nhiều nhất: {F.SOURCE_NAMES.get(top['source'], top['source'])} "
                                       f"{top['sessions'] / total * 100:.0f}%" if top else "ChatGPT, Gemini, Perplexity…")}
             if aio is None:
                 aio_metric = {"value": "chưa có", "data": None, "hint": "Chưa có số"}
                 share_metric = {"value": "chưa có", "data": None, "hint": "Chưa có số"}
             elif aio["impressions"] is None:
-                aio_metric = {"value": "chưa có", "data": aio.get("spark"),
+                aio_metric = {"value": "chưa có", "data": ad.get("spark"), "compare": ap.get("spark"),
                               "hint": f"Google mới có số tới {_vn_iso(aio['data_until'])}"}
-                share_metric = {"value": "chưa có", "data": aio.get("share_spark"),
+                share_metric = {"value": "chưa có", "data": ad.get("share_spark"), "compare": ap.get("share_spark"),
                                 "hint": "Phần lượt hiển thị Google nằm trong câu trả lời AI"}
             else:
                 dp = (aio["share"] - aio["prev_share"]) if aio["share"] is not None and \
                     aio.get("prev_share") is not None else None
                 aio_metric = {"value": F.n(aio["impressions"]), "delta": F.delta_pct(aio["change"], aio["prev"]),
                               "prev": F.vs_parts(aio["impressions"], aio["prev"], label=cmp_label),
-                              "good": T.good_of(aio["change"]), "data": aio.get("spark"),
+                              "good": T.good_of(aio["change"]), "data": ad.get("spark"), "compare": ap.get("spark"),
                               "hint": "AI Overviews và AI Mode"}
                 share_metric = {"value": F.pct(aio["share"], 1), "delta": F.delta_points(dp), "good": T.good_of(dp),
                                 "prev": F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=cmp_label),
-                                "data": aio.get("share_spark"),
+                                "data": ad.get("share_spark"), "compare": ap.get("share_spark"),
                                 "hint": "Phần lượt hiển thị Google nằm trong câu trả lời AI"}
             T.trend_chart(ui, [
                 {"key": "ai", "label": "Truy cập từ AI", "color": "#7C3AED", "icon": "smart_toy", "on": True,
@@ -254,7 +267,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                  "fmt": "pct", "on": True, "source": "Nguồn: Google Search Console", **share_metric},
                 {"key": "aio", "label": "Lượt hiện trong AI", "color": T.BLUE, "icon": "lightbulb",
                  "source": "Câu trả lời AI của Google · Nguồn: Google Search Console", **aio_metric},
-            ], wl, marks=chart_marks)
+            ], wl, compare_labels=cl)
             ui.label("Cột: lượt vào site từ trợ lý AI. Đường: phần lượt hiển thị Google nằm trong câu trả lời AI. "
                      "Hai số đo riêng, không cộng với nhau.").classes("text-xs muted")
 
@@ -322,12 +335,11 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                     from .ai_analytics import AIAnalytics
                     ai = AIAnalytics(ga4_query.GA4Client(
                         auth.build_ga4_data(auth.get_credentials(cfg, need=auth.ALL_SCOPES)), cfg.ga4_property, c))
-                    # Phiên AI theo đúng các kỳ của biểu đồ (8 tuần / 12 tháng): lấy theo ngày rồi cộng theo kỳ
-                    periods = rep.trend_periods
-                    t = ai.trend(periods[0][0], periods[-1][1], interval="day")
-                    daily = {p["date"]: p.get("AI Assistants", 0) for p in t["data"].get("points", [])}
-                    pts = [sum(v for d, v in daily.items() if s_.strftime("%Y%m%d") <= d <= e_.strftime("%Y%m%d"))
-                           for s_, e_ in periods]
+                    # Phiên AI từng ngày của kỳ đang xem và kỳ so sánh
+                    t = ai.trend(min(ws, ps), max(we, pe), interval="day")
+                    daily = {date(int(p["date"][:4]), int(p["date"][4:6]), int(p["date"][6:])): p.get("AI Assistants", 0)
+                             for p in t["data"].get("points", [])}
+                    pts = (day_values(daily, (ws, we)), day_values(daily, (ps, pe)))
                 return a, o, pts
         try:
             rep.ai, rep.organic, state["ai_trend"] = await run.io_bound(work)

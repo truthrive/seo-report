@@ -98,6 +98,18 @@ def ai_block(cfg, con, week: tuple[date, date], prev: tuple[date, date] | None =
         return {"error": str(e)}
 
 
+def day_list(period: tuple[date, date]) -> list[date]:
+    """Các ngày trong kỳ, từ đầu đến cuối."""
+    return [period[0] + timedelta(days=i) for i in range((period[1] - period[0]).days + 1)]
+
+
+def day_values(daily: dict, period: tuple[date, date]) -> list:
+    """Số từng ngày trong kỳ từ {ngày: số}. Ngày vắng trước ngày cuối có số là 0; sau đó là None (chưa có dữ liệu,
+    biểu đồ ngắt ở đó thay vì rơi về 0)."""
+    last = max(daily, default=None)
+    return [daily.get(d, 0) if last and d <= last else None for d in day_list(period)]
+
+
 def organic_block(cfg, con, cur: tuple[date, date], prev: tuple[date, date],
                   trend_periods: list[tuple[date, date]]) -> dict | None:
     """Phiên GA4 kênh Organic Search toàn site: kỳ này, kỳ trước, % thay đổi, xu hướng theo kỳ. Một truy vấn theo ngày
@@ -117,7 +129,8 @@ def organic_block(cfg, con, cur: tuple[date, date], prev: tuple[date, date],
             return sum(v for d, v in daily.items() if s <= d <= e)
         now, before = total(*cur), total(*prev)
         return {"sessions": now, "prev": before, "change": change(now, before),
-                "spark": [total(s, e) for s, e in trend_periods]}
+                "spark": [total(s, e) for s, e in trend_periods],
+                "cur_days": day_values(daily, cur), "prev_days": day_values(daily, prev)}
     except (Exception, SystemExit) as e:  # noqa: BLE001
         return {"error": str(e)}
 

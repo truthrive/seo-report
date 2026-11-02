@@ -400,7 +400,7 @@ def _value_js(fmt: str) -> str:
 
 
 def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
-                marks: dict[str, str] | None = None) -> None:
+                compare_labels: list[str] | None = None) -> None:
     """Kiểu biểu đồ Hiệu suất của Google Search Console: mỗi chỉ số là một ô bấm để bật/tắt đường của nó trên biểu
     đồ chung bên dưới. Mỗi đường có trục riêng (ẩn) nên chỉ số nhỏ (phiên ~5.000) và lớn (impression ~180.000) cùng
     hiện rõ; rê chuột hiện số mọi đường của kỳ đó.
@@ -408,9 +408,11 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
     metrics: [{"key", "label", "value", "delta", "good", "prev": dòng kỳ trước, "data": [số theo kỳ], "color", "icon",
     "hint", "fmt": "num" |
     "pct", "kind": "line" | "bar", "axis": nhóm trục, "zero": trục từ 0, "source": nguồn (tooltip), "on": bật sẵn hay
-    không}]. Chỉ số không có dữ liệu xu hướng thì ô không bấm được.
+    không, "compare": [số kỳ so sánh, cùng vị trí với data]}]. Chỉ số không có dữ liệu xu hướng thì ô không bấm được.
     Trục số của hai chỉ số bật đầu tiên hiện ở trái / phải, cùng màu đường.
-    marks: {nhãn trục: chữ} vạch dọc đánh dấu kỳ đang xem / kỳ so sánh (nhãn không có trên trục thì bỏ qua)."""
+    compare: vẽ nét đứt cùng màu trên cùng trục (như chế độ so sánh của GSC); compare_labels: ngày của từng điểm kỳ
+    so sánh, hiện khi rê chuột. Có compare_labels (biểu đồ theo ngày) thì các cột đậm như nhau, không làm nổi cột
+    cuối."""
     import json
     on = {m["key"] for m in metrics if m.get("on") and _has(m)}
     if not on:
@@ -451,36 +453,41 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
             return
         fmts = {m["label"]: m.get("fmt", "num") for m in shown}
         has_bar = any(m.get("kind") == "bar" for m in shown)
-        series = []
-        for i, m in enumerate(shown):
-            base = {"name": m["label"], "yAxisIndex": i, "itemStyle": {"color": m["color"]}}
+        pairs = []  # (series, chỉ số của nó): đường kỳ so sánh dùng chung trục với đường chính
+        cmp_names = {}  # tên đường kỳ so sánh → tên chỉ số, để tooltip ghi "Click · 03/07"
+        for m in shown:
+            base = {"name": m["label"], "itemStyle": {"color": m["color"]}}
             if m.get("kind") == "bar":
-                last = len(m["data"]) - 1
-                series.append({**base, "type": "bar", "barMaxWidth": 26, "z": 1,
-                               "data": [{"value": v, "itemStyle": {"color": m["color"], "opacity": 1 if j == last
-                                                                   else 0.45, "borderRadius": [4, 4, 0, 0]}}
-                                        for j, v in enumerate(m["data"])]})
+                last = len(m["data"]) - 1 if compare_labels is None else None
+                pairs.append(({**base, "type": "bar", "barMaxWidth": 26, "z": 1,
+                               "data": [{"value": v, "itemStyle": {"color": m["color"], "opacity": 0.45 if last
+                                                                   is not None and j != last else 1,
+                                                                   "borderRadius": [4, 4, 0, 0]}}
+                                        for j, v in enumerate(m["data"])]}, m))
             else:
-                series.append({**base, "type": "line", "data": m["data"], "smooth": 0.25, "symbol": "circle",
+                pairs.append(({**base, "type": "line", "data": m["data"], "smooth": 0.25, "symbol": "circle",
                                "symbolSize": 6, "showSymbol": len(labels) <= 12, "connectNulls": False, "z": 3,
                                "lineStyle": {"width": 2.5, "color": m["color"]},
-                               "areaStyle": {"color": m["color"], "opacity": 0.05 if len(shown) > 1 else 0.1}})
-        if marks and series:  # vạch dọc: kỳ đang xem / kỳ so sánh, để biết hai cột số ở ô nằm đâu trên biểu đồ
-            series[0]["markLine"] = {
-                "symbol": "none", "silent": True, "animation": False,
-                "lineStyle": {"color": "#8C8A7E", "type": "dashed", "width": 1},
-                "label": {"position": "end", "color": "#4A4A40", "fontSize": 10.5, "fontWeight": 600},
-                "data": [{"xAxis": x, "label": {"formatter": text,  # mốc ở mép phải: canh chữ vào trong
-                                                **({"align": "right"} if x == labels[-1] else {})}}
-                         for x, text in marks.items() if x in labels]}
+                               "areaStyle": {"color": m["color"], "opacity": 0.05 if len(shown) > 1 else 0.1}}, m))
+            cmp = m.get("compare")
+            if cmp and any(v is not None for v in cmp):
+                name = m["label"] + " (kỳ so sánh)"
+                cmp_names[name] = m["label"]
+                fmts[name] = m.get("fmt", "num")
+                pairs.append(({"name": name, "type": "line", "data": (list(cmp) + [None] * len(labels))[:len(labels)],
+                               "smooth": 0.25, "symbol": "none", "connectNulls": False, "z": 2,
+                               "itemStyle": {"color": m["color"]},
+                               "lineStyle": {"width": 1.5, "type": "dashed", "color": m["color"], "opacity": 0.75}},
+                              m))
         pct_js = "v => (v * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%'"
         num_js = ("v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + 'k' "
                   ": v.toLocaleString('vi-VN')")
         # Trục số: đường thứ nhất bên trái, đường thứ hai bên phải (cùng màu đường), các đường khác trục ẩn
         # Chỉ số cùng "axis" dùng chung một trục (cùng đơn vị, cùng độ lớn: so độ cao được); trục chung màu trung tính
         groups = list(dict.fromkeys(m.get("axis", m["key"]) for m in shown))
-        for s, m in zip(series, shown):
+        for s, m in pairs:
             s["yAxisIndex"] = groups.index(m.get("axis", m["key"]))
+        series = [s for s, _ in pairs]
         y_axes = []
         for i, g in enumerate(groups):
             ms = [m for m in shown if m.get("axis", m["key"]) == g]
@@ -495,12 +502,15 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
             if zero:
                 y["min"] = 0
             y_axes.append(y)
-        tip = ("ps => ps[0].axisValue + ps.map(p => '<br/>' + p.marker + p.seriesName + ': <b>' + "
+        # Đường kỳ so sánh ghi ngày của chính nó: "Click · 03/07: 650" dưới dòng ngày đang xem
+        tip = ("ps => ps[0].axisValue + ps.map(p => '<br/>' + p.marker + (" + json.dumps(cmp_names, ensure_ascii=False)
+               + "[p.seriesName] ? " + json.dumps(cmp_names, ensure_ascii=False) + "[p.seriesName] + ' · ' + ("
+               + json.dumps(compare_labels or []) + "[p.dataIndex] || 'kỳ so sánh') : p.seriesName) + ': <b>' + "
                "(p.value == null ? 'chưa có' : (" + json.dumps(fmts, ensure_ascii=False) + "[p.seriesName] === 'pct' "
                "? (p.value * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%' : "
                "p.value.toLocaleString('vi-VN'))) + '</b>').join('')")
         ui.echart({"animation": False, "legend": {"show": False},
-                   "grid": {"left": 44, "right": 48 if len(groups) > 1 else 14, "top": 26 if marks else 14,
+                   "grid": {"left": 44, "right": 48 if len(groups) > 1 else 14, "top": 14,
                             "bottom": 26},
                    "tooltip": {"trigger": "axis", "confine": True, ":formatter": tip,
                                "axisPointer": {"type": "shadow" if has_bar else "line",
