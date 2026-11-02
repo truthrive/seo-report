@@ -182,6 +182,9 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, save_tar
         ui.label("Mỗi dòng một keyword. Muốn gán URL mục tiêu thì thêm URL sau dấu | (hoặc dán 2 cột từ Excel).").classes(
             "text-sm muted")
         paste = ui.textarea(placeholder=f"từ khóa 1\ntừ khóa 2 | https://{domain(cfg.site_url)}/trang-muc-tieu/").props("outlined autogrow").classes("w-full")
+        cost_box = ui.element("div").classes("sr-cost-box w-full")  # ước tính chi phí, cập nhật khi dán / gõ
+        cost_box.set_visibility(False)
+        paste.on("update:model-value", lambda e: show_cost(e.args or ""), throttle=0.5)
         add_result = ui.label().classes("text-sm")
         with connect() as c:
             from . import kpi as KP
@@ -394,6 +397,40 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, save_tar
         if on_budget_change:
             on_budget_change()
 
+    def show_cost(text: str):
+        """Ước tính trước khi thêm: số keyword mới, tiền mỗi lần check, tiền thêm mỗi tháng, tổng so với ngân sách."""
+        items = R.parse_lines(text if isinstance(text, str) else "")
+        cost_box.clear()
+        cost_box.set_visibility(bool(items))
+        if not items:
+            return
+        with connect() as c:
+            e = R.estimate_add(c, site, cfg.rank, end, [kw for kw, _ in items])
+        over, warn = e["ratio"] > 1, e["ratio"] >= R.ALERT_RATIO
+        tone = "red" if over else "amber" if warn else "green"
+        cost_box.classes(replace=f"sr-cost-box w-full {tone}")
+        with cost_box:
+            with ui.row().classes("items-center no-wrap gap-2"):
+                ui.icon("calculate", size="18px")
+                ui.label(f"Ước tính chi phí: {e['new']} keyword mới"
+                         + (f" ({e['existing']} đã có trong danh sách, không tính)" if e["existing"] else "")
+                         ).classes("text-sm font-medium")
+            if not e["new"]:
+                ui.label("Không tốn thêm tiền.").classes("text-sm")
+                return
+            ui.label(f"Mỗi lần check thêm khoảng {R.usd(e['per_check'], 4)} USD "
+                     + (f"(lần đầu check top {e['depth']}; sau đó tool chỉnh độ sâu theo vị trí nên thường rẻ hơn)."
+                        if e["schedule"]["depth"] == "auto" else f"(check top {e['depth']}).")).classes("text-sm")
+            if e["checks_per_month"]:
+                ui.label(f"Theo lịch {R.describe_schedule(e['schedule']).split(';')[0].lower()}: thêm khoảng "
+                         f"{R.usd(e['monthly_add'], 3)} USD/tháng.").classes("text-sm")
+            else:
+                ui.label("Lịch đang là Thủ công: chỉ tốn tiền khi bấm Check ngay.").classes("text-sm")
+            ui.label(f"Tổng dự kiến cả tháng: {R.usd(e['monthly_total'])} / {e['budget']:g} USD "
+                     f"({e['ratio'] * 100:.0f}% ngân sách)."
+                     + (" Vượt ngân sách: phần vượt sẽ không được thêm. Bỏ bớt keyword, giãn lịch hoặc tăng ngân "
+                        "sách." if over else " Sắp chạm ngân sách." if warn else "")).classes("text-sm font-medium")
+
     async def from_sheet():
         if not ed:
             return
@@ -450,6 +487,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, save_tar
             parts.append(f"bỏ qua {len(r['bad_url'])} dòng có URL không thuộc site")
         add_result.text = " · ".join(parts) + f". Ước tính: {R.usd(r['estimate'])} USD/tháng."
         paste.value = ""
+        show_cost("")
         refresh()
         if not r["over_budget"] and not r["bad_url"]:
             add_dialog.close()

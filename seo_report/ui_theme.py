@@ -48,6 +48,10 @@ HEAD = """
             display: flex; flex-direction: column; border-radius: 12px !important; }
   .sr-kpi-hint { margin-top: auto; padding-top: 6px; line-height: 1.3; }
   /* Khối so sánh dưới số chính (như GSC): kỳ so sánh · số của kỳ đó · chênh lệch tô màu */
+  .sr-cost-box { border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .sr-cost-box.green { background: #EEF6EF; color: #1E5A2A; }
+  .sr-cost-box.amber { background: #FBF1DE; color: #8F5F14; }
+  .sr-cost-box.red { background: #FCEBE3; color: #9A3412; }
   .sr-info { color: #A3A194; cursor: help; flex: none; border-radius: 50%; }
   .sr-info:hover, .sr-info:focus { color: #4A4A40; outline: none; }
   .sr-info-tip { font-size: 12.5px; line-height: 1.45; padding: 8px 10px; background: #2B2E29; }

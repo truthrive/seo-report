@@ -345,6 +345,26 @@ def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
     return res
 
 
+def estimate_add(con: sqlite3.Connection, site: str, s: RankSettings, end: date, keywords_in: list[str]) -> dict:
+    """Ước tính chi phí trước khi thêm keyword: số keyword mới (bỏ trùng và keyword đã theo dõi), tiền mỗi lần check
+    thêm, tiền thêm mỗi tháng theo lịch hiện tại, tổng dự kiến cả tháng so với ngân sách. Keyword mới check lần đầu
+    ở độ sâu của lịch (tự động: top 30)."""
+    ensure_tables(con)
+    sched = get_schedule(con)
+    current = keywords(con, site, end)
+    have = {k["keyword"].strip().lower() for k in current}
+    new = list(dict.fromkeys(" ".join(k.split()).lower() for k in keywords_in if k.strip()))
+    fresh = [k for k in new if k not in have]
+    d = depth_for(sched["depth"], None, None)
+    depths = [k["depth"] for k in current]
+    before = estimate(con, s, sched, depths)
+    after = estimate(con, s, sched, depths + [d] * len(fresh))
+    return {"new": len(fresh), "existing": len(new) - len(fresh), "depth": d,
+            "per_check": _pages(d) * len(fresh) * s.price_per_page, "checks_per_month": checks_per_month(sched),
+            "monthly_add": after - before, "monthly_total": after, "budget": s.monthly_budget_usd,
+            "ratio": after / s.monthly_budget_usd if s.monthly_budget_usd else 0.0, "schedule": sched}
+
+
 def set_target_url(con: sqlite3.Connection, site: str, keyword_id: int, raw_url: str | None, user: str) -> str | None:
     """Gán (hoặc bỏ, raw_url trống) URL mục tiêu cho một keyword check rank. Trả URL đã chuẩn hóa."""
     ensure_tables(con)

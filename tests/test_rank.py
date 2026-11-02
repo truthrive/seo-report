@@ -186,3 +186,15 @@ class HiddenLinkTest(unittest.TestCase):
         got = R.parse_rank(self.TASK, "sc-domain:matkinhtamduc.com", "https://matkinhtamduc.com/b/",
                            resolve=lambda u: None)
         self.assertEqual(got, (1, None, 5))
+
+
+class EstimateAddTest(unittest.TestCase):
+    def test_estimate_before_adding(self):
+        con = db.connect(":memory:")
+        s = RankSettings(monthly_budget_usd=1, price_per_page=0.0006)
+        R.add_keywords(con, SITE, s, END, [("gọng kính", None)], "t")
+        e = R.estimate_add(con, SITE, s, END, ["Gọng  Kính", "kính mát", "kính mát", "kính cận"])
+        self.assertEqual((e["new"], e["existing"], e["depth"]), (2, 1, 30))
+        self.assertAlmostEqual(e["per_check"], 2 * 3 * 0.0006)
+        self.assertAlmostEqual(e["monthly_add"], 2 * 3 * 0.0006 * 30 / 7)  # lịch mặc định: thứ Ba hằng tuần
+        self.assertAlmostEqual(e["monthly_total"], 3 * 3 * 0.0006 * 30 / 7)
