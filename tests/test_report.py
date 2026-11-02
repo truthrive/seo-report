@@ -247,6 +247,15 @@ class CompareLineTest(unittest.TestCase):
         self.assertEqual(F.vs(5, None), "")
 
 
+    def test_change_text_next_to_main_number(self):
+        from seo_report import ui_theme as T
+        prev = {"label": "Tuần 14/09", "value": "5.373", "diff": "+177"}
+        self.assertEqual(T.change_text("+3,3%", prev), "+177 (+3,3%)")
+        self.assertEqual(T.change_text("kỳ trước 0", {**prev, "diff": "+12"}), "+12")
+        self.assertEqual(T.change_text("+0,4 điểm", {"label": "x", "value": "22%", "diff": ""}), "+0,4 điểm")
+        self.assertEqual(T.change_text("-2%", None), "-2%")
+
+
 class PeriodLabelTest(unittest.TestCase):
     def test_labels(self):
         from datetime import date

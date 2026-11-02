@@ -341,13 +341,20 @@ def page_header(ui, icon: str, title: str, subtitle: str = "", tone: str = "gree
 
 
 def compare_line(ui, parts: dict, good: bool | None) -> None:
-    """Khối so sánh dưới số chính: "Tuần 28/09   5.535   +126" (chênh tô xanh / đỏ theo tốt / xấu)."""
+    """Khối so sánh dưới số chính: kỳ so sánh và số của kỳ đó ("Tuần 28/09 · 5.535"). Mức chênh không đặt ở đây (dễ
+    đọc nhầm là kỳ trước tăng / giảm) mà ở nhãn cạnh số chính, xem change_text."""
     with ui.element("div").classes("sr-cmp") as box:
         ui.label(parts["label"]).classes("lab")
         ui.label(parts["value"]).classes("val")
-        if parts.get("diff"):
-            ui.label(parts["diff"]).classes("diff " + ("flat" if good is None else "up" if good else "down"))
     box.props["title"] = f"{parts['label']}: {parts['value']}" + (f" ({parts['diff']})" if parts.get("diff") else "")
+
+
+def change_text(delta: str, prev: dict | None) -> str:
+    """Nhãn cạnh số chính: chênh tuyệt đối kèm % ("+177 (+3,3%)"); không có số kỳ trước thì giữ nguyên delta."""
+    diff = (prev or {}).get("diff")
+    if not diff:
+        return "" if (prev and (delta or "").startswith("kỳ trước")) else delta
+    return f"{diff} ({delta})" if delta and not delta.startswith("kỳ trước") else diff
 
 
 def delta_badge(ui, text: str, good: bool | None):
@@ -355,7 +362,7 @@ def delta_badge(ui, text: str, good: bool | None):
         return
     cls = "flat" if good is None else ("up" if good else "down")
     arrow = "" if good is None else ("▲ " if text.lstrip().startswith("+") else "▼ " if text.lstrip().startswith(
-        "-") else "")
+        ("-", "−")) else "")
     ui.label(arrow + text).classes(f"sr-delta {cls}")
 
 
@@ -439,8 +446,7 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
                         ui.label(m["label"]).classes("sr-trend-label")
                     with ui.row().classes("items-baseline gap-2 q-mt-xs").style("row-gap:2px"):  # hẹp thì % xuống dòng
                         ui.label(m["value"]).classes("sr-trend-value num")
-                        if m.get("delta") and not (m.get("prev") and m["delta"].startswith("kỳ trước")):
-                            delta_badge(ui, m["delta"], m.get("good"))
+                        delta_badge(ui, change_text(m.get("delta") or "", m.get("prev")), m.get("good"))
                     if m.get("prev"):
                         compare_line(ui, m["prev"], m.get("good"))
                     hint = ui.label(m.get("hint") or " ").classes("sr-trend-hint")
@@ -553,10 +559,9 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
             with ui.element("div").classes("sr-icon-bubble").style(f"background:{bg}"):
                 ui.icon(icon, size="18px").style(f"color:{fg}")
             ui.label(label).classes("text-sm muted").style("line-height:1.2")
-        with ui.row().classes("items-baseline gap-2 q-mt-sm no-wrap"):
+        with ui.row().classes("items-baseline gap-2 q-mt-sm").style("row-gap:2px"):  # hẹp thì nhãn chênh xuống dòng
             ui.label(value).classes("sr-kpi-value num")
-            if not (prev and (delta or "").startswith("kỳ trước")):  # số kỳ trước đã có ở dòng dưới
-                delta_badge(ui, delta, good)
+            delta_badge(ui, change_text(delta, prev), good)
         if prev:  # số kỳ so sánh và mức chênh (như ô so sánh của GSC)
             compare_line(ui, prev, good)
         if spark is not None:
