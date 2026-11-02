@@ -392,7 +392,9 @@ def sparkline(ui, values: list, color: str = GREEN, height: int = 40, labels: li
         cl = list(compare_labels or [])
         fmt_js = _value_js(fmt)
         tooltip[":formatter"] = (  # mỗi dòng ghi ngày của chính kỳ đó: "24/10 Kỳ này 700" / "26/09 Kỳ so sánh 650"
-            "ps => ps.map(p => p.marker + (p.seriesIndex === 0 ? " + json.dumps(xs) + "[p.dataIndex] + ' · Kỳ này' : "
+            "ps => ps.map(p => '<span style=\"display:inline-block;width:16px;height:0;vertical-align:middle;"
+            "margin-right:6px;border-top:' + (p.seriesIndex === 0 ? '3px solid ' : '2px dashed ') + p.color + "
+            "'\"></span>' + (p.seriesIndex === 0 ? " + json.dumps(xs) + "[p.dataIndex] + ' · Kỳ này' : "
             "(" + json.dumps(cl) + "[p.dataIndex] || '') + ' · Kỳ so sánh') + ': <b>' + (" + fmt_js + ")(p.value) "
             "+ '</b>').join('<br/>')")
     ui.echart({"animation": False, "grid": {"left": 3, "right": 5, "top": 5, "bottom": 2}, "tooltip": tooltip,
@@ -513,13 +515,27 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
             if zero:
                 y["min"] = 0
             y_axes.append(y)
-        # Đường kỳ so sánh ghi ngày của chính nó: "Click · 03/07: 650" dưới dòng ngày đang xem
-        tip = ("ps => ps[0].axisValue + ps.map(p => '<br/>' + p.marker + (" + json.dumps(cmp_names, ensure_ascii=False)
-               + "[p.seriesName] ? " + json.dumps(cmp_names, ensure_ascii=False) + "[p.seriesName] + ' · ' + ("
-               + json.dumps(compare_labels or []) + "[p.dataIndex] || 'kỳ so sánh') : p.seriesName) + ': <b>' + "
-               "(p.value == null ? 'chưa có' : (" + json.dumps(fmts, ensure_ascii=False) + "[p.seriesName] === 'pct' "
-               "? (p.value * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%' : "
-               "p.value.toLocaleString('vi-VN'))) + '</b>').join('')")
+        # Rê chuột: ký hiệu giống nét vẽ (nét liền = kỳ này, nét đứt = kỳ so sánh, ô vuông = cột) thay cho chấm tròn.
+        # Biểu đồ theo ngày có kỳ so sánh: trục đánh số ngày 1, 2, 3… (như GSC), mỗi dòng ghi ngày của chính kỳ đó:
+        # "Ngày 3 / Click · 21/10: 766 / Click · 14/10: 666"
+        days = compare_labels is not None
+        bars = [m["label"] for m in shown if m.get("kind") == "bar"]
+        mark_js = ("(p, dashed) => " + json.dumps(bars, ensure_ascii=False) + ".includes(p.seriesName) && !dashed "
+                   "? '<span style=\"display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;"
+                   "background:' + p.color + '\"></span>' : '<span style=\"display:inline-block;width:16px;height:0;"
+                   "vertical-align:middle;margin-right:6px;border-top:' + (dashed ? '2px dashed ' : '3px solid ') + "
+                   "p.color + '\"></span>'")
+        names = json.dumps(cmp_names, ensure_ascii=False)
+        tip = ("ps => { const C = " + names + ", X = " + json.dumps(labels) + ", CL = "
+               + json.dumps(compare_labels or []) + ", F = " + json.dumps(fmts, ensure_ascii=False)
+               + ", mk = " + mark_js + "; "
+               "return (" + ("'Ngày ' + (ps[0].dataIndex + 1)" if days else "ps[0].axisValue") + ") + ps.map(p => { "
+               "const cmp = C[p.seriesName]; "
+               "const name = cmp ? cmp + ' · ' + (CL[p.dataIndex] || 'kỳ so sánh') : p.seriesName"
+               + (" + ' · ' + X[p.dataIndex]" if days else "") + "; "
+               "const v = p.value == null ? 'chưa có' : (F[p.seriesName] === 'pct' ? (p.value * 100).toLocaleString("
+               "'vi-VN', {maximumFractionDigits: 1}) + '%' : p.value.toLocaleString('vi-VN')); "
+               "return '<br/>' + mk(p, !!cmp) + name + ': <b>' + v + '</b>'; }).join(''); }")
         ui.echart({"animation": False, "legend": {"show": False},
                    "grid": {"left": 44, "right": 48 if len(groups) > 1 else 14, "top": 14,
                             "bottom": 26},
@@ -527,7 +543,8 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
                                "axisPointer": {"type": "shadow" if has_bar else "line",
                                                "shadowStyle": {"color": "rgba(31,34,30,0.04)"},
                                                "lineStyle": {"color": "#C9C7BC"}}},
-                   "xAxis": {"type": "category", "data": labels, "boundaryGap": has_bar, "axisTick": {"show": False},
+                   "xAxis": {"type": "category", "data": [str(i + 1) for i in range(len(labels))] if days else labels,
+                             "boundaryGap": has_bar, "axisTick": {"show": False},
                              "axisLine": {"lineStyle": {"color": "#E7E5DC"}},
                              "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5}},
                    "yAxis": y_axes, "series": series}).classes("w-full q-mt-sm").style(f"height:{height}px")
