@@ -5,3 +5,10 @@ secrets/
 data/
 .vercel/
 .nicegui/
+
+# Tài liệu riêng của dự án Tâm Đức và bản xuất tĩnh: giữ trên máy, không đưa lên repo
+_tam-duc/
+dist/
+
+# Bản sao lưu hằng ngày (lệnh backup / daily)
+backups/

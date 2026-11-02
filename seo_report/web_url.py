@@ -415,13 +415,13 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                       </div>
                     </q-td>""")
                 ui.label("Volume: Google Ads, Việt Nam, cập nhật mỗi tháng. Google gộp các biến thể gần nhau (ví dụ "
-                         "'mắt kính' và 'kính mắt') thành cùng một số.").classes("text-xs muted")
+                         "'giày nữ' và 'giày cho nữ') thành cùng một số.").classes("text-xs muted")
 
         with ui.dialog() as add_dialog, ui.card().style("min-width: 560px; border-radius: 14px"):
             ui.label(f"Thêm keyword SEO cho {row['path']}").classes("text-lg font-semibold")
             ui.label("Mỗi dòng một keyword. URL mục tiêu là URL này. Volume lấy ngay sau khi thêm.").classes(
                 "text-sm muted")
-            new_kw = ui.textarea(placeholder="tròng kính chống ánh sáng xanh\ntròng kính đổi màu").props(
+            new_kw = ui.textarea(placeholder="từ khóa 1\ntừ khóa 2").props(
                 "outlined autogrow").classes("w-full")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Đóng", on_click=add_dialog.close).props("flat no-caps")

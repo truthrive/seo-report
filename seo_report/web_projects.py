@@ -18,8 +18,12 @@ def _vn_date(iso: str | None) -> str:
 def build_projects_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
-    T.page_header(ui, "domain", "Dự án", "Mỗi dự án là một website: số liệu, từ khóa, KPI và báo cáo tách riêng. "
-                                        "Đổi dự án ở ô chọn trên thanh trên cùng.", eyebrow="Quản trị", tone="grey")
+    right = T.page_header(ui, "domain", "Dự án", "Mỗi dự án là một website: số liệu, từ khóa, KPI và báo cáo tách "
+                                                "riêng. Đổi dự án ở ô chọn trên thanh trên cùng.", eyebrow="Quản trị",
+                          tone="grey")
+    with right:
+        ui.button("Thêm dự án", icon="add", on_click=lambda: edit_dialog(None)).props("unelevated no-caps")
+    tool_email = {"value": None}  # email Google của tool (đọc nền, lưu lại để lần sau hiện ngay)
 
     async def google_options() -> tuple[dict, dict, str]:
         """Property GSC và GA4 tài khoản Google của tool truy cập được, để chọn thay vì gõ tay."""
@@ -43,14 +47,14 @@ def build_projects_page(ui, base, app_connect, user) -> None:
             ui.label(f"Sửa dự án {project['name']}" if project else "Thêm dự án").classes("text-lg font-semibold")
             loading = ui.label("Đang lấy danh sách property từ Google…").classes("text-xs muted")
             name = ui.input("Tên dự án", value=project["name"] if project else "",
-                            placeholder="ví dụ: Mắt Kính Tâm Đức").props("outlined dense").classes("w-full")
+                            placeholder="ví dụ: Công ty ABC").props("outlined dense").classes("w-full")
             site = ui.select({}, label="Property Search Console", value=None, with_input=True, new_value_mode="add-unique"
                              ).props("outlined dense use-input hide-selected fill-input").classes("w-full")
             ga4 = ui.select({}, label="GA4 property (để trống nếu chưa có)", value=None, clearable=True,
                             with_input=True, new_value_mode="add-unique").props(
                 "outlined dense use-input hide-selected fill-input").classes("w-full")
             brand = ui.input("Từ khóa thương hiệu (cách nhau dấu phẩy)", value=", ".join(s["brand_terms"]),
-                             placeholder="ví dụ: tâm đức, matkinhtamduc").props("outlined dense").classes("w-full")
+                             placeholder="ví dụ: abc, congtyabc").props("outlined dense").classes("w-full")
             ui.label("Query chứa các từ này được tách khỏi từ khóa SEO (không tính là head keyword).").classes(
                 "text-xs muted")
             with ui.row().classes("w-full no-wrap gap-3"):
@@ -60,6 +64,66 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                    label="Thiết bị check rank").props("outlined dense").classes("col")
             okr = ui.input("Link Google Sheet OKR / Weekly Task (không bắt buộc)", value=s["okr_sheet"]).props(
                 "outlined dense").classes("w-full")
+            if project:  # logo: tự lấy từ website hoặc tải ảnh lên (dự án mới: tool tự lấy sau khi lưu)
+                logo = {"value": project["logo"]}
+
+                @ui.refreshable
+                def logo_row():
+                    with ui.row().classes("w-full items-center gap-3 no-wrap q-mt-xs"):
+                        T.project_icon(ui, {**project, "logo": logo["value"]}, 40)
+                        with ui.column().classes("col gap-0"):
+                            ui.label("Logo").classes("text-sm font-medium")
+                            ui.label("Hiện ở menu và ô đổi website. Ảnh vuông, dưới 300 KB.").classes(
+                                "text-xs muted")
+
+                        async def from_site():
+                            ui.notify("Đang lấy logo từ website…")
+                            uri = await run.io_bound(PJ.fetch_logo, site.value or project["site_url"])
+                            if not uri:
+                                ui.notify("Không lấy được logo từ website. Tải ảnh lên thay thế.", type="warning")
+                                return
+                            logo["value"] = uri
+                            logo_row.refresh()
+
+                        async def uploaded(e):
+                            try:
+                                logo["value"] = PJ.data_uri(await e.file.read(), e.file.content_type or "")
+                            except ValueError as ex:
+                                ui.notify(str(ex), type="warning")
+                                return
+                            logo_row.refresh()
+
+                        ui.button("Lấy từ website", icon="travel_explore", on_click=from_site).props(
+                            "flat dense no-caps")
+                        up = ui.upload(on_upload=uploaded, auto_upload=True, max_file_size=PJ.MAX_LOGO_BYTES).props(
+                            'accept="image/*" flat dense hide-upload-btn').classes("hidden")
+                        ui.button("Tải ảnh lên", icon="upload", on_click=lambda: up.run_method("pickFiles")).props(
+                            "flat dense no-caps")
+                        if logo["value"]:
+                            ui.button(icon="close", on_click=lambda: (logo.update(value=""), logo_row.refresh())
+                                      ).props("flat round dense color=grey-7").tooltip("Bỏ logo")
+
+                logo_row()
+
+                # Quy tắc phân loại URL theo đường dẫn: lưu trong file dữ liệu của chính website này
+                from contextlib import closing
+
+                from . import db as DB
+                from . import urls as U
+                with closing(DB.connect(PJ.config_for(base, project).db_path)) as pc:
+                    cur_rules = U.get_rules(pc)
+                with ui.expansion("Phân loại URL theo đường dẫn", icon="rule",
+                                  caption=f"{len(cur_rules['rules'])} quy tắc").classes("w-full q-mt-xs").props(
+                        "dense"):
+                    ui.label("Mỗi dòng: mẫu đường dẫn = loại trang. Dấu * thay cho bất kỳ chuỗi nào; dòng đầu tiên "
+                             "khớp được dùng. Loại: " + ", ".join(U.TYPES) + ". URL không khớp quy tắc nào thì tool "
+                             "đọc schema của trang.").classes("text-xs muted")
+                    rules_box = ui.textarea(value=U.rules_text(cur_rules),
+                                            placeholder="/danh-muc/ = Danh mục\n/danh-muc/* = Danh mục con\n"
+                                                        "/blog/* = Blog\n/cua-hang* = Cửa hàng").props(
+                        "outlined autogrow").classes("w-full").style("font-family: var(--mono); font-size: 12.5px")
+                    deep = ui.checkbox("Đường dẫn nhiều cấp không khớp quy tắc nào là URL cũ/kỹ thuật",
+                                       value=cur_rules["deep_legacy"]).props("dense")
             ui.label("Sheet KPI cam kết gắn ở màn KPI cam kết của từng dự án.").classes("text-xs muted")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
@@ -67,15 +131,25 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                 fields = {"name": name.value, "site_url": site.value or "", "ga4_property": ga4.value or "",
                           "brand_terms": brand.value or "", "rank_budget_usd": budget.value, "device": device.value,
                           "okr_sheet": okr.value or "",
-                          **({k: s[k] for k in ("location_code", "language_code", "okr_tab", "weekly_tab")})}
+                          **({k: s.get(k) for k in ("location_code", "language_code", "okr_tab", "weekly_tab",
+                                                     "rank_paused")})}
                 try:
                     with app_connect() as c:
                         p = (PJ.update(c, project["slug"], fields, user) if project
                              else PJ.create(c, base, fields, user))
+                        if project and logo["value"] != project["logo"]:
+                            PJ.set_logo(c, p["slug"], logo["value"], user)
+                    if project and (rules_box.value or "", deep.value) != (U.rules_text(cur_rules),
+                                                                          cur_rules["deep_legacy"]):
+                        with closing(DB.connect(PJ.config_for(base, p).db_path)) as pc:
+                            changed = U.set_rules(pc, p["site_url"], rules_box.value or "", deep.value, user)
+                        ui.notify(f"Đã lưu quy tắc phân loại URL · {changed} URL đổi loại", type="info")
                 except ValueError as e:
                     err.text = str(e)
                     return
                 dlg.close()
+                if not project:  # dự án mới: tự lấy logo của website (chạy nền)
+                    fetch_logo_bg(p)
                 ui.notify(f"Đã lưu dự án {p['name']}", type="positive")
                 body.refresh()
                 if not project:  # dự án mới: hỏi lấy dữ liệu GSC ngay
@@ -99,6 +173,20 @@ def build_projects_page(ui, base, app_connect, user) -> None:
         ga4.set_options(ga4_opts, value=cur_ga4 or None)
         loading.text = warn or ("Chọn trong danh sách property tài khoản Google của tool truy cập được. Khách hàng "
                                 "cần thêm email đó vào GSC / GA4 (quyền đọc) trước.")
+
+    def fetch_logo_bg(p: dict) -> None:
+        from nicegui import background_tasks
+
+        async def task():
+            uri = await run.io_bound(PJ.fetch_logo, p["site_url"])
+            if uri:
+                with app_connect() as c:
+                    PJ.set_logo(c, p["slug"], uri, user)
+                try:
+                    body.refresh()
+                except Exception:  # noqa: BLE001  (người dùng đã rời trang)
+                    pass
+        background_tasks.create(task())
 
     def ask_sync(p: dict) -> None:
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:440px"):
@@ -177,23 +265,31 @@ def build_projects_page(ui, base, app_connect, user) -> None:
 
     @ui.refreshable
     def body():
+        from . import access as A
         with app_connect() as c:
             active, all_ = PJ.list_projects(c), PJ.list_projects(c, archived=True)
             current = PJ.get(c, app.storage.user.get("project"))
+            mem = A.members(c)
+            team_all = sum(1 for u in A.users(c, base.access) if u.get("team_role"))
         archived = [p for p in all_ if p["archived_at"]]
         with T.section(ui, f"Dự án đang chạy · {len(active)}", "domain"):
-            with ui.row().classes("w-full justify-end"):
-                ui.button("Thêm dự án", icon="add", on_click=lambda: edit_dialog(None)).props("unelevated no-caps")
             for p in active:
                 st = PJ.status(base, p)
+                n_clients = sum(1 for m in mem.values() if m.get(p["slug"]) == A.CLIENT)
+                n_team = sum(1 for m in mem.values() if m.get(p["slug"]) in (A.VIEWER, A.EDITOR)) + team_all
+                steps = PJ.setup_steps(base, p, st, n_clients + n_team)
+                todo = [name for name, done in steps if not done]
                 with ui.row().classes("sr-access-row w-full items-center no-wrap gap-3"):
-                    with ui.element("div").classes("sr-icon-bubble").style(f"background:{T.TONES['green'][0]}"):
-                        ui.icon("language", size="16px").style(f"color:{T.GREEN}")
+                    T.project_icon(ui, p, 36)
                     with ui.column().classes("col gap-0").style("min-width:0"):
                         with ui.row().classes("items-center gap-2 no-wrap"):
                             ui.label(p["name"]).classes("text-sm font-semibold ellipsis")
                             if current and p["slug"] == current["slug"]:
                                 T.status_chip(ui, "Đang mở", "green")
+                            if todo:  # status_chip không trả về phần tử: bọc để gắn chú thích
+                                with ui.element("span").tooltip("Còn thiếu: " + ", ".join(todo)):
+                                    T.status_chip(ui, f"Cài đặt {len(steps) - len(todo)}/{len(steps)}", "amber",
+                                                  "checklist")
                         meta = [p["site_url"], "GA4 " + p["ga4_property"].split("/")[-1] if p["ga4_property"]
                                 else "chưa gắn GA4", f"check rank {p['settings']['rank_budget_usd']:g} USD/tháng"]
                         ui.label(" · ".join(meta)).classes("text-xs muted ellipsis")
@@ -201,24 +297,32 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                   f"GSC: {st['days']} ngày, mới nhất {_vn_date(st['last'])}" if st["days"] else
                                   "Chưa có dữ liệu GSC") + f" · tạo {_when(p['created_at'])}").classes(
                             "text-xs muted")
+                    ui.link(f"{n_team} team · {n_clients} khách", f"/access?project={p['slug']}").classes(
+                        "sr-link text-xs").tooltip("Người vào được website này (chưa tính quản trị). Bấm để xem / sửa")
                     if p["slug"] in _syncing:
                         ui.spinner(size="20px")
                     elif not st["days"]:
                         ui.button("Lấy dữ liệu", icon="cloud_download", on_click=lambda _, p=p: start_sync(p)).props(
                             "outline dense no-caps")
                     if not current or p["slug"] != current["slug"]:
-                        ui.button("Mở", on_click=lambda _, s=p["slug"]: open_project(s)).props("flat dense no-caps")
-                    ui.button(icon="edit", on_click=lambda _, p=p: edit_dialog(p)).props(
-                        "flat round dense color=grey-8").tooltip("Sửa cấu hình")
+                        ui.button("Mở", icon="open_in_browser", on_click=lambda _, s=p["slug"]: open_project(s)).props(
+                            "flat dense no-caps")
+                    ui.button("Sửa", icon="edit", on_click=lambda _, p=p: edit_dialog(p)).props(
+                        "flat dense no-caps color=grey-9").tooltip("Sửa cấu hình: GSC, GA4, ngân sách, logo, quy tắc URL")
                     if len(active) > 1:
-                        ui.button(icon="inventory_2", on_click=lambda _, p=p: ask_archive(p)).props(
-                            "flat round dense color=grey-8").tooltip("Lưu trữ (ẩn, không xóa dữ liệu)")
+                        ui.button("Lưu trữ", icon="inventory_2", on_click=lambda _, p=p: ask_archive(p)).props(
+                            "flat dense no-caps color=grey-9").tooltip("Ẩn dự án, không xóa dữ liệu; khôi phục được")
         if archived:
             with T.section(ui, f"Đã lưu trữ · {len(archived)}", "inventory_2"):
                 for p in archived:
                     with ui.row().classes("sr-access-row w-full items-center no-wrap gap-3"):
                         with ui.column().classes("col gap-0").style("min-width:0"):
-                            ui.label(p["name"]).classes("text-sm font-medium ellipsis")
+                            with ui.row().classes("items-center gap-2 no-wrap"):
+                                ui.label(p["name"]).classes("text-sm font-medium ellipsis")
+                                twin = next((a for a in active if PJ.domain(a["site_url"]) == PJ.domain(p["site_url"])),
+                                            None)
+                                if twin:
+                                    T.status_chip(ui, f"Trùng website với {twin['name']}", "amber", "content_copy")
                             ui.label(f"{p['site_url']} · lưu trữ {_when(p['archived_at'])} bởi {p['archived_by']}"
                                      ).classes("text-xs muted ellipsis")
 
@@ -232,9 +336,40 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                                                        "border-color:#EAD7AE"):
             with ui.row().classes("items-start gap-2 no-wrap"):
                 ui.icon("info", size="18px").style(f"color:{T.AMBER}")
-                ui.label("Thêm website của khách: khách thêm email Google của tool vào Search Console và GA4 với quyền "
-                         "đọc, rồi chọn property ở đây. Mỗi dự án có file dữ liệu riêng nên số liệu các khách không "
-                         "lẫn vào nhau. Phân quyền khách hàng theo từng dự án sẽ làm ở giai đoạn 2; hiện ai đăng "
-                         "nhập được đều xem được mọi dự án.").classes("text-sm")
+                with ui.column().classes("gap-2"):
+                    ui.label("Thêm website của khách: khách thêm email Google dưới đây vào Search Console và GA4 với "
+                             "quyền đọc, rồi bấm Thêm dự án và chọn property. Mỗi dự án có file dữ liệu riêng nên số "
+                             "liệu các khách không lẫn vào nhau. Cấp tài khoản cho khách ở màn Phân quyền: khách chỉ "
+                             "thấy website được gắn.").classes("text-sm")
+                    email = tool_email["value"]
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label("Email Google của tool:").classes("text-sm font-semibold")
+                        if email:
+                            ui.label(email).classes("text-sm").style("font-family: var(--mono)")
+                            ui.button("Chép", icon="content_copy", on_click=lambda e=email: (
+                                ui.clipboard.write(e), ui.notify("Đã chép email"))).props("flat dense no-caps")
+                        elif email is None:
+                            ui.label("đang đọc…").classes("text-sm muted")
+                        else:
+                            ui.label("chưa đọc được (kiểm tra đăng nhập Google của tool)").classes("text-sm muted")
 
     body()
+
+    async def load_email():
+        from . import auth
+        with app_connect() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            row = c.execute("SELECT value FROM app_settings WHERE key = 'tool_google_email'").fetchone()
+        if row and row[0]:
+            tool_email["value"] = row[0]
+            body.refresh()
+        found = await run.io_bound(auth.account_email, base)
+        if found and found != tool_email["value"]:
+            with app_connect() as c:
+                c.execute("INSERT OR REPLACE INTO app_settings VALUES ('tool_google_email', ?)", (found,))
+                c.commit()
+        tool_email["value"] = found or tool_email["value"] or ""
+        body.refresh()
+
+    from nicegui import background_tasks
+    background_tasks.create(load_email())

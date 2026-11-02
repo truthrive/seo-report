@@ -10,11 +10,11 @@ from seo_report import urls as U
 from seo_report.config import Config
 from seo_report.report_excel import build_report_excel
 
-SITE = "https://matkinhtamduc.com/"
-A = "https://matkinhtamduc.com/gong-kinh/"
-B = "https://matkinhtamduc.com/blog-a/"
-C = "https://matkinhtamduc.com/blog-nho/"
-OTHER = "https://matkinhtamduc.com/ngoai-nhom/"
+SITE = "https://vidushop.com/"
+A = "https://vidushop.com/gong-kinh/"
+B = "https://vidushop.com/blog-a/"
+C = "https://vidushop.com/blog-nho/"
+OTHER = "https://vidushop.com/ngoai-nhom/"
 
 
 def page(url, c):
@@ -184,3 +184,36 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("Trang tăng click nhiều nhất: /gong-kinh/ (+20 click)", notes)
         self.assertIn("1 từ khóa đang xếp hạng bằng trang khác trang mục tiêu", notes)
         self.assertEqual(sm["seo_notes"][0]["short"], "/gong-kinh/ +20")
+
+
+class CompareTest(unittest.TestCase):
+    def test_compare_period(self):
+        from datetime import date
+
+        from seo_report.report import compare_period, period_text
+        wk, prev = (date(2026, 10, 19), date(2026, 10, 25)), (date(2026, 10, 12), date(2026, 10, 18))
+        self.assertEqual(compare_period("week", wk, prev, "prev"), prev)
+        self.assertEqual(compare_period("week", wk, prev, "yoy"), (date(2025, 10, 20), date(2025, 10, 26)))  # cùng thứ
+        self.assertEqual(compare_period("week", wk, prev, "2026-09-07"), (date(2026, 9, 7), date(2026, 9, 13)))
+        self.assertEqual(compare_period("week", wk, prev, "2026-10-26"), prev)  # kỳ sau kỳ báo cáo: bỏ qua
+        self.assertEqual(compare_period("week", wk, prev, "rác"), prev)
+        mo, mprev = (date(2026, 2, 1), date(2026, 2, 28)), (date(2026, 1, 1), date(2026, 1, 31))
+        self.assertEqual(compare_period("month", mo, mprev, "yoy"), (date(2025, 2, 1), date(2025, 2, 28)))
+        self.assertEqual(compare_period("month", mo, mprev, "2025-11-01"), (date(2025, 11, 1), date(2025, 11, 30)))
+        self.assertEqual(period_text("week", (date(2025, 10, 20), date(2025, 10, 26)), 2026), "tuần 20/10 – 26/10/2025")
+        self.assertEqual(period_text("week", prev, 2026), "tuần 12/10 – 18/10")
+        self.assertEqual(period_text("month", mprev), "tháng 01/2026")
+
+
+class DashboardWindowTest(unittest.TestCase):
+    def test_windows_and_buckets(self):
+        from datetime import date
+
+        from seo_report.web_dashboard import buckets, windows
+        cur, prev = windows(date(2026, 10, 31), 28)
+        self.assertEqual(cur, (date(2026, 10, 4), date(2026, 10, 31)))
+        self.assertEqual(prev, (date(2026, 9, 6), date(2026, 10, 3)))
+        self.assertEqual(len(buckets(cur, 28)), 28)  # 28 ngày: từng ngày
+        cur90, _ = windows(date(2026, 10, 31), 90)
+        b = buckets(cur90, 90)
+        self.assertEqual((len(b), b[0][0], b[-1][1]), (13, cur90[0], cur90[1]))  # 90 ngày: theo tuần, phủ đủ

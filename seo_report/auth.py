@@ -29,6 +29,18 @@ def _missing(creds: Credentials, need) -> list[str]:
     return [s for s in need if s not in granted]
 
 
+def account_email(cfg: Config) -> str:
+    """Email tài khoản Google tool đang dùng (để khách thêm vào GSC / GA4). Đọc qua Google Drive với quyền
+    drive.file đã cấp sẵn (không cần thêm quyền); không đọc được thì trả chuỗi rỗng."""
+    from googleapiclient.discovery import build
+    try:
+        creds = get_credentials(cfg, need=())
+        about = build("drive", "v3", credentials=creds, cache_discovery=False).about()
+        return about.get(fields="user(emailAddress)").execute()["user"]["emailAddress"]
+    except (Exception, SystemExit):  # noqa: BLE001
+        return ""
+
+
 def get_credentials(cfg: Config, interactive: bool = False, need=(GSC_SCOPE,)) -> Credentials:
     creds = None
     if cfg.token_path.exists():

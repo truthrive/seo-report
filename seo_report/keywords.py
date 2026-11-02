@@ -21,7 +21,7 @@ R_OVER_LIMIT = "Ngoài top keyword phụ"
 
 
 def fold(text: str) -> str:
-    """Bỏ dấu, chữ hoa, khoảng trắng và ký tự đặc biệt: 'Mắt kính Tâm Đức' → 'matkinhtamduc'."""
+    """Bỏ dấu, chữ hoa, khoảng trắng và ký tự đặc biệt: 'Công ty ABC' → 'congtyabc'."""
     text = unicodedata.normalize("NFD", text.lower().replace("đ", "d"))
     return re.sub(r"[^a-z0-9]", "", "".join(c for c in text if unicodedata.category(c) != "Mn"))
 

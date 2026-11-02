@@ -59,8 +59,8 @@ class Ga4Test(unittest.TestCase):
 
     def test_list_properties_follows_pages(self):
         admin = FakeAdmin([
-            {"accountSummaries": [{"displayName": "Tâm Đức", "propertySummaries": [
-                {"property": "properties/1", "displayName": "matkinhtamduc.com"}]}], "nextPageToken": "1"},
+            {"accountSummaries": [{"displayName": "Vi Du Shop", "propertySummaries": [
+                {"property": "properties/1", "displayName": "vidushop.com"}]}], "nextPageToken": "1"},
             {"accountSummaries": [{"displayName": "Khác", "propertySummaries": [
                 {"property": "properties/2", "displayName": "site 2"}]}]},
         ])

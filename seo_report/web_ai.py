@@ -108,6 +108,35 @@ def params_from_state(state: dict, tab: str) -> dict:
     return out
 
 
+def _parse_vn(text: str) -> date:
+    """dd/mm/yyyy → date (ô ngày hiện kiểu Việt Nam, không theo ngôn ngữ trình duyệt)."""
+    from datetime import datetime
+    return datetime.strptime((text or "").strip(), "%d/%m/%Y").date()
+
+
+def _date_field(ui, label: str, value: date):
+    """Ô ngày dd/mm/yyyy kèm lịch chọn ngày. field.picker là lịch (để bắt sự kiện chọn ngày)."""
+    field = ui.input(label, value=f"{value:%d/%m/%Y}").props('dense outlined mask="##/##/####"').classes("w-40")
+    with field.add_slot("append"):
+        icon = ui.icon("event").classes("cursor-pointer")
+        with ui.menu() as menu:
+            field.picker = ui.date(mask="DD/MM/YYYY").bind_value(field).props("minimal")
+            field.picker.on("update:model-value", menu.close)
+    icon.on("click", menu.open)
+    return field
+
+
+def _local_time(iso_utc: str) -> str:
+    from datetime import datetime, timezone
+    try:
+        t = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return iso_utc
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return f"{t.astimezone():%H:%M %d/%m/%Y}"
+
+
 def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                   week: tuple[date, date] | None = None) -> None:
     from nicegui import background_tasks, run
@@ -141,14 +170,20 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             ui.row().classes("w-full items-center gap-3"):
         ui.icon("tune", size="18px").classes("muted")
         preset = ui.select(PRESETS, value=state["preset"], label="Kỳ").props("dense outlined").classes("w-44")
-        d_from = ui.input("Từ ngày", value=start0.isoformat()).props("dense outlined type=date").classes("w-40")
-        d_to = ui.input("Đến ngày", value=end0.isoformat()).props("dense outlined type=date").classes("w-40")
+        d_from = _date_field(ui, "Từ ngày", start0)
+        d_to = _date_field(ui, "Đến ngày", end0)
         compare = ui.switch("So với kỳ trước", value=state["compare"]).props("dense")
+        if quality:  # Chất lượng dữ liệu đối soát theo tuần ở thanh trên cùng: không cần bộ lọc kỳ riêng
+            for w in (preset, d_from, d_to, compare):
+                w.set_visibility(False)
+            ui.label("Đối soát số liệu theo tuần đang chọn ở thanh trên cùng").classes("text-sm muted")
         ui.space()
         refresh_btn = ui.button(icon="refresh", on_click=lambda: load(force=True)).props("flat round").tooltip(
             "Làm mới dữ liệu (bỏ cache GA4)")
         from .web_export import export_menu
-        export_menu(ui, cfg, connect, f"ai-search-geo_{state['start']}_{state['end']}", lambda: export_all(), user=user)
+        if not quality:
+            export_menu(ui, cfg, connect, f"ai-search-geo_{state['start']}_{state['end']}", lambda: export_all(),
+                        user=user)
     with ui.row().classes("items-center gap-2"):
         filter_chips = ui.row().classes("gap-2")
 
@@ -272,12 +307,12 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             return
         if e.value != "custom":
             s, t = week if e.value == "week" else preset_range(e.value, date.today())
-            d_from.value, d_to.value = s.isoformat(), t.isoformat()
+            d_from.value, d_to.value = f"{s:%d/%m/%Y}", f"{t:%d/%m/%Y}"
             apply_dates()
 
     def apply_dates():
         try:
-            s, t = date.fromisoformat(d_from.value), date.fromisoformat(d_to.value)
+            s, t = _parse_vn(d_from.value), _parse_vn(d_to.value)
         except (TypeError, ValueError):
             return
         if s > t:
@@ -288,8 +323,13 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             background_tasks.create(load())
 
     preset.on_value_change(on_preset)
-    d_from.on("change", lambda _: (preset.set_value("custom") if preset.value != "custom" else None, apply_dates()))
-    d_to.on("change", lambda _: (preset.set_value("custom") if preset.value != "custom" else None, apply_dates()))
+    def custom_dates(_=None):
+        if preset.value != "custom":
+            preset.set_value("custom")
+        apply_dates()
+    for field in (d_from, d_to):
+        field.on("change", custom_dates)  # gõ tay
+        field.picker.on("update:model-value", custom_dates)  # chọn trên lịch
     compare.on_value_change(lambda e: (state.update(compare=e.value), background_tasks.create(load())))
 
     # ---- Hiển thị ----
@@ -863,8 +903,8 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         check_list("Độ mới dữ liệu", d["fresh"])
         cache = d["cache"]
         with ui.row().classes("items-center gap-3"):
-            ui.label(f"Cache GA4: {cache['entries']} truy vấn đã lưu"
-                     + (f", mới nhất {cache['newest'][:16].replace('T', ' ')} UTC" if cache["newest"] else "")
+            ui.label(f"Bộ nhớ tạm GA4: {cache['entries']} truy vấn đã lưu"
+                     + (f", mới nhất {_local_time(cache['newest'])}" if cache["newest"] else "")
                      + ". Kỳ gần đây giữ 3 giờ, kỳ đã đóng giữ 24 giờ.").classes("text-xs muted")
             ui.button("Xóa cache và tải lại", icon="refresh", on_click=lambda: load(force=True)).props(
                 "flat dense no-caps")
@@ -880,19 +920,18 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         ui.label("Nguồn có tên giống AI nhưng KHÔNG tính là AI").classes("text-sm font-medium q-mt-sm")
         if cands:
             ui.table(columns=[
-                {"name": "src", "label": "sessionSource", "field": "source", "align": "left"},
-                {"name": "med", "label": "sessionMedium", "field": "medium", "align": "left"},
+                {"name": "src", "label": "Nguồn", "field": "source", "align": "left"},
+                {"name": "med", "label": "Phương tiện", "field": "medium", "align": "left"},
                 {"name": "ch", "label": "Kênh GA4", "field": "channel", "align": "left"},
                 {"name": "s", "label": "Phiên", "field": "sessions", "align": "right"},
                 {"name": "r", "label": "Lý do", "field": "reason", "align": "left"},
             ], rows=[{**c, "id": i} for i, c in enumerate(cands)], row_key="id").classes("w-full").props(
                 "flat bordered dense")
-            ui.label("Nếu một nguồn ở đây thật sự là AI assistant, báo người quản trị để bổ sung vào danh sách. Tool "
+            ui.label("Nếu một nguồn ở đây thật sự là AI assistant, báo Chủ tool để bổ sung vào danh sách. Tool "
                      "không tự cộng.").classes("text-xs muted")
         else:
             ui.label("Không có.").classes("text-sm muted")
 
-        ui.label("Cài đặt đang dùng").classes("text-base font-semibold q-mt-md")
         allow = d["allow"]
         rows = [["Cách phân loại", f"{d['mode']} {C.VERSION}: kênh AI Assistant của GA4, cộng nguồn khớp danh sách "
                                    "bên dưới với medium không trả phí"],
@@ -905,12 +944,15 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                 ["Ẩn % thay đổi khi kỳ trước dưới", f"{F.MIN_BASE} (hiện số kỳ trước thay vì %)"],
                 ["Ngưỡng quy tắc cơ hội", "; ".join(f"{k} = {v:g}" for k, v in d["thresholds"].items())
                  + " (chỉnh ở tab Cơ hội SEO/GEO)"]]
-        ui.table(columns=[{"name": "k", "label": "Mục", "field": "k", "align": "left"},
-                          {"name": "v", "label": "Giá trị", "field": "v", "align": "left",
-                           "style": "white-space: normal"}],
-                 rows=[{"k": k, "v": v} for k, v in rows], row_key="k").classes("w-full").props("flat bordered dense")
-        ui.label("Danh sách nguồn AI và key events hiện chỉ xem được. Sửa trên màn hình sẽ mở khi có đăng nhập và phân "
-                 "quyền (bước 7), vì đổi danh sách làm thay đổi số AI của mọi kỳ.").classes("text-xs muted")
+        with ui.expansion("Cài đặt phân loại AI đang dùng (chi tiết kỹ thuật)", icon="settings").classes(
+                "w-full q-mt-md sr-card").props("dense"):
+            ui.table(columns=[{"name": "k", "label": "Mục", "field": "k", "align": "left"},
+                              {"name": "v", "label": "Giá trị", "field": "v", "align": "left",
+                               "style": "white-space: normal"}],
+                     rows=[{"k": k, "v": v} for k, v in rows], row_key="k").classes("w-full").props(
+                "flat bordered dense")
+            ui.label("Danh sách nguồn AI và key events chỉ xem được ở đây; muốn đổi thì báo Chủ tool, vì đổi danh "
+                     "sách làm thay đổi số AI của mọi kỳ.").classes("text-xs muted")
 
     # ---- Tab AI trên Google (nhập file GSC Generative AI) ----
     pending = {"parsed": None, "name": None}

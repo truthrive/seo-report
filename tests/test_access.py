@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from seo_report import access as A
 
-S = A.AccessSettings(editors=["Marketing@matkinhtamduc.com"], viewers=["boss@gmail.com"])
+S = A.AccessSettings(editors=["Marketing@vidushop.com"], viewers=["boss@gmail.com"])
 
 
 def b64(data: bytes) -> str:
@@ -27,7 +27,7 @@ class IdentifyTest(unittest.TestCase):
         self.assertIsNone(A.identify({"x-forwarded-for": "1.2.3.4"}, S, "me", "127.0.0.1")[0])
 
     def test_cloudflare_email_header_not_trusted_without_jwt_check(self):
-        u, _ = A.identify({"cf-ray": "x", "cf-access-authenticated-user-email": "marketing@matkinhtamduc.com"},
+        u, _ = A.identify({"cf-ray": "x", "cf-access-authenticated-user-email": "marketing@vidushop.com"},
                           S, "me", "127.0.0.1")
         self.assertIsNone(u)  # header có thể bị giả: bắt đăng nhập bằng mật khẩu
 
@@ -52,21 +52,43 @@ class ToolListTest(unittest.TestCase):
     def test_add_change_remove(self):
         A.set_user(self.con, " Khach@ABC.vn ", A.VIEWER, "me", "khách hàng ABC")
         self.assertIn("khach@abc.vn", A.effective(self.con, S).viewers)
-        A.set_user(self.con, "khach@abc.vn", A.EDITOR, "me")
-        self.assertIn("khach@abc.vn", A.effective(self.con, S).editors)
-        A.remove_user(self.con, "khach@abc.vn", "me")
+        A.set_user(self.con, "khach@abc.vn", A.EDITOR, "me")  # không có trong config.toml: không thành Chủ tool
         self.assertNotIn("khach@abc.vn", A.effective(self.con, S).editors)
+        A.remove_user(self.con, "khach@abc.vn", "me")
+        self.assertNotIn("khach@abc.vn", A.effective(self.con, S).viewers)
         # gỡ mềm: vẫn còn dòng lịch sử
         self.assertEqual(self.con.execute("SELECT removed_by FROM access_users").fetchone()[0], "me")
 
-    def test_config_role_is_authoritative(self):
-        A.set_user(self.con, "boss@gmail.com", A.EDITOR, "me")  # boss@gmail.com là viewer trong config
+    def test_config_editor_is_authoritative_viewer_is_not(self):
+        A.set_user(self.con, "marketing@vidushop.com", A.VIEWER, "me")  # quản trị trong config: không hạ được
         us = {u["email"]: u for u in A.users(self.con, S)}
-        self.assertEqual((us["boss@gmail.com"]["role"], us["boss@gmail.com"]["source"]), (A.VIEWER, "config"))
+        self.assertEqual((us["marketing@vidushop.com"]["role"], us["marketing@vidushop.com"]["source"]),
+                         (A.EDITOR, "config"))
+        self.assertEqual(us["boss@gmail.com"]["source"], "config")  # viewer trong config, chưa có trong tool
+        A.set_user(self.con, "boss@gmail.com", A.EDITOR, "me")  # đã có trong tool: theo tool, nhưng chỉ Chủ tool
+        us = {u["email"]: u for u in A.users(self.con, S)}    # (config editors) là quản trị
+        self.assertEqual((us["boss@gmail.com"]["role"], us["boss@gmail.com"]["source"]), (A.VIEWER, "tool"))
 
     def test_bad_email(self):
-        with self.assertRaises(ValueError):
-            A.set_user(self.con, "khong-phai-email", A.VIEWER, "me")
+        for bad in ("ab", "tên-có-dấu", "a b c", "-dau-gach", "x" * 33, "a@b"):
+            with self.assertRaises(ValueError, msg=bad):
+                A.set_user(self.con, bad, A.VIEWER, "me")
+
+    def test_username_account(self):
+        e = A.set_user(self.con, " Khach-ABC ", A.MEMBER, "me")
+        self.assertEqual(e, "khach-abc")
+        self.assertTrue(A.is_username(e))
+        self.assertFalse(A.is_username("a@b.vn"))
+        A.set_password(self.con, S, "khach-abc", "mat-khau-123", must_change=False)
+        u, _, _ = A.login(self.con, S, "KHACH-ABC", "mat-khau-123")
+        self.assertEqual(str(u), "khach-abc")
+
+    def test_old_admin_becomes_team_editor(self):
+        A.set_user(self.con, "phu@abc.vn", A.EDITOR, "me")
+        A.adopt_config(self.con, S, None)
+        us = {u["email"]: u for u in A.users(self.con, S)}
+        self.assertEqual((us["phu@abc.vn"]["role"], us["phu@abc.vn"]["team_role"]), (A.VIEWER, A.EDITOR))
+        self.assertEqual(us["marketing@vidushop.com"]["role"], A.EDITOR)
 
 
 class PasswordTest(unittest.TestCase):
@@ -77,6 +99,15 @@ class PasswordTest(unittest.TestCase):
 
     def tearDown(self):
         self.con.close()
+
+    def test_keep_issued_password(self):
+        A.set_password(self.con, S, "khach@abc.vn", "mat-khau-cap-123", must_change=True)
+        _, _, sess = A.login(self.con, S, "khach@abc.vn", "mat-khau-cap-123")
+        A.dismiss_change(self.con, "khach@abc.vn")
+        u = A.from_session(self.con, S, sess)  # phiên cũ vẫn dùng được, không còn gợi ý đổi
+        self.assertFalse(u.must_change)
+        u, _, _ = A.login(self.con, S, "khach@abc.vn", "mat-khau-cap-123")
+        self.assertFalse(u.must_change)
 
     def test_hash_is_salted_and_checked(self):
         h1, h2 = A.hash_password("mat-khau-123"), A.hash_password("mat-khau-123")
@@ -134,11 +165,11 @@ class JwtTest(unittest.TestCase):
         A._CERTS.update(at=time.time(), keys={"k1": {
             "kid": "k1", "n": b64(pub.n.to_bytes((pub.n.bit_length() + 7) // 8, "big")),
             "e": b64(pub.e.to_bytes(3, "big"))}})
-        self.s = A.AccessSettings(editors=["a@matkinhtamduc.com"], team_domain="x.cloudflareaccess.com", aud="AUD1")
+        self.s = A.AccessSettings(editors=["a@vidushop.com"], team_domain="x.cloudflareaccess.com", aud="AUD1")
 
     def token(self, **body):
         head = b64(json.dumps({"alg": "RS256", "kid": "k1"}).encode())
-        payload = b64(json.dumps({"aud": ["AUD1"], "exp": time.time() + 60, "email": "a@matkinhtamduc.com",
+        payload = b64(json.dumps({"aud": ["AUD1"], "exp": time.time() + 60, "email": "a@vidushop.com",
                                   **body}).encode())
         sig = self.key.sign(f"{head}.{payload}".encode(), padding.PKCS1v15(), hashes.SHA256())
         return f"{head}.{payload}.{b64(sig)}"
@@ -148,7 +179,7 @@ class JwtTest(unittest.TestCase):
         self.assertEqual(u.role, A.EDITOR)
 
     def test_header_email_ignored_when_jwt_configured(self):
-        u, why = A.identify({"cf-ray": "x", "cf-access-authenticated-user-email": "a@matkinhtamduc.com"}, self.s, "me")
+        u, why = A.identify({"cf-ray": "x", "cf-access-authenticated-user-email": "a@vidushop.com"}, self.s, "me")
         self.assertIsNone(u)
 
     def test_wrong_aud_expired_or_tampered(self):
@@ -190,7 +221,7 @@ class ProjectAccessTest(unittest.TestCase):
 
     def test_admin_and_owner_see_everything(self):
         self.assertEqual(self.role(A.User("Truong Thinh", A.LOCAL), "b"), A.LOCAL)
-        self.assertEqual(self.role(A.User("marketing@matkinhtamduc.com", A.ADMIN), "b"), A.EDITOR)
+        self.assertEqual(self.role(A.User("marketing@vidushop.com", A.ADMIN), "b"), A.EDITOR)
 
     def test_rights_inside_project(self):
         khach = A.in_project(A.User("khach-a@a.vn", A.MEMBER), A.CLIENT)
@@ -213,14 +244,47 @@ class ProjectAccessTest(unittest.TestCase):
         A.set_member(self.con, "team@x.vn", "b", A.CLIENT, "me")  # gắn lại được
         self.assertEqual(self.role(A.User("team@x.vn", A.MEMBER), "b"), A.CLIENT)
 
-    def test_config_viewer_always_keeps_first_project(self):
+    def test_config_viewer_adopted_into_tool(self):
         boss = A.User("boss@gmail.com", A.MEMBER)
-        self.assertEqual(self.role(boss, "tam-duc"), A.VIEWER)
-        self.assertIsNone(self.role(boss, "a"))
-        A.set_member(self.con, "boss@gmail.com", "a", A.VIEWER, "me")  # gắn thêm dự án khác: không mất dự án đầu
+        self.assertEqual(self.role(boss, "tam-duc"), A.VIEWER)  # chưa chuyển vào tool: xem dự án đầu tiên
+        self.assertEqual(A.adopt_config(self.con, S, "tam-duc"), 1)
+        self.assertEqual(A.members(self.con)["boss@gmail.com"], {"tam-duc": A.VIEWER})
+        A.set_member(self.con, "boss@gmail.com", "a", A.VIEWER, "me")  # gắn thêm: vẫn giữ dự án đầu
         self.assertEqual((self.role(boss, "tam-duc"), self.role(boss, "a")), (A.VIEWER, A.VIEWER))
-        A.set_member(self.con, "boss@gmail.com", "tam-duc", A.CLIENT, "me")  # gắn riêng dự án đầu: theo quyền gắn
-        self.assertEqual(self.role(boss, "tam-duc"), A.CLIENT)
+        A.remove_member(self.con, "boss@gmail.com", "tam-duc", "me")  # đã quản lý trong tool: gỡ được
+        self.assertIsNone(self.role(boss, "tam-duc"))
+        A.remove_user(self.con, "boss@gmail.com", "me")
+        self.assertEqual(A.adopt_config(self.con, S, "tam-duc"), 0)  # đã gỡ thì không tự thêm lại
+        self.assertNotIn("boss@gmail.com", {u["email"] for u in A.users(self.con, S)})
+
+    def test_team_all_projects(self):
+        A.set_user(self.con, "seo@x.vn", A.MEMBER, "me", title="SEO", team_role=A.EDITOR)
+        seo = A.User("seo@x.vn", A.MEMBER)
+        self.assertEqual((self.role(seo, "a"), self.role(seo, "website-moi")), (A.EDITOR, A.EDITOR))
+        A.set_member(self.con, "seo@x.vn", "a", A.CLIENT, "me")  # quyền gắn riêng ưu tiên hơn quyền chung
+        self.assertEqual(self.role(seo, "a"), A.CLIENT)
+        u = {x["email"]: x for x in A.users(self.con, S)}["seo@x.vn"]
+        self.assertEqual((u["title"], u["team_role"], A.kind(u, {"a": A.CLIENT})), ("SEO", A.EDITOR, "team"))
+        A.set_user(self.con, "seo@x.vn", A.MEMBER, "me", team_role=None)
+        self.assertIsNone(self.role(seo, "website-moi"))
+
+    def test_kind(self):
+        us = {x["email"]: x for x in A.users(self.con, S)}
+        mem = A.members(self.con)
+        self.assertEqual(A.kind(us["khach-a@a.vn"], mem["khach-a@a.vn"]), "client")
+        self.assertEqual(A.kind(us["team@x.vn"], mem["team@x.vn"]), "team")
+        self.assertEqual(A.kind(us["marketing@vidushop.com"], {}), "admin")
+
+    def test_log_and_restore(self):
+        A.set_member(self.con, "team@x.vn", "a", A.VIEWER, "me")
+        A.set_member(self.con, "team@x.vn", "a", A.VIEWER, "me")  # không đổi: không ghi
+        A.remove_user(self.con, "khach-a@a.vn", "me")
+        self.assertEqual([r["email"] for r in A.removed_users(self.con)], ["khach-a@a.vn"])
+        A.set_user(self.con, "khach-a@a.vn", A.MEMBER, "me2")
+        actions = [(r["email"], r["action"]) for r in A.log_entries(self.con)]
+        self.assertEqual(actions[:3], [("khach-a@a.vn", "Cấp lại tài khoản"), ("khach-a@a.vn", "Gỡ tài khoản"),
+                                       ("team@x.vn", "Đổi quyền dự án")])
+        self.assertEqual(A.removed_users(self.con), [])
 
     def test_bad_project_role(self):
         with self.assertRaises(ValueError):
@@ -233,3 +297,43 @@ class ProjectAccessTest(unittest.TestCase):
         A.set_user(self.con, "moi@x.vn", A.VIEWER, "me")
         self.assertEqual(A.migrate_members(self.con, S, "tam-duc"), 0)  # chỉ chạy một lần
         self.assertIsNone(self.role(A.User("moi@x.vn", A.MEMBER), "tam-duc"))
+
+
+class PeopleInProjectTest(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+        self.con = sqlite3.connect(":memory:")
+        A.set_user(self.con, "z-khach@a.vn", A.MEMBER, "me")
+        A.set_member(self.con, "z-khach@a.vn", "a", A.CLIENT, "me")
+        A.set_user(self.con, "a-seo@x.vn", A.MEMBER, "me", title="SEO")
+        A.set_member(self.con, "a-seo@x.vn", "a", A.EDITOR, "me")
+        A.set_user(self.con, "m-content@x.vn", A.MEMBER, "me", team_role=A.VIEWER)
+        A.set_user(self.con, "khac@b.vn", A.MEMBER, "me")
+        A.set_member(self.con, "khac@b.vn", "b", A.CLIENT, "me")
+
+    def test_order_and_scope(self):
+        got = [(p["email"], p["role"]) for p in A.people_in_project(self.con, S, "a", "tam-duc")]
+        self.assertEqual(got, [("marketing@vidushop.com", "admin"), ("a-seo@x.vn", A.EDITOR),
+                               ("m-content@x.vn", A.VIEWER), ("z-khach@a.vn", A.CLIENT)])  # không có khách website b
+        first = [p["email"] for p in A.people_in_project(self.con, S, "tam-duc", "tam-duc")]
+        self.assertIn("boss@gmail.com", first)  # viewer trong config.toml: dự án đầu tiên
+        self.assertNotIn("z-khach@a.vn", first)
+
+
+class IpThrottleTest(unittest.TestCase):
+    def setUp(self):
+        A._IP_FAILS.clear()
+
+    def test_real_ip_behind_tunnel(self):
+        self.assertEqual(A.client_ip("127.0.0.1", {"cf-connecting-ip": "1.2.3.4", "cf-ray": "x"}), "1.2.3.4")
+        self.assertEqual(A.client_ip("127.0.0.1", {"x-forwarded-for": "5.6.7.8, 10.0.0.1"}), "5.6.7.8")
+        self.assertEqual(A.client_ip("9.9.9.9", {}), "9.9.9.9")
+
+    def test_block_after_many_failures_then_expire(self):
+        for i in range(A.IP_MAX_FAILED - 1):
+            A.note_ip_fail("1.2.3.4", now=1000 + i)
+        self.assertFalse(A.ip_blocked("1.2.3.4", now=1100))
+        A.note_ip_fail("1.2.3.4", now=1100)
+        self.assertTrue(A.ip_blocked("1.2.3.4", now=1101))
+        self.assertFalse(A.ip_blocked("5.5.5.5", now=1101))
+        self.assertFalse(A.ip_blocked("1.2.3.4", now=1100 + A.IP_WINDOW))

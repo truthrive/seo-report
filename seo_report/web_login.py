@@ -16,46 +16,59 @@ def _card(ui, title: str, sub: str):
         card = ui.element("div").classes("sr-card q-pa-lg column gap-3").style(
             "width: 100%; max-width: 400px; border-radius: 18px")
         with card:
-            ui.image("/assets/logo.svg").props("fit=contain no-spinner").style("width: 170px; height: 48px")
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.image("/assets/app-icon.svg").props("fit=contain no-spinner").style("width: 40px; height: 40px")
+                ui.label("SEO Report").classes("sr-section-title").style("font-size: 20px")
             ui.label(title).classes("sr-section-title").style("font-size: 20px; margin-top: 4px")
             ui.label(sub).classes("text-sm muted")
     return card
 
 
-def build_login_page(ui, cfg, connect, next_url: str) -> None:
+def build_login_page(ui, cfg, connect, next_url: str, ip: str = "") -> None:
     from nicegui import app
-    card = _card(ui, "Đăng nhập", "Dùng email và mật khẩu được cấp. Chưa có tài khoản: liên hệ người quản lý tool.")
+    card = _card(ui, "Đăng nhập", "Dùng email (hoặc tên đăng nhập) và mật khẩu được cấp. Chưa có tài khoản: liên hệ người quản lý tool.")
     with card:
-        email = ui.input("Email").props("outlined autofocus autocomplete=username").classes("w-full")
+        email = ui.input("Email hoặc tên đăng nhập").props("outlined autofocus autocomplete=username").classes(
+            "w-full")
         pw = ui.input("Mật khẩu", password=True, password_toggle_button=True).props(
             "outlined autocomplete=current-password").classes("w-full")
         err = ui.label().classes("text-sm").style(f"color:{T.RED}; min-height: 20px")
 
         def submit():
+            if A.ip_blocked(ip):
+                err.text = f"Thử sai quá nhiều lần từ mạng này: thử lại sau {A.IP_WINDOW // 60} phút"
+                pw.value = ""
+                return
             with connect() as c:
                 settings = A.effective(c, cfg.access)
                 user, why, sess = A.login(c, settings, email.value or "", pw.value or "")
             if not user:
+                A.note_ip_fail(ip)
                 err.text = why
                 pw.value = ""
                 return
             app.storage.user["auth"] = sess
-            ui.navigate.to("/doi-mat-khau" if user.must_change else safe_next(next_url))
+            if user.must_change:  # mật khẩu được cấp: gợi ý đặt mật khẩu riêng, có nút bỏ qua
+                from urllib.parse import quote
+                ui.navigate.to("/doi-mat-khau?next=" + quote(safe_next(next_url), safe=""))
+            else:
+                ui.navigate.to(safe_next(next_url))
 
         pw.on("keydown.enter", submit)
         email.on("keydown.enter", lambda: pw.run_method("focus"))
         ui.button("Đăng nhập", on_click=submit).props("unelevated no-caps size=md").classes("w-full")
 
 
-def build_change_password_page(ui, cfg, connect, user) -> None:
+def build_change_password_page(ui, cfg, connect, user, next_url: str = "/") -> None:
     from nicegui import app
-    forced = user.must_change
-    card = _card(ui, "Đặt mật khẩu mới" if forced else "Đổi mật khẩu",
-                 ("Bạn đang dùng mật khẩu tạm: đặt mật khẩu riêng để tiếp tục. " if forced else "")
-                 + f"Ít nhất {A.MIN_PASSWORD} ký tự.")
+    issued = user.must_change  # đang dùng mật khẩu được cấp: chỉ gợi ý đổi, không bắt buộc
+    target = safe_next(next_url)
+    card = _card(ui, "Đặt mật khẩu riêng?" if issued else "Đổi mật khẩu",
+                 ("Bạn đang dùng mật khẩu được cấp. Có thể đặt mật khẩu riêng ngay, hoặc bỏ qua và đổi sau trong "
+                  "menu tài khoản. " if issued else "") + f"Mật khẩu mới ít nhất {A.MIN_PASSWORD} ký tự.")
     with card:
         ui.label(str(user)).classes("text-sm font-medium")
-        cur = ui.input("Mật khẩu hiện tại" + (" (mật khẩu tạm)" if forced else ""), password=True,
+        cur = ui.input("Mật khẩu được cấp" if issued else "Mật khẩu hiện tại", password=True,
                        password_toggle_button=True).props("outlined autocomplete=current-password").classes("w-full")
         new = ui.input("Mật khẩu mới", password=True, password_toggle_button=True).props(
             "outlined autocomplete=new-password").classes("w-full")
@@ -84,9 +97,14 @@ def build_change_password_page(ui, cfg, connect, user) -> None:
                 _, _, sess = A.login(c, settings, str(user), new.value)
             app.storage.user["auth"] = sess  # phiên mới gắn với mật khẩu mới
             ui.notify("Đã đổi mật khẩu", type="positive")
-            ui.navigate.to("/")
+            ui.navigate.to(target)
+
+        def skip():
+            if issued:  # bỏ qua: không gợi ý lại ở lần đăng nhập sau (vẫn đổi được trong menu tài khoản)
+                with connect() as c:
+                    A.dismiss_change(c, str(user))
+            ui.navigate.to(target)
 
         again.on("keydown.enter", submit)
         ui.button("Lưu mật khẩu", on_click=submit).props("unelevated no-caps").classes("w-full")
-        if not forced:
-            ui.button("Quay lại", on_click=lambda: ui.navigate.to("/")).props("flat no-caps").classes("w-full")
+        ui.button("Để sau, vào tool" if issued else "Quay lại", on_click=skip).props("flat no-caps").classes("w-full")

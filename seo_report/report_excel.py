@@ -11,7 +11,7 @@ from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .projects import domain
-from .report import WeeklyReport, change, rank_change, rank_summary, summary
+from .report import WeeklyReport, change, period_text, rank_change, rank_summary, summary
 
 GREEN = "1E7C31"
 RED = "C2410C"
@@ -120,18 +120,20 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
 
     unit = _unit(rep)
     month = rep.kind == "month"
-    logo = Path(__file__).parent / "assets" / "logo-wide.png"
-    if logo.exists():
+    from .projects import logo_bytes
+    if logo := logo_bytes(rep.logo):  # logo của chính website trong báo cáo (không có thì bỏ trống)
         from openpyxl.drawing.image import Image as XLImage
-        img = XLImage(str(logo))
+        img = XLImage(io.BytesIO(logo))
         img.height, img.width = 44, int(44 * img.width / img.height)
         ws.add_image(img, "F1")
     if month:
         s.title(f"Báo cáo SEO & GEO tháng {ws_:%m/%Y}")
-        s.text(f"{site_name} · so với tháng {ps:%m/%Y} · xuất lúc {datetime.now():%d/%m/%Y %H:%M} bởi {user}")
+        s.text(f"{site_name} · so với {period_text('month', (ps, pe))} · xuất lúc {datetime.now():%d/%m/%Y %H:%M} "
+               f"bởi {user}")
     else:
         s.title(f"Báo cáo SEO & GEO tuần {_vn(ws_)} – {_vn(we)}")
-        s.text(f"{site_name} · so với tuần {_vn(ps)} – {_vn(pe)} · xuất lúc {datetime.now():%d/%m/%Y %H:%M} bởi {user}")
+        s.text(f"{site_name} · so với {period_text('week', (ps, pe), ws_.year)} · xuất lúc "
+               f"{datetime.now():%d/%m/%Y %H:%M} bởi {user}")
     if rep.incomplete_days:
         s.text(f"Lưu ý: còn {rep.incomplete_days} ngày trong {unit} chưa có dữ liệu GSC; số có thể tăng thêm.",
                color=RED)

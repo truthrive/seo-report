@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS projects (
 
 # Cấu hình riêng từng dự án ngoài GSC / GA4 (lưu dạng JSON trong cột settings).
 DEFAULTS = {"brand_terms": [], "rank_budget_usd": 20.0, "location_code": 2704, "language_code": "vi",
-            "device": "mobile", "okr_sheet": "", "okr_tab": "OKRs 3 tháng", "weekly_tab": "Weekly Task Tracker"}
+            "device": "mobile", "okr_sheet": "", "okr_tab": "OKRs 3 tháng", "weekly_tab": "Weekly Task Tracker",
+            "rank_paused": False}
 
 
 def _now() -> str:
@@ -46,13 +47,16 @@ def _now() -> str:
 def ensure(con: sqlite3.Connection, base: Config, user: str = "config.toml") -> None:
     """Tạo bảng dự án; lần đầu tạo dự án số 1 từ config.toml, dùng luôn file dữ liệu hiện có."""
     con.executescript(SCHEMA)
+    # Logo cũ trỏ tới file ảnh trong tool (đã bỏ): để trống, lấy lại logo từ website ở màn Dự án
+    con.execute("UPDATE projects SET logo = '' WHERE logo LIKE '/assets/%'")
+    con.commit()
     if con.execute("SELECT 1 FROM projects LIMIT 1").fetchone():
         return
     settings = {"brand_terms": list(base.keywords.brand_terms), "rank_budget_usd": base.rank.monthly_budget_usd,
                 "location_code": base.rank.location_code, "language_code": base.rank.language_code,
                 "device": base.rank.device, "okr_sheet": base.okr.sheet, "okr_tab": base.okr.okr_tab,
                 "weekly_tab": base.okr.weekly_tab}
-    logo = "/assets/logo.svg" if "matkinhtamduc" in base.site_url else ""
+    logo = ""  # tool tự lấy logo của website ở màn Dự án
     con.execute("INSERT INTO projects (slug, name, site_url, ga4_property, db_file, settings, logo, created_at, "
                 "created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (slugify(domain(base.site_url)), domain(base.site_url), base.site_url, base.ga4_property,
@@ -111,9 +115,10 @@ def config_for(base: Config, project: dict) -> Config:
     s = project["settings"]
     return replace(
         base, site_url=project["site_url"], ga4_property=project["ga4_property"], db_path=db_path(base, project),
+        logo=project.get("logo") or "",
         keywords=replace(base.keywords, brand_terms=tuple(s["brand_terms"])),
         rank=replace(base.rank, monthly_budget_usd=float(s["rank_budget_usd"]), location_code=int(s["location_code"]),
-                     language_code=s["language_code"], device=s["device"]),
+                     language_code=s["language_code"], device=s["device"], paused=bool(s.get("rank_paused"))),
         okr=replace(base.okr, sheet=s["okr_sheet"], okr_tab=s["okr_tab"], weekly_tab=s["weekly_tab"]))
 
 
@@ -158,6 +163,7 @@ def _clean(fields: dict) -> dict:
         raise ValueError("Ngân sách check rank phải là số (USD/tháng)")
     if s["rank_budget_usd"] < 0:
         raise ValueError("Ngân sách check rank không được âm")
+    s["rank_paused"] = bool(fields.get("rank_paused", False))
     for k in ("location_code", "language_code", "device", "okr_tab", "weekly_tab"):
         if fields.get(k) not in (None, ""):
             s[k] = int(fields[k]) if k == "location_code" else str(fields[k]).strip()
@@ -171,6 +177,11 @@ def create(con: sqlite3.Connection, base: Config, fields: dict, user: str) -> di
     f = _clean(fields)
     if any(p["site_url"] == f["site_url"] for p in list_projects(con)):
         raise ValueError(f"Property {f['site_url']} đã có dự án")
+    old = next((p for p in list_projects(con, archived=True)
+                if p["archived_at"] and domain(p["site_url"]) == domain(f["site_url"])), None)
+    if old:  # tránh hai dự án cùng website (số liệu tách làm hai file)
+        raise ValueError(f"Website này đã có dự án lưu trữ \"{old['name']}\": bấm Khôi phục ở mục Đã lưu trữ thay "
+                         "vì tạo dự án mới")
     slug = base_slug = slugify(domain(f["site_url"]))
     n = 2
     while con.execute("SELECT 1 FROM projects WHERE slug = ?", (slug,)).fetchone():  # kể cả dự án đã lưu trữ
@@ -211,6 +222,142 @@ def restore(con: sqlite3.Connection, slug: str, user: str) -> None:
     con.execute("UPDATE projects SET archived_at = NULL, archived_by = NULL, updated_at = ?, updated_by = ? "
                 "WHERE slug = ?", (_now(), user, slug))
     con.commit()
+
+
+# ---- Logo của website (hiện ở menu, ô đổi dự án, màn Dự án) ----
+# Lưu thẳng trong bảng dự án dạng data URI (ảnh nhỏ): không cần thư mục ảnh công khai, không lộ danh sách khách.
+MAX_LOGO_BYTES = 300_000
+LOGO_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+              "svg": "image/svg+xml", "ico": "image/x-icon"}
+
+
+def icon_of(project: dict) -> str:
+    """Ảnh vuông đại diện của dự án ('' nếu chưa có: giao diện hiện chữ cái đầu)."""
+    return project.get("logo") or ""
+
+
+def logo_bytes(uri: str) -> bytes | None:
+    """Ảnh PNG / JPEG trong data URI (để chèn vào Excel / slide); None nếu không có hoặc là SVG / ICO."""
+    import base64
+    if not uri or not uri.startswith(("data:image/png;base64,", "data:image/jpeg;base64,")):
+        return None
+    try:
+        return base64.b64decode(uri.split(",", 1)[1])
+    except ValueError:
+        return None
+
+
+def data_uri(content: bytes, mime: str, size: int = 192) -> str:
+    """Ảnh → data URI. Ảnh bitmap được thu về tối đa 192×192 PNG (đủ nét cho bìa slide, trang vẫn nhẹ); SVG giữ
+    nguyên."""
+    import base64
+    import io
+    if not content or len(content) > MAX_LOGO_BYTES:
+        raise ValueError(f"Ảnh logo phải nhỏ hơn {MAX_LOGO_BYTES // 1000} KB")
+    if not mime.startswith("image/"):
+        raise ValueError("File logo phải là ảnh (PNG, JPG, SVG, WEBP, ICO)")
+    if mime != "image/svg+xml":
+        try:
+            from PIL import Image
+            img = Image.open(io.BytesIO(content))
+            if getattr(img, "n_frames", 1) > 1 and mime == "image/x-icon":  # .ico nhiều cỡ: lấy cỡ lớn nhất
+                img.size = max(img.ico.sizes())
+            img = img.convert("RGBA")
+            img.thumbnail((size, size))
+            out = io.BytesIO()
+            img.save(out, "PNG", optimize=True)
+            content, mime = out.getvalue(), "image/png"
+        except Exception:  # noqa: BLE001  (không đọc được thì giữ ảnh gốc)
+            pass
+    return f"data:{mime};base64,{base64.b64encode(content).decode()}"
+
+
+def fetch_logo(site_url: str, timeout: int = 10) -> str | None:
+    """Lấy biểu tượng của website: apple-touch-icon (thường 180px, nét) → icon lớn nhất khai trong trang → /favicon.ico.
+    Trả data URI, hoặc None khi không lấy được."""
+    import urllib.request
+    from html import unescape
+    from urllib.parse import urljoin
+
+    home = f"https://{domain(site_url)}/"
+    headers = {"User-Agent": "Mozilla/5.0 (SEO Report logo fetch)"}
+
+    def get(url: str) -> tuple[bytes, str]:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+            return r.read(MAX_LOGO_BYTES + 1), r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+
+    candidates = []
+    try:
+        html, _ = get(home)
+        page = html.decode("utf-8", "ignore")
+        for tag in re.findall(r"<link\b[^>]*>", page, re.I):
+            rel = (re.search(r'rel\s*=\s*["\']([^"\']+)', tag, re.I) or [None, ""])[1].lower()
+            href = re.search(r'href\s*=\s*["\']([^"\']+)', tag, re.I)
+            if not href or "icon" not in rel or "mask-icon" in rel:
+                continue
+            sizes = re.search(r'sizes\s*=\s*["\'](\d+)', tag, re.I)
+            score = (2 if "apple-touch-icon" in rel else 1, int(sizes.group(1)) if sizes else 0)
+            candidates.append((score, urljoin(home, unescape(href.group(1)))))
+    except Exception:  # noqa: BLE001  (trang chủ không mở được: thử /favicon.ico)
+        pass
+    urls = [u for _, u in sorted(candidates, reverse=True)] + [urljoin(home, "/favicon.ico")]
+    for url in urls:
+        try:
+            content, mime = get(url)
+        except Exception:  # noqa: BLE001
+            continue
+        if not mime.startswith("image/"):
+            ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
+            mime = LOGO_TYPES.get(ext, "")
+        if mime.startswith("image/") and 0 < len(content) <= MAX_LOGO_BYTES:
+            return data_uri(content, mime)
+    return None
+
+
+def set_paused(con: sqlite3.Connection, slug: str, paused: bool, user: str) -> None:
+    """Tạm ngưng / chạy lại check rank (và mọi chi phí DataForSEO) của một dự án."""
+    p = get(con, slug)
+    if not p or p["slug"] != slug:
+        raise ValueError("Không có dự án này")
+    s = {**p["settings"], "rank_paused": bool(paused)}
+    con.execute("UPDATE projects SET settings = ?, updated_at = ?, updated_by = ? WHERE slug = ?",
+                (json.dumps(s, ensure_ascii=False), _now(), user, slug))
+    con.commit()
+
+
+def set_budget(con: sqlite3.Connection, slug: str, usd: float, user: str) -> None:
+    """Đổi ngân sách check rank (USD/tháng) của một dự án (màn Ngân sách check rank)."""
+    if usd is None or usd < 0:
+        raise ValueError("Ngân sách phải là số không âm (USD/tháng)")
+    p = get(con, slug)
+    if not p or p["slug"] != slug:
+        raise ValueError("Không có dự án này")
+    s = {**p["settings"], "rank_budget_usd": float(usd)}
+    con.execute("UPDATE projects SET settings = ?, updated_at = ?, updated_by = ? WHERE slug = ?",
+                (json.dumps(s, ensure_ascii=False), _now(), user, slug))
+    con.commit()
+
+
+def set_logo(con: sqlite3.Connection, slug: str, logo: str, user: str) -> None:
+    con.execute("UPDATE projects SET logo = ?, updated_at = ?, updated_by = ? WHERE slug = ?", (logo, _now(), user, slug))
+    con.commit()
+
+
+def setup_steps(base: Config, project: dict, st: dict, people: int) -> list[tuple[str, bool]]:
+    """Các bước cài đặt một dự án (để nhắc việc còn thiếu ở màn Dự án): (tên bước, đã xong)."""
+    from contextlib import closing
+
+    from . import db
+    from . import kpi as KP
+    kpi_sheet = False
+    path = db_path(base, project)
+    if path.exists():
+        with closing(db.connect(path)) as con:
+            kpi_sheet = bool(KP.sheet_id(con))
+    s = project["settings"]
+    return [("Dữ liệu Search Console", bool(st["days"])), ("Gắn GA4", bool(project["ga4_property"])),
+            ("Ngân sách check rank", bool(s.get("rank_budget_usd")) or bool(s.get("rank_paused"))),
+            ("Sheet KPI cam kết", kpi_sheet), ("Cấp tài khoản khách / team", people > 0)]
 
 
 def status(base: Config, project: dict) -> dict:

@@ -41,10 +41,15 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
                           f"Google mobile, Việt Nam, qua DataForSEO. Ngân sách {cfg.rank.monthly_budget_usd:.0f} "
                           "USD/tháng.")
     with right:
+        if cfg.rank.paused:
+            T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
         if ed:
             ui.button("Thêm keyword", icon="add", on_click=lambda: add_dialog.open()).props("outline no-caps")
             check_btn = ui.button("Check ngay", icon="play_arrow", on_click=lambda: check_now()).props(
                 "unelevated no-caps").tooltip("Check các keyword đã tích chọn, hoặc toàn bộ nếu không chọn gì")
+            if cfg.rank.paused:  # tạm ngưng: không gửi yêu cầu DataForSEO nào; quản trị bật lại ở màn Ngân sách
+                check_btn.disable()
+                check_btn.tooltip("Website đang tạm ngưng check rank. Quản trị bật lại ở màn Ngân sách check rank")
         from .web_export import export_menu
         export_menu(ui, cfg, connect, f"check-rank_{date.today():%Y-%m-%d}", lambda: export(), user=user)
 

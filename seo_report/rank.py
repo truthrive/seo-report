@@ -216,6 +216,34 @@ def spent_this_month(con: sqlite3.Connection, today: date | None = None) -> floa
                        (month,)).fetchone()[0] + volume.spent_this_month(con, today)
 
 
+def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]:
+    """Chi phí DataForSEO theo tháng ("YYYY-MM"): {"rank", "volume", "checks" (số lượt check rank), "total"}."""
+    ensure_tables(con)
+    from . import volume
+    volume.ensure_tables(con)
+    out = {m: {"rank": 0.0, "volume": 0.0, "checks": 0, "total": 0.0} for m in months}
+    for m, cost, n in con.execute("SELECT substr(check_date, 1, 7), SUM(cost), COUNT(*) FROM rank_tasks "
+                                  "GROUP BY 1"):
+        if m in out:
+            out[m].update(rank=cost or 0.0, checks=n)
+    for m, cost in con.execute("SELECT substr(run_at, 1, 7), SUM(cost) FROM volume_runs GROUP BY 1"):
+        if m in out:
+            out[m]["volume"] = cost or 0.0
+    for v in out.values():
+        v["total"] = v["rank"] + v["volume"]
+    return out
+
+
+def last_months(today: date, n: int = 6) -> list[str]:
+    """n tháng gần nhất, cũ trước mới sau, dạng "YYYY-MM"."""
+    y, m = today.year, today.month
+    out = []
+    for _ in range(n):
+        out.append(f"{y}-{m:02d}")
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+    return out[::-1]
+
+
 def estimate(con: sqlite3.Connection, s: RankSettings, schedule: dict, depths: list[int]) -> float:
     return sum(_pages(d) for d in depths) * s.price_per_page * checks_per_month(schedule)
 
@@ -466,6 +494,9 @@ def wait_and_collect(con, site: str, client, wait_minutes: int, log=print, sleep
 def run(con, site: str, s: RankSettings, client, end: date, today: date | None = None, wait_minutes: int = 15,
         only_ids: list[int] | None = None, log=print, sleep=time.sleep) -> None:
     """Lấy kết quả còn tồn, gửi keyword đến hạn theo lịch (hoặc `only_ids` khi bấm Check ngay), rồi chờ kết quả."""
+    if s.paused:
+        log("Tạm ngưng check rank cho website này: không gửi yêu cầu nào.")
+        return
     ensure_tables(con)
     today = today or date.today()
     collect(con, site, client, log)

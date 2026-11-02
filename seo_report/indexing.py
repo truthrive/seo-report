@@ -344,6 +344,28 @@ def canonical_mismatch(check: dict | None, url: str) -> bool:
     return bool(check and check.get("google_canonical") and U.normalize(check["google_canonical"]) != url)
 
 
+# Lý do chưa index do website chủ động (noindex, chuyển hướng, trang thay thế có chính tắc): không phải lỗi cần sửa
+INTENTIONAL = ("noindex", "chuyển hướng", "redirect", "chính tắc thích hợp", "proper canonical")
+
+
+def intentional(coverage: str | None) -> bool:
+    c = (coverage or "").lower()
+    return any(k in c for k in INTENTIONAL)
+
+
+def not_indexed(con: sqlite3.Connection, site: str) -> list[dict]:
+    """URL có lần kiểm tra gần nhất chưa được index (verdict khác PASS), kèm lý do và lần crawl."""
+    ensure_tables(con)
+    rows = con.execute(
+        """SELECT u.url, c.coverage, c.checked_at, c.last_crawl FROM index_checks c JOIN urls u ON u.id = c.url_id
+           JOIN (SELECT url_id, MAX(checked_at) m FROM index_checks GROUP BY url_id) l
+             ON l.url_id = c.url_id AND l.m = c.checked_at
+           WHERE u.site = ? AND (c.verdict IS NULL OR c.verdict != 'PASS') ORDER BY c.coverage, u.url""",
+        (site,)).fetchall()
+    return [{"url": r[0], "coverage": r[1] or "Không rõ", "checked_at": r[2], "last_crawl": r[3],
+             "intentional": intentional(r[1])} for r in rows]
+
+
 def summary(con: sqlite3.Connection, site: str) -> list[tuple[str, int]]:
     ensure_tables(con)
     return con.execute(

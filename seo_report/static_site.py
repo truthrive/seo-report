@@ -321,7 +321,7 @@ def decrypt(blob: dict, password: str) -> dict:
 PAGE = """<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow"><title>SEO Report · __HOST__</title>
-<link rel="icon" href="favicon.png"><link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="icon" href="app-icon.svg"><link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="__ECHARTS__"></script>
 <style>
@@ -371,13 +371,13 @@ box-shadow:0 6px 18px rgba(31,34,30,.18);color:var(--ink)}
 #err{color:var(--red);font-size:13px;min-height:20px;margin-top:8px}#app{display:none}
 #out{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:500 12px Inter;color:var(--muted);cursor:pointer}
 </style></head><body>
-<div id="lock"><form autocomplete="off"><img src="logo.svg" alt=""><div style="font:600 17px 'Be Vietnam Pro'">Báo cáo SEO &amp; GEO</div>
+<div id="lock"><form autocomplete="off"><img src="__LOGO__" alt=""><div style="font:600 17px 'Be Vietnam Pro'">Báo cáo SEO &amp; GEO</div>
 <div class="muted" style="font-size:13px">Bản xem chỉ đọc · nhập mật khẩu để mở</div>
 <div class="pwbox"><input id="pw" type="password" placeholder="Mật khẩu" autofocus>
 <button id="peek" type="button" aria-label="Xem ký tự đã gõ" title="Xem ký tự đã gõ">👁</button></div>
 <button id="go" type="submit">Mở báo cáo</button><div id="err"></div>
 <button id="tease" type="button">🔑 Hiện mật khẩu</button><div id="joke" aria-live="polite"></div></form></div>
-<div id="app"><header><div class="hd"><img src="logo.svg" alt="__HOST__"><nav id="nav"></nav><div class="right"><div class="stamp" id="stamp"></div>
+<div id="app"><header><div class="hd"><img src="__LOGO__" alt="__HOST__"><nav id="nav"></nav><div class="right"><div class="stamp" id="stamp"></div>
 <button id="out" type="button" title="Quên đăng nhập trên máy này">Thoát</button></div></div></header><main id="main"></main></div>
 <script id="blob" type="application/json">__BLOB__</script>
 <script>
@@ -505,15 +505,18 @@ def export(cfg, out_dir: Path, password: str, today: date | None = None) -> Path
         salt_file.write_text(base64.b64encode(os.urandom(16)).decode(), encoding="utf-8")
     blob = encrypt(payload, password, base64.b64decode(salt_file.read_text(encoding="utf-8").strip()))
     host = domain(cfg.site_url)
+    from .projects import logo_bytes
+    logo = logo_bytes(getattr(cfg, "logo", ""))  # logo của website; không có thì dùng biểu tượng của tool
     page = (PAGE.replace("__HOST__", e(host)).replace("__ECHARTS__", ECHARTS)
+            .replace("__LOGO__", "logo.png" if logo else "app-icon.svg")
             .replace("__BLOB__", json.dumps(blob).replace("</", "<\\/")))
     out_dir = Path(out_dir)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
     (out_dir / "index.html").write_text(page, encoding="utf-8")
-    assets = Path(__file__).parent / "assets"
-    for name in ("logo.svg", "favicon.png"):
-        shutil.copy(assets / name, out_dir / name)
+    shutil.copy(Path(__file__).parent / "assets" / "app-icon.svg", out_dir / "app-icon.svg")
+    if logo:
+        (out_dir / "logo.png").write_bytes(logo)
     (out_dir / "vercel.json").write_text(json.dumps(VERCEL_JSON, indent=2), encoding="utf-8")
     return out_dir / "index.html"

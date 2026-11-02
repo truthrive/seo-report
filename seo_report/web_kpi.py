@@ -38,15 +38,19 @@ def load_progress(cfg, today: date | None = None) -> dict | None:
 def _status(ch: dict, running: bool) -> tuple[str, str, str]:
     """(chữ, tone, icon) cho một chỉ số."""
     if ch["target"] is None:
-        return "Không cam kết", "grey", "remove"
+        return "Tháng này không cam kết", "grey", "remove"
     if ch["ok"] is None:
+        if running and "need" not in ch and ch.get("actual") is not None:  # phiên: chưa đủ 3 ngày để dự báo
+            return "Chưa đủ ngày để dự báo", "grey", "hourglass_empty"
         return "Chưa có số", "grey", "hourglass_empty"
     if ch["ok"]:
         return ("Đang đạt" if running else "Đạt"), "green", "check_circle"
     gap = ch["gap"]
     if "need" in ch:
         return f"Thiếu {gap} từ khóa", "red" if not running else "amber", "error_outline"
-    return f"Thiếu {F.n(gap)} phiên", "red" if not running else "amber", "error_outline"
+    if running:
+        return f"Dự báo thiếu {F.n(gap)} phiên", "amber", "error_outline"
+    return f"Thiếu {F.n(gap)} phiên", "red", "error_outline"
 
 
 def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
@@ -85,13 +89,24 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
                         hint = (f"Cam kết {F.n(ch['target'])}" if ch["target"] is not None else "Tháng này không cam kết")
                         if running and ch.get("forecast") is not None:
                             hint += f" · dự báo cuối tháng {F.n(ch['forecast'])}"
+                        elif running and ch.get("expected") is not None and ch["actual"] is not None:
+                            hint += (f" · {ch['days_done']} ngày đầu cần khoảng {F.n(ch['expected'])} "
+                                     "(dự báo từ ngày thứ 3)")
                 else:
-                    value = f"{_pct(ch['actual'])}"
+                    unchecked = m["rank"]["checked"] == 0
+                    value = "chưa check" if unchecked else f"{_pct(ch['actual'])}"
                     hint = (f"{ch['count']}/{m['rank']['total']} từ khóa · cam kết {_pct(ch['target'])}"
                             if ch["target"] is not None else f"{ch['count']}/{m['rank']['total']} từ khóa")
+                    if unchecked:
+                        hint = "Chưa có lần check nào trong tháng này" + (
+                            f" · cam kết {_pct(ch['target'])}" if ch["target"] is not None else "")
+                        if ch["target"] is not None:
+                            text, tone, icon = "Chờ lần check đầu", "grey", "hourglass_empty"
+                muted_value = ch["target"] is None or value in ("chưa check", "chưa có")
                 with ui.element("div").classes("sr-card sr-kpi q-pa-md"):
                     ui.label(LABELS[key]).classes("text-xs muted")
-                    ui.label(value).classes("sr-kpi-value num")
+                    ui.label(value).classes("sr-kpi-value num" + (" muted" if muted_value else "")).style(
+                        "font-size: 22px" if value == "chưa check" else "")
                     if ch["target"] and ch["actual"] is not None:  # thanh tiến độ so với cam kết
                         done = min(ch["actual"] / ch["target"], 1)
                         fc = ch.get("forecast")
@@ -110,8 +125,10 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
         if m["rank"].get("target_set"):
             notes.append(f"{m['rank']['target_ok']}/{m['rank']['target_set']} từ khóa đạt top target riêng")
         if m["rank"]["checked"] < m["rank"]["total"]:
-            notes.append(f"{m['rank']['total'] - m['rank']['checked']} từ khóa chưa có lần check nào trong tháng "
-                         "này: tính là chưa đạt")
+            left = m["rank"]["total"] - m["rank"]["checked"]
+            notes.append(f"{left} từ khóa chưa có lần check nào trong tháng này" + (
+                ": lịch check tự động sẽ cập nhật, hoặc bấm Check ngay ở Từ khóa & rank" if running
+                else ": tính là chưa đạt"))
         if notes:
             ui.label(" · ".join(notes)).classes("text-xs muted")
 
@@ -135,6 +152,9 @@ def full_table(ui, p: dict) -> None:
                 val = F.n(ch["actual"]) if ch["actual"] is not None else "chưa có"
                 if m["status"] == "running" and ch.get("forecast") is not None:
                     val += f'<div class="d">dự báo {F.n(ch["forecast"])}</div>'
+            elif not (m.get("rank") or {}).get("checked") and m["status"] == "running":
+                act.append('<span class="mut">chưa check</span>')
+                continue
             else:
                 val = f"{_pct(ch['actual'])}<div class=\"d\">{ch['count']} từ</div>"
             cls = "" if ch["ok"] is None else ("ok" if ch["ok"] else ("warn" if m["status"] == "running" else "bad"))
@@ -167,7 +187,7 @@ def build_kpi_page(ui, cfg, connect, user) -> None:
         sid = KP.sheet_id(c)
     right = T.page_header(ui, "flag", "Cam kết KPI",
                           "Thứ hạng bộ từ khóa cam kết và phiên Organic theo từng tháng dự án, nhập trên Google Sheet",
-                          eyebrow="Quản trị")
+                          eyebrow="KPI")
     with right:
         if sid and ed:  # người chỉ xem không mở được sheet nội bộ
             ui.button("Mở sheet", icon="open_in_new", on_click=lambda: ui.navigate.to(
@@ -261,7 +281,8 @@ def keyword_table(ui, m: dict, site: str) -> None:
         for x in items:
             pos = ("chưa check" if x["date"] is None else
                    (str(x["rank"]) if x["rank"] is not None else f">{x['depth']}"))
-            st = ("Không đặt" if x["ok"] is None else "Đạt" if x["ok"] else "Chưa đạt")
+            st = ("Chưa check" if x["date"] is None and m.get("status") != "closed" else
+                  "Không đặt" if x["ok"] is None else "Đạt" if x["ok"] else "Chưa đạt")
             rows.append({"keyword": x["keyword"], "target": f"Top {x['target']}" if x["target"] else "–",
                          "pos": pos, "status": st, "date": _vn(x["date"]),
                          "url": (x["url"] or "").replace(site.rstrip("/"), "") or "–"})

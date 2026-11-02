@@ -43,8 +43,9 @@ def ga4_checks(summary: dict, sources: dict, landing: dict | None, countries: di
         out.append(_check("GA4_TOTAL_DISCREPANCY", OK, "Tổng phiên AI khớp giữa KPI và các bảng", detail))
     else:
         worst = max(abs(d) for d in diffs.values())
-        out.append(_check("GA4_TOTAL_DISCREPANCY", WARN if worst / max(total, 1) > 0.01 else INFO,
-                          "Tổng các bảng lệch so với KPI",
+        # Lệch vài phiên là bình thường (GA4 làm tròn / ẩn dòng nhỏ): chỉ cảnh báo khi lệch quá 5 phiên và quá 5%
+        out.append(_check("GA4_TOTAL_DISCREPANCY", WARN if worst > 5 and worst / max(total, 1) > 0.05 else INFO,
+                          "Tổng các bảng lệch nhẹ so với KPI",
                           detail + ". Bảng chi tiết có thể thiếu dòng do giới hạn số dòng hoặc thresholding của GA4; "
                                    "KPI là số chuẩn."))
     for name, env in (("trang đích", landing), ("quốc gia", countries)):
@@ -109,7 +110,7 @@ def candidate_sources(ai, start: date, end: date) -> list[dict]:
         if label == C.AI_ASSISTANTS:
             continue
         if ai.allow.subsource(r["sessionSource"]) and C.is_paid(r["sessionMedium"]):
-            reason = "Medium trả phí: tính là quảng cáo (quyết định R0)"
+            reason = "Medium trả phí: tính là quảng cáo, không tính AI"
         else:
             reason = "Chưa có trong danh sách nguồn AI"
         out.append({"source": r["sessionSource"], "medium": r["sessionMedium"],
@@ -126,8 +127,8 @@ def gsc_status(con: sqlite3.Connection, site: str, today: date) -> list[dict]:
         return [_check("GSC_NO_DATA", ERROR, "Chưa có dữ liệu GSC", "Chạy đồng bộ: python -m seo_report sync")]
     first, last, fetched = row
     lag = (today - date.fromisoformat(last)).days
-    out = [_check("GSC_FRESHNESS", OK if lag <= 4 else WARN, f"GSC có dữ liệu tới {last} (trễ {lag} ngày)",
-                  f"Từ {first}. GSC thường trễ 2–3 ngày. Lần lấy gần nhất {fetched[:16].replace('T', ' ')} UTC.")]
+    out = [_check("GSC_FRESHNESS", OK if lag <= 4 else WARN, f"Search Console có dữ liệu tới {_vn(last)} (trễ {lag} ngày)",
+                  f"Có từ {_vn(first)}. Search Console thường trễ 2–3 ngày. Lần lấy gần nhất {_local(fetched)}.")]
     start = max(today - timedelta(days=30), date.fromisoformat(first))  # trước ngày đầu tiên có dữ liệu thì không tính là thiếu
     have = {r[0] for r in con.execute("SELECT date FROM gsc_fetch_log WHERE site = ? AND date >= ?",
                                       (site, start.isoformat()))}
@@ -151,8 +152,22 @@ def generative_ai_status(con: sqlite3.Connection, site: str, today: date) -> dic
     last = max(i["period_end"] for i in imps)
     lag = (today - date.fromisoformat(last)).days
     return _check("GENERATIVE_AI_FRESHNESS", OK if lag <= 10 else WARN,
-                  f"File GSC Generative AI có dữ liệu tới {last} (cách đây {lag} ngày)",
+                  f"File AI Overviews / AI Mode (GSC) có dữ liệu tới {_vn(last)} (cách đây {lag} ngày)",
                   f"{len(imps)} lần nhập. " + ("" if lag <= 10 else "Nên xuất và nhập file mới mỗi tuần."))
+
+
+def _local(iso_utc: str) -> str:
+    """Giờ UTC lưu trong dữ liệu → giờ máy (Việt Nam), dạng HH:MM dd/mm/yyyy."""
+    from datetime import timezone
+    try:
+        t = datetime.fromisoformat(str(iso_utc).replace("Z", "+00:00"))
+    except ValueError:
+        return str(iso_utc)
+    return f"{(t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone():%H:%M %d/%m/%Y}"
+
+
+def _vn(iso) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso and len(str(iso)) >= 10 else str(iso)
 
 
 def daily_job_status(log_path: Path, today: date) -> dict:
@@ -162,7 +177,8 @@ def daily_job_status(log_path: Path, today: date) -> dict:
     age = (today - at.date()).days
     return _check("DAILY_JOB", OK if age <= 1 else WARN,
                   f"Lịch chạy hằng ngày ghi nhật ký lần cuối {at:%d/%m/%Y %H:%M}",
-                  "Lịch 6:00 sáng: đồng bộ GSC → check rank → check index → phân loại URL." +
+                  "Lịch 6:00 sáng: lấy dữ liệu GSC, check rank, volume từ khóa, OKR / KPI, check index, phân loại "
+                  "URL, sao lưu." +
                   ("" if age <= 1 else f" Đã {age} ngày không chạy: kiểm tra Task Scheduler."))
 
 
@@ -182,13 +198,14 @@ def connections(cfg) -> tuple[list[dict], dict]:
     except (Exception, SystemExit) as e:  # noqa: BLE001
         return [_check("API_PERMISSION_DENIED", ERROR, "Token chưa có đủ quyền GSC + GA4", str(e))], info
     out.append(_check("SCOPES", OK, "Đã cấp quyền đọc GSC và GA4",
-                      "Chỉ đọc (webmasters.readonly, analytics.readonly). Không có quyền gửi index."))
+                      "Chỉ đọc dữ liệu Search Console và GA4. Tool không gửi được yêu cầu index."))
     try:
         admin = auth.build_ga4_admin(creds)
         p = ga4.property_info(admin, cfg.ga4_property)
         info.update(p)
-        out.append(_check("GA4_PROPERTY", OK, f"GA4 {cfg.ga4_property}: {p['name']}",
-                          f"Múi giờ {p['timezone']}, tiền tệ {p['currency']}. GSC tính ngày theo giờ Pacific."))
+        out.append(_check("GA4_PROPERTY", OK, f"GA4: {p['name']}",
+                          f"Mã {cfg.ga4_property.split('/')[-1]} · múi giờ {p['timezone']}, tiền tệ {p['currency']}. "
+                          "Search Console tính ngày theo giờ Mỹ (Pacific) nên có thể lệch GA4 vài giờ."))
         info["key_events"] = ga4.key_events(admin, cfg.ga4_property)
     except Exception as e:  # noqa: BLE001
         out.append(_check("PROPERTY_NOT_FOUND", ERROR, "Không đọc được property GA4", str(e)[:200]))
@@ -200,7 +217,9 @@ def connections(cfg) -> tuple[list[dict], dict]:
                           ", ".join(gone)))
     except Exception as e:  # noqa: BLE001
         out.append(_check("METRIC_INCOMPATIBLE", WARN, "Không đọc được metadata GA4", str(e)[:200]))
-    out.append(_check("GSC_PROPERTY", OK, f"GSC {cfg.site_url}", "Property dạng URL-prefix, dùng nguyên chuỗi."))
+    out.append(_check("GSC_PROPERTY", OK, f"Search Console: {cfg.site_url.removeprefix('sc-domain:')}",
+                      "Loại property: tên miền (gồm mọi subdomain)" if cfg.site_url.startswith("sc-domain:")
+                      else "Loại property: tiền tố URL (chỉ các URL bắt đầu bằng địa chỉ này)"))
     return out, info
 
 

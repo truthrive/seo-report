@@ -7,9 +7,9 @@ from seo_report import rank as R
 from seo_report import urls as U
 from seo_report.config import RankSettings
 
-SITE = "https://matkinhtamduc.com/"
-A = "https://matkinhtamduc.com/gong-kinh/"
-B = "https://matkinhtamduc.com/gong-kinh-nam/"
+SITE = "https://vidushop.com/"
+A = "https://vidushop.com/gong-kinh/"
+B = "https://vidushop.com/gong-kinh-nam/"
 END = date(2026, 10, 28)
 TUE = date(2026, 10, 27)  # thứ Ba
 
@@ -84,8 +84,8 @@ class RankTest(unittest.TestCase):
     def test_run_follows_schedule_and_parses_ranks(self):
         self.add(f"gọng kính | {A}\ngọng kính nam | {A}")
         fake = FakeDataForSEO({
-            "gọng kính": [("other.vn", "https://other.vn/"), ("matkinhtamduc.com", A + "#top")],
-            "gọng kính nam": [("www.matkinhtamduc.com", B), ("matkinhtamduc.com", A)],
+            "gọng kính": [("other.vn", "https://other.vn/"), ("vidushop.com", A + "#top")],
+            "gọng kính nam": [("www.vidushop.com", B), ("vidushop.com", A)],
         })
         run(self.con, self.s, fake, date(2026, 10, 26))  # thứ Hai: lịch mặc định thứ Ba, chưa check lần nào → check
         self.assertEqual({(t["keyword"], t["depth"], t["device"], t["location_code"]) for t in fake.posted},
@@ -131,7 +131,7 @@ class RankTest(unittest.TestCase):
         con = sqlite3.connect(":memory:")
         con.executescript("""
             CREATE TABLE urls (id INTEGER PRIMARY KEY, site TEXT, url TEXT);
-            INSERT INTO urls VALUES (1, 's', 'https://matkinhtamduc.com/');
+            INSERT INTO urls VALUES (1, 's', 'https://vidushop.com/');
             CREATE TABLE rank_stars (url_id, query, frequency, starred_at, starred_by);
             INSERT INTO rank_stars VALUES (1, 'mắt kính', 'daily', 'x', 'test');
             CREATE TABLE rank_checks (url_id, query, check_date);

@@ -14,7 +14,7 @@ class KeywordSettings:
     min_impressions: int = 50
     max_position: float = 30.0
     max_secondary: int = 5
-    brand_terms: tuple[str, ...] = ("tâm đức", "matkinhtamduc")
+    brand_terms: tuple[str, ...] = ()
 
 
 @dataclass
@@ -25,6 +25,7 @@ class RankSettings:
     location_code: int = 2704  # Việt Nam
     language_code: str = "vi"
     device: str = "mobile"
+    paused: bool = False  # tạm ngưng: không gửi yêu cầu DataForSEO nào (check rank, volume) cho website này
 
 
 @dataclass
@@ -41,6 +42,9 @@ class Config:
     ga4_property: str = ""  # dạng properties/123456789; để trống khi chưa kết nối GA4
     okr: OkrSettings = field(default_factory=OkrSettings)  # sheet OKR / Weekly Task Tracker (báo cáo công việc)
     access: AccessSettings = field(default_factory=AccessSettings)  # ai được vào / sửa khi mở qua Cloudflare
+    logo: str = ""  # logo của website (data URI) cho báo cáo Excel / slide / bản tĩnh; đặt theo dự án
+    backup_dir: Path = Path("backups")  # nơi lưu bản sao lưu hằng ngày ([backup] dir)
+    backup_keep: int = 7  # số bản sao lưu giữ lại ([backup] keep)
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -66,6 +70,8 @@ def load_config(path: str | Path = "config.toml") -> Config:
         ga4_property=_ga4_property(raw.get("ga4_property", "")),
         okr=OkrSettings(**raw.get("okr", {})),
         access=AccessSettings(**raw.get("access", {})),
+        backup_dir=base / raw.get("backup", {}).get("dir", "backups"),
+        backup_keep=max(1, int(raw.get("backup", {}).get("keep", 7))),
     )
 
 

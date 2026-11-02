@@ -131,3 +131,17 @@ class ProgressTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionPacingTest(unittest.TestCase):
+    def test_running_month_without_forecast_is_not_judged(self):
+        row = {"status": "running", "sessions": 39000, "actual_sessions": 382, "forecast": None,
+               "days_done": 1, "days_total": 30, "rank": {"total": 0}}
+        ch = KP._judge(row)["sessions"]
+        self.assertIsNone(ch["ok"])
+        self.assertEqual(ch["expected"], 1300)
+
+    def test_running_month_judged_on_forecast(self):
+        row = {"status": "running", "sessions": 39000, "actual_sessions": 4000, "forecast": 40000,
+               "days_done": 3, "days_total": 30, "rank": {"total": 0}}
+        self.assertTrue(KP._judge(row)["sessions"]["ok"])

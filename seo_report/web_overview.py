@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from . import ai_format as F
 from .projects import domain
 from . import ui_theme as T
-from .report import BUCKETS, build, build_month, change, note_key, rank_summary, save_note
+from .report import BUCKETS, build, build_month, change, note_key, period_text, rank_summary, save_note
 
 RANK_TONE = [(3, "green"), (10, "lime"), (30, "amber")]
 
@@ -37,8 +37,9 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
     site = cfg.site_url
     report = mode == "report"
     with connect() as c:
-        rep = (build_month(c, cfg, ctx["group"], ctx["month"], with_ai=False) if kind == "month"
-               else build(c, cfg, ctx["group"], ctx["week"], with_ai=False))
+        compare = ctx.get("compare", "prev") if mode == "report" else "prev"
+        rep = (build_month(c, cfg, ctx["group"], ctx["month"], with_ai=False, compare=compare) if kind == "month"
+               else build(c, cfg, ctx["group"], ctx["week"], with_ai=False, compare=compare))
     month = kind == "month"
     unit = "tháng" if month else "tuần"
     state = {"rep": rep, "ai_trend": None, "ai_loading": True}
@@ -49,7 +50,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
         ui, "summarize" if report else "space_dashboard",
         f"Báo cáo tháng {ws:%m/%Y}" if month else
         f"{'Báo cáo tuần' if report else 'Tổng quan'} {ws:%d/%m} – {we:%d/%m/%Y}",
-        (f"So với tháng {ps:%m/%Y}" if month else f"So với tuần {ps:%d/%m} – {pe:%d/%m}")
+        "So với " + period_text(kind, (ps, pe), ws.year)
         + f" · {domain(site)}")
     with right:
         kpi_slot = ui.row().classes("items-center")  # nhãn KPI gọn khi dự án chưa bắt đầu
@@ -66,7 +67,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
 
                         from .report import kpi_for_report, organic_block
                         with closing(db.connect(cfg.db_path)) as c:
-                            return (ai_block(cfg, c, (ws, we)), organic_block(cfg, c, (ws, we), (ps, pe),
+                            return (ai_block(cfg, c, (ws, we), (ps, pe)), organic_block(cfg, c, (ws, we), (ps, pe),
                                                                               rep.trend_periods),
                                     kpi_for_report(cfg, c, rep))
                     rep.ai, rep.organic, rep.kpi = await run.io_bound(work)
@@ -102,8 +103,8 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
         with T.section(ui, "Nhận xét & kết luận", "edit_note", "Hiện ở đầu báo cáo, file Excel và slide"):
             with ui.row().classes("w-full gap-3 no-wrap"):
                 note = ui.textarea("Nhận xét tháng" if month else None, value=rep.note,
-                                   placeholder="Ví dụ: Traffic giảm 1% do Trang chủ giảm 38 click; danh mục tròng "
-                                               "kính tăng…").props("outlined autogrow").classes("col")
+                                   placeholder="Ví dụ: Traffic giảm 1% do Trang chủ giảm 38 click; nhóm trang "
+                                               "danh mục tăng…").props("outlined autogrow").classes("col")
                 plan = ui.textarea("Kế hoạch tháng sau", value=rep.plan,
                                    placeholder="Ví dụ: tối ưu 10 bài blog có nhiều impression AI Overviews…").props(
                     "outlined autogrow").classes("col") if month else None
@@ -125,7 +126,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
     # Thứ tự khối giống nhau ở màn Báo cáo, file Excel và slide: KPI cam kết → SEO → GEO → Thứ hạng → Công việc → Điểm
     # cần chú ý → (tháng) Phụ lục. Tổng quan dùng cùng các khối, thay Công việc / Điểm cần chú ý bằng "Cần xử lý".
     wl = [t["week"] for t in rep.trend]
-    prev_label = f"tháng {ps:%m/%Y}" if month else f"tuần {ps:%d/%m} – {pe:%d/%m}"
+    prev_label = period_text(kind, (ps, pe), ws.year)
 
     @ui.refreshable
     def verdict():
@@ -299,7 +300,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
 
             from .report import organic_block
             with closing(db.connect(cfg.db_path)) as c:
-                a = ai_block(cfg, c, (ws, we))
+                a = ai_block(cfg, c, (ws, we), (ps, pe))
                 o = organic_block(cfg, c, (ws, we), (ps, pe), rep.trend_periods)
                 pts = None
                 if a and not a.get("error"):

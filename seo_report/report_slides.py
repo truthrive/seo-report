@@ -16,14 +16,13 @@ from pptx.util import Emu, Inches, Pt
 
 from . import ai_format as F
 from .projects import domain
-from .report import WeeklyReport, change, rank_change, rank_summary, summary
+from .report import WeeklyReport, change, period_text, rank_change, rank_summary, summary
 
 GREEN, LIME, INK, MUTED, RED, CREAM = "1E7C31", "B8D332", "2A2A24", "6B6A5E", "C2410C", "F4F3EE"
 AMBER, BLUE = "8F5F14", "2563EB"
 FONT = "Arial"
 W, H = Inches(13.333), Inches(7.5)
-ASSETS = __import__("pathlib").Path(__file__).parent / "assets"
-LOGO_WIDE, LOGO_MARK = ASSETS / "logo-wide.png", ASSETS / "logo-mark.png"
+
 
 
 def _rgb(hex_: str) -> RGBColor:
@@ -51,8 +50,8 @@ def _slide(prs, title: str, subtitle: str = ""):
     bar.fill.fore_color.rgb = _rgb(GREEN)
     bar.line.fill.background()
     _text(s, Inches(0.6), Inches(0.35), Inches(11), Inches(0.7), title, 26, True)
-    if LOGO_MARK.exists():
-        s.shapes.add_picture(str(LOGO_MARK), W - Inches(1.15), Inches(0.35), height=Inches(0.62))
+    if logo := getattr(prs, "sr_logo", None):  # logo của website (đặt trong build_report_pptx)
+        s.shapes.add_picture(io.BytesIO(logo), W - Inches(1.15), Inches(0.35), height=Inches(0.62))
     if subtitle:
         _text(s, Inches(0.6), Inches(0.95), Inches(12), Inches(0.4), subtitle, 12, color=MUTED)
     return s
@@ -130,19 +129,21 @@ def _short(url, site):
 
 
 def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
+    from .projects import logo_bytes
     prs = Presentation()
     prs.slide_width, prs.slide_height = W, H
+    prs.sr_logo = logo_bytes(rep.logo)  # logo của chính website; không có thì bỏ trống
     month = rep.kind == "month"
     unit = "tháng" if month else "tuần"
     (ws, we), (ps, pe) = rep.week, rep.prev_week
     site = domain(rep.site)
     period = f"tháng {ws:%m/%Y}" if month else f"tuần {ws:%d/%m} – {we:%d/%m/%Y}"
-    prev_text = f"tháng {ps:%m/%Y}" if month else f"tuần {ps:%d/%m} – {pe:%d/%m}"
+    prev_text = period_text(rep.kind, (ps, pe), ws.year)
 
     # ---- Bìa ----
     s = prs.slides.add_slide(prs.slide_layouts[6])
-    if LOGO_WIDE.exists():
-        s.shapes.add_picture(str(LOGO_WIDE), Inches(0.9), Inches(0.8), height=Inches(1.25))
+    if prs.sr_logo:
+        s.shapes.add_picture(io.BytesIO(prs.sr_logo), Inches(0.9), Inches(0.8), height=Inches(1.25))
     band = s.shapes.add_shape(1, 0, Inches(5.9), W, Inches(1.6))
     band.fill.solid()
     band.fill.fore_color.rgb = _rgb(GREEN)

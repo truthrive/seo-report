@@ -102,6 +102,9 @@ def save(con: sqlite3.Connection, todo: list[dict], result: dict, today: date) -
 def refresh(con: sqlite3.Connection, site: str, cfg, end: date, today: date | None = None,
             only_ids: list[int] | None = None, log=print, fetcher=fetch) -> int:
     """Lấy volume cho keyword chưa có số tháng này (hoặc chỉ `only_ids`). Trả về số keyword đã lưu."""
+    if getattr(cfg.rank, "paused", False):  # tạm ngưng check rank = ngưng mọi chi phí DataForSEO của website
+        log("Tạm ngưng: không lấy volume keyword.")
+        return 0
     today = today or date.today()
     todo = missing(con, site, end, today, only_ids)
     if not todo:

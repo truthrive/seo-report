@@ -1,7 +1,7 @@
 """Bộ giao diện chung: màu thương hiệu, CSS, và các khối dùng lại (tiêu đề trang, thẻ KPI có sparkline, khung mục,
 nhãn trạng thái, ô số có thanh). Mọi màn dùng chung để nhìn đồng bộ.
 
-Màu theo matkinhtamduc.com: xanh lá #1E7C31, xanh chanh #B8D332. Phong cách (nền kem ấm, tiêu đề đậm hai tông, nhãn
+Bảng màu của tool: xanh lá #1E7C31, xanh chanh #B8D332. Phong cách (nền kem ấm, tiêu đề đậm hai tông, nhãn
 mono in hoa, thẻ trắng bo lớn, nút viên thuốc đen) tham khảo lucianlabs.dev theo yêu cầu.
 """
 import re
@@ -194,6 +194,71 @@ HEAD = """
   .sr-rank-tile.warn .sr-rank-goal { color: #8F5F14; }
   .sr-rank-tile.bad .sr-rank-goal { color: #C2410C; }
   .sr-rank-goal.none { font-weight: 400; color: var(--muted); }
+  /* Avatar có chấm trạng thái (kiểu PresenceBadge / Badge dot overlap circular): chấm tròn đè mép dưới phải của avatar,
+     viền 2px cùng màu nền để tách khỏi avatar. Trạng thái đang online có vòng lan (ping) phía sau, lõi đứng yên. */
+  .sr-presence { position: relative; display: inline-flex; flex-shrink: 0; }
+  .sr-presence-avatar { border-radius: 50%; display: flex; align-items: center; justify-content: center;
+                        font-weight: 650; font-family: var(--head); line-height: 1; }
+  .sr-presence-dot { position: absolute; right: 0; bottom: 0; transform: translate(18%, 18%); border-radius: 50%;
+                     border: 2px solid var(--ring, #fff); background: var(--ring, #fff); box-sizing: content-box; }
+  .sr-presence-dot > .core { position: relative; display: block; width: 100%; height: 100%; border-radius: 50%;
+                             background: var(--dot); z-index: 1; }
+  .sr-presence-dot > .halo { position: absolute; inset: 0; border-radius: 50%; background: var(--dot); opacity: .55;
+                             z-index: 0; }
+  @media (prefers-reduced-motion: no-preference) {
+    .sr-presence-dot > .halo { animation: sr-ping 1.8s cubic-bezier(0, 0, .2, 1) infinite; }
+  }
+  @media (prefers-reduced-motion: reduce) { .sr-presence-dot > .halo { display: none; } }
+  @keyframes sr-ping { 75%, 100% { transform: scale(2.4); opacity: 0; } }
+  /* Nhóm avatar (kiểu MUI AvatarGroup): avatar tròn chồng lên nhau bằng khoảng âm, viền màu nền quanh mỗi avatar,
+     avatar đứng trước nằm trên (z-index giảm dần), ô cuối "+N" khi còn người bị ẩn. */
+  .sr-avatar-group { display: inline-flex; align-items: center; padding: 2px; cursor: pointer;
+                     border-radius: 999px; }
+  .sr-avatar-group:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .sr-ag-item { position: relative; margin-left: -10px; border-radius: 50%; border: 2px solid var(--ring, #fff);
+                box-sizing: content-box; display: flex; align-items: center; justify-content: center;
+                font-weight: 650; font-family: var(--head); line-height: 1; overflow: visible; }
+  .sr-ag-item img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+  .sr-ag-item.more { background: #E4E2D8; color: var(--ink); font-family: var(--body, inherit); letter-spacing: -.02em; }
+  .sr-ag-dot { position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%;
+               border: 2px solid var(--ring, #fff); box-sizing: content-box; }
+  .sr-avatar-group:hover .sr-ag-item { transform: translateY(-1px); transition: transform .15s; }
+  /* Tổng quan: 6 ô nhịp số liệu (3 cột) và 3 khối Thứ hạng · Index · OKR */
+  .sr-dash-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 1100px) { .sr-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 600px) { .sr-dash-grid { grid-template-columns: 1fr; } }
+  .sr-dash-grid > .sr-kpi { min-width: 0; }
+  .sr-dash-three { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px;
+                   align-items: stretch; }
+  .sr-dash-three > .sr-card { height: 100%; }
+  .sr-mini-stats { display: flex; gap: 24px; flex-wrap: wrap; }
+  .sr-mini-num { font-family: var(--head); font-size: 26px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.15; }
+  .sr-mini-num span { font-size: 14px; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+  /* Dòng website ở màn Ngân sách check rank */
+  .sr-budget-row { display: grid; grid-template-columns: minmax(200px, 1.1fr) minmax(180px, 1.4fr) auto auto auto;
+                   align-items: center; column-gap: 16px; }
+  @media (max-width: 900px) {
+    /* Điện thoại: hàng 1 website | trạng thái, hàng 2 thanh ngân sách, hàng 3 ô ngân sách | công tắc */
+    .sr-budget-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 10px; }
+    .sr-budget-row > :nth-child(1) { grid-area: 1 / 1; } .sr-budget-row > :nth-child(3) { grid-area: 1 / 2; }
+    .sr-budget-row > :nth-child(2) { grid-area: 2 / 1 / 3 / 3; }
+    .sr-budget-row > :nth-child(4) { grid-area: 3 / 1; } .sr-budget-row > :nth-child(5) { grid-area: 3 / 2; } }
+  /* Hàng tài khoản ở cuối menu trái: bấm mở menu tài khoản */
+  .sr-account { padding: 6px 8px; border-radius: 10px; cursor: pointer; transition: background .15s; }
+  .sr-account:hover { background: #E8E8E0; }
+  .sr-account:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .q-drawer--mini .sr-account { justify-content: center; padding: 6px 0; }
+  .sr-account-menu { border-radius: 14px !important; border: 1px solid var(--line);
+                     box-shadow: 0 12px 32px rgba(31,34,30,.14) !important; }
+  .sr-account-menu .q-item { min-height: 40px; padding: 6px 16px; }
+  /* Biểu tượng dự án (logo website) */
+  .sr-proj-icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;
+                  background: #fff; border: 1px solid var(--line); color: var(--green); font-weight: 700;
+                  font-family: var(--head); }
+  .sr-proj-icon img { width: 100%; height: 100%; object-fit: contain; padding: 3px; display: block; }
+  .sr-proj-switch { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 4px 8px 4px 5px;
+                    cursor: pointer; max-width: 280px; }
+  .sr-proj-switch:hover { border-color: #C9C7BC; }
   /* Câu kết luận đầu trang */
   .sr-verdict { display: flex; align-items: flex-start; gap: 10px; background: #fff; border: 1px solid var(--line);
                 border-radius: 12px; padding: 12px 16px; font-size: 15px;
@@ -226,7 +291,6 @@ HEAD = """
                               border-radius: 10px; gap: 0; }
   .q-drawer--mini .sr-nav-group { font-size: 0; padding: 0; width: 24px; height: 1px; margin: 10px 0;
                                   background: #D9D8CE; }
-  .q-drawer--mini .sr-logo-mark { display: block !important; width: 36px; height: 36px; margin: 2px auto 6px; }
   .q-header.sr-top { background: rgba(244,244,239,.9); backdrop-filter: blur(10px); color: var(--ink);
                      border-bottom: 1px solid var(--line); }
 </style>
@@ -238,7 +302,7 @@ TONES = {"green": ("#E7F3EA", GREEN), "lime": ("#F2F7DC", "#5E7414"), "blue": ("
 
 
 EYEBROWS = {"space_dashboard": "Tổng quan", "summarize": "Báo cáo", "travel_explore": "SEO", "leaderboard": "SEO",
-            "link": "SEO", "auto_awesome": "AI & GEO", "verified": "Quản trị", "folder_open": "Quản trị"}
+            "link": "SEO", "auto_awesome": "AI & GEO", "verified": "AI & GEO", "folder_open": "SEO"}
 
 
 def page_header(ui, icon: str, title: str, subtitle: str = "", tone: str = "green", eyebrow: str | None = None):
@@ -463,6 +527,86 @@ def section(ui, title: str, icon: str | None = None, subtitle: str = "", href: s
         body = ui.column().classes("w-full gap-2")
         with body:
             yield body
+
+
+def project_icon(ui, project: dict, size: int = 32):
+    """Biểu tượng của dự án: logo website (ô vuông bo góc, nền trắng) hoặc chữ cái đầu tên khi chưa có logo."""
+    from .projects import icon_of
+    src = icon_of(project)
+    box = ui.element("div").classes("sr-proj-icon").style(f"width:{size}px;height:{size}px;"
+                                                           f"border-radius:{max(6, size // 4)}px")
+    with box:
+        if src:
+            ui.html(f'<img src="{escape(src)}" alt="">').classes("w-full h-full")
+        else:
+            ui.label(project["name"][:1].upper()).style(f"font-size:{size // 2}px")
+    return box
+
+
+PRESENCE_COLOR = {"available": GREEN, "away": AMBER, "busy": RED, "offline": "#A3A195"}
+# Màu avatar chữ cái: cố định theo email (cùng người luôn cùng màu)
+AVATAR_PALETTE = [("#E7F3EA", GREEN), ("#E8EFFD", BLUE), ("#F1EAFB", "#7C3AED"), ("#FBF1DE", AMBER_TEXT),
+                  ("#FCEDE6", RED), ("#E3F2F3", "#0E7C86")]
+
+
+def avatar_color(key: str) -> tuple[str, str]:
+    import hashlib
+    return AVATAR_PALETTE[int(hashlib.md5(key.lower().encode()).hexdigest(), 16) % len(AVATAR_PALETTE)]
+
+
+def avatar_group(ui, people: list[dict], max_shown: int = 4, size: int = 28, ring: str = "#fff", label: str = ""):
+    """Nhóm avatar chồng nhau. people: [{"name", "text" (tooltip / tên đọc được), "status" (available / away /
+    offline), "photo" (không bắt buộc)}] theo thứ tự hiển thị. Hiện tối đa max_shown ô; thừa thì ô cuối là "+N".
+    Không có ảnh thì hiện chữ cái đầu. Trả về phần tử ngoài cùng (gắn menu / sự kiện bấm vào đó)."""
+    shown = people if len(people) <= max_shown else people[:max_shown - 1]
+    hidden = len(people) - len(shown)
+    total = len(shown) + (1 if hidden else 0)
+    box = ui.element("div").classes("sr-avatar-group").props(
+        f'role=button tabindex=0 aria-haspopup=menu aria-label="{escape(label)}"').style(f"--ring:{ring}")
+    with box:
+        for i, p in enumerate(shown):
+            bg, fg = avatar_color(p["name"])
+            item = ui.element("div").classes("sr-ag-item").style(
+                f"width:{size}px;height:{size}px;background:{bg};color:{fg};font-size:{round(size * .42)}px;"
+                f"z-index:{total - i};" + ("margin-left:0;" if i == 0 else ""))
+            with item:
+                if p.get("photo"):
+                    ui.html(f'<img src="{escape(p["photo"])}" alt="">').classes("w-full h-full")
+                else:
+                    ui.label(p["name"][:1].upper()).props("aria-hidden=true")
+                if p.get("status") in ("available", "away"):
+                    ui.element("span").classes("sr-ag-dot").style(f"background:{PRESENCE_COLOR[p['status']]}")
+                ui.tooltip(p["text"]).props('anchor="bottom middle" self="top middle" :offset="[0, 6]"').style(
+                    "white-space: nowrap; max-width: none")
+        if hidden:
+            more = ui.element("div").classes("sr-ag-item more").style(
+                f"width:{size}px;height:{size}px;font-size:{round(size * .38)}px;z-index:0")
+            with more:
+                ui.label(f"+{hidden}")
+                ui.tooltip(f"{hidden} người khác").props('anchor="bottom middle" self="top middle" :offset="[0, 6]"')
+    return box
+
+
+def presence_avatar(ui, name: str, status: str, label: str, size: int = 32, ring: str = "#fff",
+                    tone: str = "green", colors: tuple[str, str] | None = None):
+    """Avatar chữ cái đầu + chấm trạng thái. Màu chấm chỉ theo một giá trị `status` (available xanh, away vàng, busy
+    đỏ, offline xám); ý nghĩa nằm trong tên đọc được (aria-label, tooltip) và dòng chữ cạnh đó, không chỉ bằng màu.
+    `ring` là màu nền phía sau avatar (viền 2px tách chấm khỏi avatar)."""
+    bg, fg = colors or TONES[tone]
+    dot = max(8, round(size * 0.3))
+    text = f"{name} · {label}"
+    box = ui.element("div").classes("sr-presence").props(f'role=img aria-label="{escape(text)}"').style(
+        f"--ring:{ring}")
+    with box:
+        ui.html(f'<div class="sr-presence-avatar" style="width:{size}px;height:{size}px;background:{bg};color:{fg};'
+                f'font-size:{round(size * 0.44)}px" aria-hidden="true">{escape(name[:1].upper())}</div>')
+        halo = '<span class="halo"></span>' if status == "available" else ""
+        ui.html(f'<span class="sr-presence-dot" style="--dot:{PRESENCE_COLOR.get(status, PRESENCE_COLOR["offline"])};'
+                f'width:{dot}px;height:{dot}px" aria-hidden="true">{halo}<span class="core"></span></span>')
+        # Hiện bên phải avatar, một dòng: tránh bị cắt ở mép trên / đè lên tên khi avatar nằm sát cạnh màn hình
+        ui.tooltip(text).props('anchor="center right" self="center left" :offset="[10, 0]"').style(
+            "white-space: nowrap; max-width: none")
+    return box
 
 
 def status_chip(ui, text: str, tone: str = "grey", icon: str | None = None):

@@ -3,8 +3,16 @@ import unittest
 from seo_report import crawl, db
 from seo_report import urls as U
 
-SITE = "https://matkinhtamduc.com/"
-BASE = "https://matkinhtamduc.com"
+SITE = "https://vidushop.com/"
+BASE = "https://vidushop.com"
+# Quy tắc kiểu một website bán kính (trước đây viết cứng trong code), nay là cấu hình của từng dự án
+RULES = """/bo-suu-tap/* = Danh mục
+/gong-kinh/ = Danh mục
+/gong-kinh/* = Danh mục con
+/trong-kinh-chinh-hang/ = Danh mục
+/trong-kinh-chinh-hang/* = Danh mục con
+/cua-hang* = Cửa hàng
+"""
 
 
 def page(url, clicks=1):
@@ -16,7 +24,7 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(U.normalize(f"{BASE}/mat-kinh-bi-xuoc/#nguyen-nhan"), f"{BASE}/mat-kinh-bi-xuoc/")
         self.assertEqual(U.normalize(f"{BASE}/dat-lich-hen/?utm_source=gmb&utm_campaign=quan-7"), f"{BASE}/dat-lich-hen/")
         self.assertEqual(U.normalize(f"{BASE}/gong-kinh/x/?page=2&gclid=abc"), f"{BASE}/gong-kinh/x/?page=2")
-        self.assertEqual(U.normalize("matkinhtamduc.com/gong-kinh/"), f"{BASE}/gong-kinh/")
+        self.assertEqual(U.normalize("vidushop.com/gong-kinh/"), f"{BASE}/gong-kinh/")
 
     def test_rules(self):
         cases = {
@@ -33,8 +41,23 @@ class NormalizeTest(unittest.TestCase):
             "/gong-kinh-levius-83713/": None,
             "/mat-xech-la-gi/": None,
         }
+        rules = {"rules": U.parse_rules(RULES), "deep_legacy": True}
         for path, expected in cases.items():
-            self.assertEqual(U.classify_by_rules(BASE + path)[0], expected, path)
+            self.assertEqual(U.classify_by_rules(BASE + path, rules)[0], expected, path)
+
+    def test_parse_rules_errors(self):
+        self.assertEqual(U.parse_rules("# ghi chú\n\n/a/* = blog"), [("/a/*", U.BLOG)])  # không phân biệt hoa thường
+        for bad in ("/a/", "a/* = Blog", "/a/* = Không có loại này"):
+            with self.assertRaises(ValueError):
+                U.parse_rules(bad)
+
+    def test_rules_saved_per_site_and_reapplied(self):
+        con = db.connect(":memory:")
+        U._get_or_create_url(con, SITE, BASE + "/blog/bai-a/")
+        changed = U.set_rules(con, SITE, "/blog/* = Blog", False, "t")
+        self.assertEqual(U.get_rules(con)["rules"], [("/blog/*", U.BLOG)])
+        self.assertEqual(U.classify_by_rules(BASE + "/blog/bai-b", U.get_rules(con))[0], U.BLOG)  # thiếu / cuối vẫn khớp
+        self.assertGreaterEqual(changed, 0)
 
     def test_schema(self):
         product = '<script type="application/ld+json">{"@type":"Product"}</script>'
@@ -47,6 +70,7 @@ class NormalizeTest(unittest.TestCase):
 class GroupTest(unittest.TestCase):
     def setUp(self):
         self.con = db.connect(":memory:")
+        U.set_rules(self.con, SITE, RULES, True, "t")
         db.replace_day(self.con, SITE, "2099-01-01",
                        [page(f"{BASE}/mat-kinh-bi-xuoc/", 10), page(f"{BASE}/mat-kinh-bi-xuoc/#a", 2),
                         page(f"{BASE}/gong-kinh/", 5), page(f"{BASE}/?p=1", 9)], [])
@@ -59,7 +83,7 @@ class GroupTest(unittest.TestCase):
         self.assertEqual(len(rows), 3)
 
     def test_paste_matches_variants_and_logs(self):
-        text = "matkinhtamduc.com/gong-kinh\nhttps://www.matkinhtamduc.com/mat-kinh-bi-xuoc/#x  khong-phai-link\n" \
+        text = "vidushop.com/gong-kinh\nhttps://www.vidushop.com/mat-kinh-bi-xuoc/#x  khong-phai-link\n" \
                f"{BASE}/trang-moi/\n{BASE}/gong-kinh/"
         r = U.add_to_group(self.con, SITE, self.gid, text, "test")
         self.assertEqual(r["added"], [f"{BASE}/gong-kinh/", f"{BASE}/mat-kinh-bi-xuoc/", f"{BASE}/trang-moi/"])
@@ -68,7 +92,7 @@ class GroupTest(unittest.TestCase):
         self.assertEqual(r["already"], [])
         again = U.add_to_group(self.con, SITE, self.gid, f"{BASE}/gong-kinh/", "test")
         self.assertEqual(again["already"], [f"{BASE}/gong-kinh/"])
-        self.assertEqual(len(U.recent_changes(self.con, SITE)), 3)
+        self.assertEqual(len(U.recent_changes(self.con, SITE)), 4)  # 3 thao tác + lần lưu quy tắc trong setUp
 
     def test_suggestions_skip_members_and_legacy(self):
         U.add_to_group(self.con, SITE, self.gid, f"{BASE}/gong-kinh/", "test")

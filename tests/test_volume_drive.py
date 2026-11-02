@@ -8,7 +8,7 @@ from seo_report import db, drive as D, rank as R, report, volume as V
 from seo_report import urls as U
 from seo_report.config import Config
 
-SITE = "https://matkinhtamduc.com/"
+SITE = "https://vidushop.com/"
 A = SITE + "gong-kinh/"
 TODAY = date(2026, 10, 30)
 
@@ -106,7 +106,7 @@ class DriveTest(unittest.TestCase):
 
     def test_root_folder_created_once_and_recreated_if_deleted(self):
         root = D.root_folder(self.con, self.svc, SITE)
-        self.assertEqual(self.svc.files_[root]["name"], "SEO Report – matkinhtamduc.com")
+        self.assertEqual(self.svc.files_[root]["name"], "SEO Report – vidushop.com")
         self.assertEqual(D.root_folder(self.con, self.svc, SITE), root)
         del self.svc.files_[root]
         self.assertNotEqual(D.root_folder(self.con, self.svc, SITE), root)
@@ -151,6 +151,6 @@ class SlidesTest(unittest.TestCase):
         for title in ("Kết luận", "Kết quả SEO", "Kết quả GEO", "Thứ hạng từ khóa theo dõi"):
             self.assertIn(title, texts)
         self.assertFalse(any("CTR" in t for t in texts))
-        self.assertEqual(slides_filename(rep), "bao-cao-seo-thang_matkinhtamduc_2026-10")
+        self.assertEqual(slides_filename(rep), "bao-cao-seo-thang_vidushop_2026-10")
         week = report.build(t.con, t.cfg, t.gid, 0, with_ai=False)
         self.assertEqual(len(Presentation(io.BytesIO(build_report_pptx(week, "t"))).slides), 4)  # không nhận xét, không điểm chú ý: bỏ slide kết luận

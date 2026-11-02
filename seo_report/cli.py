@@ -1,6 +1,7 @@
 """Lệnh dòng lệnh: login, sync, stats."""
 import argparse
 import sys
+from pathlib import Path
 
 from . import db
 from .config import load_config
@@ -202,7 +203,14 @@ def cmd_ai_summary(cfg, days: int) -> None:
                                           for r in ai.countries(start, end, limit=5)["data"]["rows"]))
 
 
-def cmd_daily(base, project_cfgs) -> None:
+def cmd_backup(base, root: Path) -> Path:
+    from . import backup
+    out = backup.run(root, base.db_path.parent, base.backup_dir, base.backup_keep)
+    print(f"Sao lưu: {out} ({out.stat().st_size / 1e6:.1f} MB), giữ {base.backup_keep} bản gần nhất", flush=True)
+    return out
+
+
+def cmd_daily(base, project_cfgs, root: Path | None = None) -> None:
     """Chạy bởi Task Scheduler qua pythonw (không có cửa sổ): làm việc hằng ngày cho từng dự án đang chạy, ghi log ra
     file. Một dự án lỗi không chặn các dự án sau."""
     from datetime import datetime
@@ -217,6 +225,13 @@ def cmd_daily(base, project_cfgs) -> None:
             _daily_one(cfg)
         except (Exception, SystemExit):  # noqa: BLE001  (_daily_one đã ghi lỗi vào log)
             failed.append(name)
+    if root:  # sao lưu sau khi đã lấy dữ liệu mới
+        try:
+            cmd_backup(base, root)
+        except Exception:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            failed.append("sao lưu")
     if failed:
         raise SystemExit(f"Lỗi ở dự án: {', '.join(failed)} (xem chi tiết phía trên)")
 
@@ -265,6 +280,10 @@ def _daily_one(cfg) -> None:
 
 def cmd_web(cfg, port: int, show: bool) -> None:
     from .web import run
+
+    if sys.stdout is None or sys.stderr is None:  # chạy nền bằng pythonw (task "SEO Report web"): không có cửa sổ để in
+        log = open(cfg.db_path.parent / "web.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
 
     run(cfg, port, show)
 
@@ -404,7 +423,8 @@ def main(argv=None) -> None:
     sub.add_parser("migrate", help="Chuyển file dữ liệu cách lưu cũ sang cách lưu mới")
     c = sub.add_parser("classify", help="Mở các trang chưa phân loại và đọc schema để biết loại trang")
     c.add_argument("--limit", type=int, help="Số trang tối đa cho lần chạy này")
-    sub.add_parser("daily", help="Việc hằng ngày: sync + check rank + phân loại URL mới (dùng cho Task Scheduler)")
+    sub.add_parser("daily", help="Việc hằng ngày: sync + check rank + phân loại URL mới + sao lưu (dùng cho Task Scheduler)")
+    sub.add_parser("backup", help="Sao lưu dữ liệu (file .db và config.toml) thành một file zip")
     ix = sub.add_parser("index", help="Đọc sitemap và check index các URL đến hạn (URL Inspection API)")
     ix.add_argument("--limit", type=int, default=1500, help="Số URL tối đa mỗi ngày (quota Google ~2.000)")
     r = sub.add_parser("rank", help="Check rank các keyword ★ đến hạn")
@@ -434,7 +454,10 @@ def main(argv=None) -> None:
     elif args.cmd == "rank":
         cmd_rank(cfg, args.wait)
     elif args.cmd == "daily":
-        cmd_daily(base, [x for x in all_projects if not args.project or x[1].site_url == cfg.site_url])
+        cmd_daily(base, [x for x in all_projects if not args.project or x[1].site_url == cfg.site_url],
+                  None if args.project else Path(args.config).resolve().parent)
+    elif args.cmd == "backup":
+        cmd_backup(base, Path(args.config).resolve().parent)
     elif args.cmd == "web":
         cmd_web(base, args.port, not args.no_open)
     elif args.cmd == "export-static":

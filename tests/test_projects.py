@@ -11,14 +11,14 @@ from seo_report import urls as U
 from seo_report.config import Config, KeywordSettings
 from seo_report.okr import OkrSettings
 
-SITE = "https://matkinhtamduc.com/"
+SITE = "https://vidushop.com/"
 
 
 class ProjectTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.base = Config(site_url=SITE, db_path=self.tmp / "seo.db", client_secret=Path("x"), token_path=Path("y"),
-                           ga4_property="properties/1", keywords=KeywordSettings(brand_terms=("tâm đức",)),
+                           ga4_property="properties/1", keywords=KeywordSettings(brand_terms=("ví dụ shop",)),
                            okr=OkrSettings(sheet="okr-sheet"))
         self.con = db.connect(self.base.db_path)
         PJ.ensure(self.con, self.base)
@@ -34,7 +34,7 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual((p["site_url"], p["ga4_property"], p["db_file"]), (SITE, "properties/1", "seo.db"))
         cfg = PJ.config_for(self.base, p)
         self.assertEqual(cfg.db_path, self.base.db_path)
-        self.assertEqual(cfg.keywords.brand_terms, ("tâm đức",))
+        self.assertEqual(cfg.keywords.brand_terms, ("ví dụ shop",))
         self.assertEqual(cfg.okr.sheet, "okr-sheet")
         PJ.ensure(self.con, self.base)  # chạy lại không tạo thêm
         self.assertEqual(len(PJ.list_projects(self.con)), 1)
@@ -106,8 +106,104 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(U.classify_by_rules("https://khach.vn/lien-he/")[0], U.INFO)
         self.assertEqual(U.classify_by_rules("https://khach.vn/")[0], U.HOME)
         self.assertEqual(U.classify_by_rules("https://khach.vn/2021/09/29/x/")[0], U.LEGACY)
-        self.assertEqual(U.classify_by_rules(SITE + "gong-kinh/abc/")[0], U.BRAND)
+        self.assertIsNone(U.classify_by_rules(SITE + "gong-kinh/abc/")[0])  # không còn quy tắc viết cứng cho site nào
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogoTest(unittest.TestCase):
+    def test_bitmap_shrunk_to_small_png(self):
+        import base64
+        import io
+
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (512, 512), "red").save(buf, "JPEG")
+        uri = PJ.data_uri(buf.getvalue(), "image/jpeg")
+        self.assertTrue(uri.startswith("data:image/png;base64,"))
+        img = Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1])))
+        self.assertLessEqual(max(img.size), 192)
+
+    def test_rejects_non_image_and_too_big(self):
+        with self.assertRaises(ValueError):
+            PJ.data_uri(b"<html>", "text/html")
+        with self.assertRaises(ValueError):
+            PJ.data_uri(b"x" * (PJ.MAX_LOGO_BYTES + 1), "image/png")
+
+    def test_icon_of(self):
+        self.assertEqual(PJ.icon_of({"logo": "data:image/png;base64,AA=="}), "data:image/png;base64,AA==")
+        self.assertEqual(PJ.icon_of({"logo": ""}), "")
+        self.assertIsNone(PJ.logo_bytes("data:image/svg+xml;base64,PHN2Zz4="))  # Excel / slide không chèn SVG
+        self.assertEqual(PJ.logo_bytes("data:image/png;base64,AAEC"), b"\x00\x01\x02")
+
+
+class BudgetTest(unittest.TestCase):
+    def test_last_months_and_cost_by_month(self):
+        from datetime import date
+
+        from seo_report import rank as R
+        from seo_report import volume as V
+        self.assertEqual(R.last_months(date(2026, 2, 10), 3), ["2025-12", "2026-01", "2026-02"])
+        con = db.connect(":memory:")
+        R.ensure_tables(con)
+        V.ensure_tables(con)
+        con.execute("INSERT INTO rank_tasks VALUES ('t1', 1, 10, '2026-01-05', 'x', 0.01, 'done')")
+        con.execute("INSERT INTO rank_tasks VALUES ('t2', 1, 30, '2026-02-05', 'x', 0.03, 'done')")
+        con.execute("INSERT INTO volume_runs VALUES ('2026-02-01T00:00:00', 10, 0.075)")
+        got = R.cost_by_month(con, ["2026-01", "2026-02"])
+        self.assertEqual(got["2026-01"]["checks"], 1)
+        self.assertAlmostEqual(got["2026-02"]["total"], 0.105)
+
+    def test_set_budget(self):
+        tmp = Path(tempfile.mkdtemp())
+        base = Config(site_url=SITE, db_path=tmp / "seo.db", client_secret=Path("x"), token_path=Path("y"))
+        with closing(db.connect(base.db_path)) as con:
+            PJ.ensure(con, base)
+            slug = PJ.list_projects(con)[0]["slug"]
+            PJ.set_budget(con, slug, 35, "t")
+            self.assertEqual(PJ.config_for(base, PJ.get(con, slug)).rank.monthly_budget_usd, 35.0)
+            with self.assertRaises(ValueError):
+                PJ.set_budget(con, slug, -1, "t")
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class PauseTest(unittest.TestCase):
+    def test_paused_project_sends_nothing(self):
+        from datetime import date
+
+        from seo_report import rank as R
+        from seo_report import volume as V
+        tmp = Path(tempfile.mkdtemp())
+        base = Config(site_url=SITE, db_path=tmp / "seo.db", client_secret=Path("x"), token_path=Path("y"))
+        with closing(db.connect(base.db_path)) as con:
+            PJ.ensure(con, base)
+            slug = PJ.list_projects(con)[0]["slug"]
+            PJ.set_paused(con, slug, True, "t")
+            cfg = PJ.config_for(base, PJ.get(con, slug))
+            PJ.update(con, slug, {"name": "X", "site_url": SITE, "rank_paused": True}, "t")  # sửa dự án giữ trạng thái
+            self.assertTrue(PJ.get(con, slug)["settings"]["rank_paused"])
+        self.assertTrue(cfg.rank.paused)
+        con = db.connect(":memory:")
+        logs = []
+        R.run(con, SITE, cfg.rank, client=None, end=date(2026, 10, 1), log=logs.append)  # client None: không được gọi
+        self.assertIn("Tạm ngưng", logs[0])
+        calls = []
+        self.assertEqual(V.refresh(con, SITE, cfg, date(2026, 10, 1), fetcher=lambda *a, **k: calls.append(1),
+                                   log=lambda m: None), 0)
+        self.assertEqual(calls, [])
+        with closing(db.connect(base.db_path)) as c2:
+            PJ.set_paused(c2, slug, False, "t")
+            self.assertFalse(PJ.config_for(base, PJ.get(c2, slug)).rank.paused)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class BudgetProjectionTest(unittest.TestCase):
+    def test_projected_never_below_spent(self):
+        from datetime import date
+
+        from seo_report.web_budget import projected
+        self.assertAlmostEqual(projected(0.09, 0.30, date(2026, 11, 2)), 0.09 + 0.30 * 28 / 30)
+        self.assertEqual(projected(0.09, 0.30, date(2026, 11, 30)), 0.09)
+        self.assertEqual(projected(0.09, 0.30, date(2026, 11, 2), paused=True), 0.09)

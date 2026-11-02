@@ -329,10 +329,12 @@ def progress(con, site: str, today: date, organic_sessions=None) -> dict | None:
             row.update({k: target.get(k) for k in ("top3", "top5", "top10", "sessions", "phase")})
             row["rank"] = _rank_stats(con, site, ver.get("keywords", []), s, min(e, today))
             row["actual_sessions"] = row["forecast"] = None
+            row["days_done"] = max(0, (min(e, yesterday) - s).days + 1)
+            row["days_total"] = (e - s).days + 1
             if organic_sessions and s <= yesterday:
                 daily = organic_sessions(s, min(e, yesterday))
                 row["actual_sessions"] = sum(daily.values())
-                days_done = (min(e, yesterday) - s).days + 1
+                days_done = row["days_done"]
                 if row["status"] == "running" and days_done >= 3:
                     row["forecast"] = round(row["actual_sessions"] / days_done * ((e - s).days + 1))
             row["checks"] = _judge(row)
@@ -358,8 +360,13 @@ def _judge(row: dict) -> dict:
                     "ok": None if t is None or actual is None else rk.get(key, 0) >= need,
                     "gap": None if need is None else max(0, need - rk.get(key, 0))}
     t, a = row.get("sessions"), row.get("actual_sessions")
-    basis = row.get("forecast") if row.get("status") == "running" and row.get("forecast") is not None else a
-    out["sessions"] = {"target": t, "actual": a, "forecast": row.get("forecast"),
+    running = row.get("status") == "running"
+    # Tháng đang chạy chỉ chấm theo dự báo cuối tháng (cần ít nhất 3 ngày số liệu); chưa đủ ngày thì chưa chấm
+    basis = row.get("forecast") if running else a
+    expected = (round(t * row["days_done"] / row["days_total"]) if running and t is not None
+                and row.get("days_total") else None)  # số phiên cần có tới hôm qua nếu đi đều theo cam kết
+    out["sessions"] = {"target": t, "actual": a, "forecast": row.get("forecast"), "expected": expected,
+                       "days_done": row.get("days_done"),
                        "ok": None if t is None or basis is None else basis >= t,
                        "gap": None if t is None or basis is None else max(0, t - basis)}
     return out
