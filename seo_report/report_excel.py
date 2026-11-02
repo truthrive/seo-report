@@ -10,6 +10,7 @@ from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from . import kpi as KP
 from .projects import domain
 from .report import (WeeklyReport, change, period_short, period_text, rank_change, rank_summary, summary,
                      trend_label)
@@ -169,26 +170,15 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
         s.section(f"KPI cam kết · tháng {m['n']}/{len(k['months'])} ({_vn_iso(m['from'])} – {_vn_iso(m['to'])}"
                   + (", đang chạy" if running else ", đã chốt") + ")")
         rows, colors = [], []
-        for key, lab in (("top3", "Từ khóa top 3"), ("top5", "Từ khóa top 5"), ("top10", "Từ khóa top 10"),
-                         ("sessions", "Phiên Organic (GA4)")):
-            ch = m["checks"][key]
-            if key == "sessions":
-                tgt, act = ch["target"], ch["actual"]
-                extra = f"dự báo cuối tháng {ch['forecast']:,}".replace(",", ".") if running and ch.get("forecast") else ""
-            else:
-                tgt, act = ch["target"], ch["actual"]
-                extra = f"{ch['count']}/{m['rank']['total']} từ khóa"
-            status = ("Không cam kết" if tgt is None else "Chưa có số" if ch["ok"] is None else
-                      ("Đang đạt" if running else "Đạt") if ch["ok"] else
-                      (f"Thiếu {ch['gap']} từ khóa" if key != "sessions" else f"Thiếu {ch['gap']:,} phiên".replace(",", ".")))
-            rows.append([lab, tgt, act, status, extra])
+        for line in k["lines"]:  # mỗi cam kết một dòng; thứ hạng ghi cả % lẫn số từ khóa
+            ch = m["checks"].get(KP.line_id(line))
+            if not ch:
+                continue
+            d = KP.describe(line, ch, running)
+            rows.append([d["label"], d["target"], d["actual"], d["status"], d["note"]])
             colors.append([None, None, None, None if ch["ok"] is None else (GREEN if ch["ok"] else
                                                                              (AMBER if running else RED)), None])
-        s.table(["Chỉ số", "Cam kết", "Thực tế", "Trạng thái", "Ghi chú"], rows, None, colors)
-        for i, r in enumerate(rows):  # % cho dòng thứ hạng, số nguyên cho phiên
-            fmt = "#,##0" if i == 3 else "0%"
-            for col in (2, 3):
-                s.ws.cell(s.row - len(rows) + i, col).number_format = fmt
+        s.table(["Cam kết", "Mức cam kết", "Thực tế", "Trạng thái", "Ghi chú"], rows, None, colors)
 
     cur_h = period_short(rep.kind, rep.week)
     cmp_h = period_short(rep.kind, rep.prev_week, rep.week[0].year)

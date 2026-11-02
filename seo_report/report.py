@@ -171,7 +171,7 @@ def kpi_for_report(cfg, con, rep: "WeeklyReport", with_ga4: bool = True) -> dict
         ga4 = None
         if with_ga4:
             try:
-                ga4 = KP.ga4_organic(cfg, con)
+                ga4 = KP.ga4_sessions(cfg, con)
             except (Exception, SystemExit):  # noqa: BLE001
                 ga4 = None
         p = KP.progress(con, cfg.site_url, day, ga4)

@@ -15,6 +15,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
 from . import ai_format as F
+from . import kpi as KP
 from .projects import domain
 from .report import WeeklyReport, change, period_text, rank_change, rank_summary, summary
 
@@ -115,15 +116,6 @@ def _vn(iso) -> str:
     return f"{iso[8:10]}/{iso[5:7]}" if iso else "–"
 
 
-def _kpi_status(ch: dict, running: bool) -> tuple[str, bool | None]:
-    if ch["target"] is None or ch["ok"] is None:
-        return ("không cam kết" if ch["target"] is None else "chưa có số"), None
-    if ch["ok"]:
-        return ("đang đạt" if running else "đạt"), True
-    gap = ch["gap"]
-    return (f"thiếu {gap} từ khóa" if "need" in ch else f"thiếu {F.n(gap)} phiên"), False
-
-
 def _short(url, site):
     return (url or "").replace(site.rstrip("/"), "") or ("/" if url else "")
 
@@ -194,32 +186,29 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
         s = _slide(prs, f"KPI cam kết · Tháng {m['n']}/{len(k['months'])}",
                    f"{_vn(m['from'])} – {_vn(m['to'])} · {m['rank']['total']} từ khóa cam kết · "
                    + ("đang chạy, số còn thay đổi" if running else "đã chốt"))
-        for i, key in enumerate(("top3", "top5", "top10", "sessions")):
-            ch = m["checks"][key]
-            if key == "sessions":
-                label, value = "Phiên Organic (GA4)", F.n(ch["actual"]) if ch["actual"] is not None else "chưa có"
-                target = F.n(ch["target"]) if ch["target"] is not None else "không cam kết"
-            else:
-                label = f"Từ khóa top {key[3:]}"
-                value = f"{(ch['actual'] or 0) * 100:.0f}%" if ch["actual"] is not None else "–"
-                target = f"{ch['target'] * 100:.0f}%" if ch["target"] is not None else "không cam kết"
-            status, good = _kpi_status(ch, running)
-            _kpi(s, x0 + Inches(3.08) * i, Inches(1.5), label, value, f"Cam kết {target} · {status}", good,
-                 w=Inches(2.95), h=Inches(1.5))
-        heads = ["Chỉ số"] + [f"T{x['n']}" for x in k["months"]]
+        lines = [ln for ln in k["lines"] if m["checks"].get(KP.line_id(ln))]
+        tile_w = Emu(int((Inches(12.1) - Inches(0.13) * (len(lines) - 1)) / max(len(lines), 1)))  # ô nhỏ dần khi nhiều cam kết
+        for i, line in enumerate(lines):
+            ch = m["checks"][KP.line_id(line)]
+            d = KP.describe(line, ch, running)
+            value = KP.fmt_actual(ch) if ch["kind"] != "rank" or ch["checked"] else "chưa check"
+            if ch["kind"] == "rank" and ch["total"]:
+                value += f"  ({ch['count']}/{ch['total']})"
+            _kpi(s, x0 + (tile_w + Inches(0.13)) * i, Inches(1.5), d["label"], value,
+                 f"Cam kết {d['target']} · {d['status'].lower()}", d["good"], w=tile_w, h=Inches(1.5))
+        heads = ["Cam kết"] + [f"T{x['n']}" for x in k["months"]]
         rows, colors = [], []
-        for key, lab in (("top3", "Top 3"), ("top5", "Top 5"), ("top10", "Top 10"), ("sessions", "Phiên Organic")):
-            tgt, act, col = [f"{lab} · cam kết"], ["Thực tế"], [None]
+        for line in k["lines"]:
+            lid = KP.line_id(line)
+            tgt, act, col = [f"{KP.line_label(line)} · cam kết"], ["Thực tế"], [None]
             for x in k["months"]:
-                t = x.get(key)
-                tgt.append("–" if t is None else (F.n(t) if key == "sessions" else f"{t * 100:.0f}%"))
-                ch = (x.get("checks") or {}).get(key)
+                tgt.append(KP.fmt_target(line, (x.get("targets") or {}).get(lid)))
+                ch = (x.get("checks") or {}).get(lid)
                 if not ch or x["status"] == "future":
                     act.append("")
                     col.append(None)
                     continue
-                act.append(F.n(ch["actual"]) if key == "sessions" and ch["actual"] is not None else
-                           (f"{ch['actual'] * 100:.0f}%" if key != "sessions" and ch["actual"] is not None else "–"))
+                act.append(KP.fmt_actual(ch))
                 col.append(None if ch["ok"] is None else (GREEN if ch["ok"] else (AMBER if x["status"] == "running"
                                                                                   else RED)))
             rows += [tgt, act]

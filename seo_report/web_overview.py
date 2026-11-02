@@ -4,11 +4,11 @@ tháng thêm xu hướng 12 tháng, theo loại trang, top URL và top query.
 
 Số GSC/rank/index đọc từ SQLite nên hiện ngay; số GA4 tải trong luồng nền rồi điền vào khối AI.
 """
-import math
 import re
 from datetime import date, timedelta
 
 from . import ai_format as F
+from . import kpi as KP
 from .projects import domain
 from . import ui_theme as T
 from .report import (BUCKETS, build, build_month, change, note_key, period_short, period_text, rank_summary,
@@ -380,9 +380,13 @@ def rank_overview(ui, rs: dict, unit: str, kpi: dict | None = None) -> None:
                 now, prev = rs["now"][n], rs["prev"][n]
                 diff = now - prev if rs["has_prev"] else None
                 # Tháng hiện tại chưa cam kết hạng (thường 1–2 tháng đầu) thì so với mức cam kết gần nhất sắp tới
-                gm = next((x for x in goal["months"] if x.get(f"top{n}")), None) if goal else None
-                target = gm.get(f"top{n}") if gm else None
-                need = math.ceil(target * rs["total"] - 1e-9) if target else None
+                gm = next((x for x in goal["months"] if (x.get("targets") or {}).get(f"top{n}") is not None),
+                          None) if goal else None
+                line = KP.find_line(kpi, f"top{n}") if gm else None
+                need, target = (None, None)
+                if line:  # bộ riêng: mẫu số là số từ khóa của bộ đó (tháng đã chấm), không phải cả danh sách
+                    pool = ((gm.get("checks") or {}).get(f"top{n}") or {}).get("total") or rs["total"]
+                    need, target = KP.rank_need(line, gm["targets"][f"top{n}"], pool)
                 ratio = now / need if need else None
                 tone = "" if ratio is None else ("good" if ratio >= 1 else
                                                  ("warn" if goal["running"] or gm is not goal["m"] else "bad"))
@@ -394,7 +398,8 @@ def rank_overview(ui, rs: dict, unit: str, kpi: dict | None = None) -> None:
                         else f"lần trước {prev} (không đổi)")).classes("sr-rank-sub")
                     if need:
                         when = "" if gm is goal["m"] else f" tháng {gm['n']}"
-                        ui.label(f"Cam kết{when}: {target * 100:.0f}% ({need} từ khóa) · đạt {ratio * 100:.0f}%"
+                        pct = f"{target * 100:.0f}% " if target is not None else ""
+                        ui.label(f"Cam kết{when}: {pct}({need} từ khóa) · đạt {ratio * 100:.0f}%"
                                  ).classes("sr-rank-goal")
                     else:
                         ui.label("Chưa có cam kết").classes("sr-rank-goal none")
