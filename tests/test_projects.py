@@ -169,6 +169,23 @@ class BudgetTest(unittest.TestCase):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+    def test_set_rank_target(self):
+        tmp = Path(tempfile.mkdtemp())
+        base = Config(site_url=SITE, db_path=tmp / "seo.db", client_secret=Path("x"), token_path=Path("y"))
+        with closing(db.connect(base.db_path)) as con:
+            PJ.ensure(con, base)
+            slug = PJ.list_projects(con)[0]["slug"]
+            self.assertEqual(PJ.config_for(base, PJ.get(con, slug)).rank.se_domain, "google.com.vn")
+            PJ.set_rank_target(con, slug, {"se_domain": "google.com", "device": "desktop", "location_code": 1028581,
+                                           "language_code": "vi"}, "t")
+            r = PJ.config_for(base, PJ.get(con, slug)).rank
+            self.assertEqual((r.se_domain, r.device, r.location_code), ("google.com", "desktop", 1028581))
+            with self.assertRaises(ValueError):
+                PJ.set_rank_target(con, slug, {"se_domain": "bing.com", "device": "desktop", "location_code": 2704,
+                                               "language_code": "vi"}, "t")
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 class PauseTest(unittest.TestCase):
     def test_paused_project_sends_nothing(self):
         from datetime import date

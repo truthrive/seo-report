@@ -28,3 +28,17 @@ class LiveTest(unittest.TestCase):
         LIVE.register(f, "x@abc.vn", "p1")
         f.drop()
         self.assertEqual(LIVE.targets(), [])
+
+    def test_notice_waits_for_next_page_when_none_open(self):
+        LIVE._PENDING.clear()
+        self.assertEqual(LIVE.notify("X@abc.vn", "Check rank xong"), 0)
+        self.assertEqual(LIVE._PENDING["x@abc.vn"][0][0], "Check rank xong")
+        shown = []
+        orig = LIVE._show
+        LIVE._show = lambda client, m, o: shown.append(m) or True
+        try:
+            LIVE.register(Fake("a"), "x@abc.vn", "p1")
+        finally:
+            LIVE._show = orig
+        self.assertEqual(shown, ["Check rank xong"])
+        self.assertNotIn("x@abc.vn", LIVE._PENDING)

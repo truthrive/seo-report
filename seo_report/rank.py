@@ -31,6 +31,40 @@ API = "https://api.dataforseo.com/v3/serp/google/organic"
 ALERT_RATIO = 0.8
 DEPTHS = ["auto", 10, 20, 30, 50, 100]
 WEEKDAYS = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
+# Nơi check rank (đặt theo dự án ở màn Từ khóa & rank): như người dùng tìm trên Google ở vùng / thiết bị đó
+SE_DOMAINS = {"google.com.vn": "google.com.vn (Việt Nam)", "google.com": "google.com (quốc tế)"}
+DEVICES = {"mobile": "Điện thoại", "desktop": "Máy tính"}
+LANGUAGES = {"vi": "Tiếng Việt", "en": "Tiếng Anh"}
+_LOCATIONS: dict[int, str] = {}
+
+
+def locations() -> dict[int, str]:
+    """Vị trí tìm kiếm ở Việt Nam theo danh sách của DataForSEO: {mã: tên hiện}. Toàn quốc đứng đầu, rồi thành phố
+    lớn, tỉnh, thành phố khác."""
+    if not _LOCATIONS:
+        rows = json.loads((Path(__file__).parent / "assets" / "rank_locations_vn.json").read_text(encoding="utf-8"))
+        order = {"Country": 0, "Municipality": 1, "Province": 2, "City": 3}
+        for r in sorted(rows, key=lambda r: (order[r["type"]], r["name"])):
+            parts = r["name"].split(",")  # "Ho Chi Minh City,Ho Chi Minh,Vietnam" / "Dong Thap,Vietnam"
+            if r["type"] == "Country":
+                name = "Toàn quốc (Việt Nam)"
+            elif r["type"] == "Municipality":  # thành phố trực thuộc TW: cả thành phố, hoặc nội thành
+                name = f"{parts[0]} (toàn thành phố)" if len(parts) == 2 else f"{parts[0]} (nội thành)"
+            elif r["type"] == "Province":
+                name = f"Tỉnh {parts[0]}"
+            else:
+                name = f"{parts[0]}, {parts[-2]}" if parts[-2] != parts[0] else parts[0]
+            _LOCATIONS[r["code"]] = name
+    return _LOCATIONS
+
+
+def describe_target(s) -> str:
+    """'google.com.vn · Điện thoại · Ho Chi Minh City · Tiếng Việt'."""
+    loc = locations().get(s.location_code, str(s.location_code))
+    return (f"{s.se_domain} · {DEVICES.get(s.device, s.device)} · {loc} · "
+            f"{LANGUAGES.get(s.language_code, s.language_code)}")
+
+
 DEFAULT_SCHEDULE = {"type": "weekdays", "weekdays": [1], "day": 1, "depth": "auto"}  # thứ Ba, trước báo cáo thứ Năm
 
 SCHEMA = """
@@ -311,6 +345,38 @@ def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
     return res
 
 
+def set_target_url(con: sqlite3.Connection, site: str, keyword_id: int, raw_url: str | None, user: str) -> str | None:
+    """Gán (hoặc bỏ, raw_url trống) URL mục tiêu cho một keyword check rank. Trả URL đã chuẩn hóa."""
+    ensure_tables(con)
+    row = con.execute("SELECT keyword FROM rank_keywords WHERE id = ? AND site = ?", (keyword_id, site)).fetchone()
+    if not row:
+        raise ValueError("Không có từ khóa này")
+    url, url_id = None, None
+    if (raw_url or "").strip():
+        url = U.normalize(raw_url)
+        if domain(url) != domain(site):
+            raise ValueError(f"URL phải thuộc {domain(site)}")
+    with con:
+        if url:
+            url_id = U._match_existing(con, site, url) or U._get_or_create_url(con, site, url)
+        con.execute("UPDATE rank_keywords SET url_id = ? WHERE id = ?", (url_id, keyword_id))
+        U.log_change(con, user, site, "Đổi URL mục tiêu" if url else "Bỏ URL mục tiêu", url, row[0])
+    return url
+
+
+def url_suggestions(con: sqlite3.Connection, site: str, keyword: str, end: date, days: int = 90,
+                    limit: int = 5) -> list[dict]:
+    """Trang của site có click / hiển thị cho đúng từ khóa này trên GSC trong `days` ngày: gợi ý URL mục tiêu."""
+    rows = con.execute(
+        """SELECT u.url, SUM(d.clicks), SUM(d.impressions) FROM gsc_query_daily d
+           JOIN queries q ON q.id = d.query_id JOIN page_url pu ON pu.page_id = d.page_id
+           JOIN urls u ON u.id = pu.url_id
+           WHERE q.text = ? AND u.site = ? AND d.date BETWEEN ? AND ?
+           GROUP BY u.url ORDER BY 2 DESC, 3 DESC LIMIT ?""",
+        (keyword.strip().lower(), site, (end - timedelta(days=days - 1)).isoformat(), end.isoformat(), limit)).fetchall()
+    return [{"url": u, "clicks": c, "impressions": i} for u, c, i in rows]
+
+
 def remove_keywords(con: sqlite3.Connection, site: str, ids: list[int], user: str) -> None:
     """Bỏ theo dõi; lịch sử rank vẫn giữ trong rank_checks."""
     with con:
@@ -322,14 +388,14 @@ def remove_keywords(con: sqlite3.Connection, site: str, ids: list[int], user: st
 
 def toggle_star(con: sqlite3.Connection, site: str, s: RankSettings, end: date, url_id: int, query: str,
                 user: str) -> tuple[bool, str]:
-    """★ ở màn URL: thêm keyword GSC với URL này làm mục tiêu, hoặc bỏ nếu đã theo dõi."""
+    """★ ở màn URL: thêm keyword GSC vào check rank (không tự gán URL mục tiêu: team gán ở màn Quản lý URL, hoặc lấy
+    từ sheet cam kết), hoặc bỏ nếu đã theo dõi."""
     ensure_tables(con)
     row = con.execute("SELECT id FROM rank_keywords WHERE site = ? AND keyword = ?", (site, query)).fetchone()
     if row:
         remove_keywords(con, site, [row[0]], user)
         return True, f"Đã bỏ theo dõi “{query}”"
-    url, = con.execute("SELECT url FROM urls WHERE id = ?", (url_id,)).fetchone()
-    r = add_keywords(con, site, s, end, [(query, url)], user, source="gsc")
+    r = add_keywords(con, site, s, end, [(query, None)], user, source="gsc")
     if r["over_budget"]:
         return False, (f"Không thêm được “{query}”: ước tính chi phí tháng sẽ vượt ngân sách "
                        f"{s.monthly_budget_usd:.0f} USD. Bỏ bớt keyword, giãn lịch check hoặc giảm độ sâu.")
@@ -421,7 +487,7 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
             f"vượt ngân sách {s.monthly_budget_usd:.0f} USD.")
         return 0
     tasks = [{"keyword": k["keyword"], "location_code": s.location_code, "language_code": s.language_code,
-              "device": s.device, "depth": k["depth"], "tag": str(k["id"])} for k in todo]
+              "device": s.device, "se_domain": s.se_domain, "depth": k["depth"], "tag": str(k["id"])} for k in todo]
     posted, errors = 0, {}
     with con:
         for k, t in zip(todo, client.post(tasks)):
@@ -438,15 +504,51 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
     return posted
 
 
-def parse_rank(task: dict, site: str, target_url: str | None) -> tuple[int | None, str | None, int | None]:
-    """(rank tốt nhất của site, URL đang xếp hạng, rank của URL mục tiêu)."""
+def _is_goto(url: str) -> bool:
+    return bool(re.match(r"^https?://(www\.)?google\.[a-z.]+/goto\?", url or ""))
+
+
+def resolve_goto(url: str, timeout: int = 15) -> str | None:
+    """URL thật sau link chuyển hướng google.com/goto?url=… (Google mobile giấu link một số kết quả sau link này).
+    Hỏi Google một lần, không đi theo chuyển hướng; lỗi thì None."""
+    from urllib.error import HTTPError as _HTTPError
+    from urllib.request import HTTPRedirectHandler, build_opener
+
+    class _Stop(HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+    url = re.sub(r"^https?://google\.", "https://www.google.", url)
+    try:
+        build_opener(_Stop).open(Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=timeout)
+    except _HTTPError as e:
+        loc = e.headers.get("Location") or ""
+        if e.code in (301, 302, 303, 307, 308) and loc:
+            return None if _is_goto(loc) else loc
+    except Exception:  # noqa: BLE001  (mất mạng: vẫn tính rank, chỉ thiếu URL)
+        pass
+    return None
+
+
+def parse_rank(task: dict, site: str, target_url: str | None,
+               resolve=resolve_goto) -> tuple[int | None, str | None, int | None]:
+    """(rank tốt nhất của site, URL đang xếp hạng, rank của URL mục tiêu).
+    Kết quả Google giấu sau link google.com/goto?url=… thì nhận site qua breadcrumb (tên miền thật) và hỏi Google URL
+    thật; trước đây các kết quả này bị tính là của google.com nên site bị báo "ngoài top" dù đang đứng đầu."""
     host = domain(site)
     items = (task.get("result") or [{}])[0].get("items") or []
     best, best_url, target_rank = None, None, None
     for it in items:
-        if it.get("type") != "organic" or (it.get("domain") or "").removeprefix("www.") != host:
+        if it.get("type") != "organic":
             continue
-        url = U.normalize(it["url"])
+        raw = it.get("url") or ""
+        hidden = _is_goto(raw)
+        item_host = domain(it.get("breadcrumb") or "") if hidden else (it.get("domain") or "").removeprefix("www.")
+        if item_host != host:
+            continue
+        if hidden:
+            real = resolve(raw)
+            raw = real if real and domain(real) == host else ""
+        url = U.normalize(raw) if raw else None
         if best is None:
             best, best_url = it["rank_group"], url
         if target_url and target_rank is None and url == target_url:
@@ -477,6 +579,32 @@ def collect(con, site: str, client, log=print) -> int:
             con.execute("UPDATE rank_tasks SET status = 'done' WHERE task_id = ?", (task_id,))
         done += 1
     return done
+
+
+def reparse(con, site: str, client, since: date, log=print) -> int:
+    """Đọc lại kết quả các lần check đã xong từ `since` (DataForSEO giữ kết quả task 30 ngày, đọc lại không tốn tiền)
+    và tính lại rank. Dùng khi sửa cách đọc kết quả. Trả số lần check có số thay đổi."""
+    rows = con.execute(
+        "SELECT t.task_id, t.keyword_id, t.check_date, u.url, c.rank, c.ranking_url, c.target_rank FROM rank_tasks t "
+        "JOIN rank_keywords k ON k.id = t.keyword_id LEFT JOIN urls u ON u.id = k.url_id "
+        "JOIN rank_checks c ON c.keyword_id = t.keyword_id AND c.check_date = t.check_date "
+        "WHERE t.status = 'done' AND k.site = ? AND t.check_date >= ?", (site, since.isoformat())).fetchall()
+    changed = 0
+    for task_id, kid, check_date, target, old_rank, old_url, old_target in rows:
+        try:
+            task = client.get(task_id)
+        except Exception as e:  # noqa: BLE001
+            log(f"Không đọc lại được task {task_id}: {e}")
+            continue
+        if task.get("status_code") != 20000:
+            continue
+        new = parse_rank(task, site, target)
+        if new != (old_rank, old_url, old_target):
+            with con:
+                con.execute("UPDATE rank_checks SET rank = ?, ranking_url = ?, target_rank = ? "
+                            "WHERE keyword_id = ? AND check_date = ?", (*new, kid, check_date))
+            changed += 1
+    return changed
 
 
 def wait_and_collect(con, site: str, client, wait_minutes: int, log=print, sleep=time.sleep) -> None:

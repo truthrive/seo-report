@@ -133,7 +133,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                 fields = {"name": name.value, "site_url": site.value or "", "ga4_property": ga4.value or "",
                           "brand_terms": brand.value or "", "rank_budget_usd": budget.value, "device": device.value,
                           "okr_sheet": okr.value or "",
-                          **({k: s.get(k) for k in ("location_code", "language_code", "okr_tab", "weekly_tab",
+                          **({k: s.get(k) for k in ("location_code", "language_code", "se_domain", "okr_tab",
+                                                     "weekly_tab",
                                                      "rank_paused")})}
                 try:
                     with app_connect() as c:

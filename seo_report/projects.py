@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 # Cấu hình riêng từng dự án ngoài GSC / GA4 (lưu dạng JSON trong cột settings).
 DEFAULTS = {"brand_terms": [], "rank_budget_usd": 20.0, "location_code": 2704, "language_code": "vi",
-            "device": "mobile", "okr_sheet": "", "okr_tab": "OKRs 3 tháng", "weekly_tab": "Weekly Task Tracker",
+            "device": "mobile", "se_domain": "google.com.vn", "okr_sheet": "", "okr_tab": "OKRs 3 tháng", "weekly_tab": "Weekly Task Tracker",
             "rank_paused": False}
 
 
@@ -118,7 +118,8 @@ def config_for(base: Config, project: dict) -> Config:
         logo=project.get("logo") or "",
         keywords=replace(base.keywords, brand_terms=tuple(s["brand_terms"])),
         rank=replace(base.rank, monthly_budget_usd=float(s["rank_budget_usd"]), location_code=int(s["location_code"]),
-                     language_code=s["language_code"], device=s["device"], paused=bool(s.get("rank_paused"))),
+                     language_code=s["language_code"], device=s["device"],
+                     se_domain=s.get("se_domain") or DEFAULTS["se_domain"], paused=bool(s.get("rank_paused"))),
         okr=replace(base.okr, sheet=s["okr_sheet"], okr_tab=s["okr_tab"], weekly_tab=s["weekly_tab"]))
 
 
@@ -164,7 +165,7 @@ def _clean(fields: dict) -> dict:
     if s["rank_budget_usd"] < 0:
         raise ValueError("Ngân sách check rank không được âm")
     s["rank_paused"] = bool(fields.get("rank_paused", False))
-    for k in ("location_code", "language_code", "device", "okr_tab", "weekly_tab"):
+    for k in ("location_code", "language_code", "device", "se_domain", "okr_tab", "weekly_tab"):
         if fields.get(k) not in (None, ""):
             s[k] = int(fields[k]) if k == "location_code" else str(fields[k]).strip()
     s["okr_sheet"] = (fields.get("okr_sheet") or "").strip()
@@ -350,6 +351,23 @@ def set_budget(con: sqlite3.Connection, slug: str, usd: float, user: str) -> Non
     con.execute("UPDATE projects SET settings = ?, updated_at = ?, updated_by = ? WHERE slug = ?",
                 (json.dumps(s, ensure_ascii=False), _now(), user, slug))
     con.commit()
+
+
+def set_rank_target(con: sqlite3.Connection, slug: str, fields: dict, user: str) -> dict:
+    """Đổi nơi check rank của dự án: vùng Google, thiết bị, vị trí tìm kiếm, ngôn ngữ (màn Từ khóa & rank)."""
+    from . import rank as R
+    p = get(con, slug)
+    if not p or p["slug"] != slug:
+        raise ValueError("Không có dự án này")
+    new = {"se_domain": fields.get("se_domain"), "device": fields.get("device"),
+           "location_code": int(fields.get("location_code") or 0), "language_code": fields.get("language_code")}
+    if new["se_domain"] not in R.SE_DOMAINS or new["device"] not in R.DEVICES or             new["language_code"] not in R.LANGUAGES or new["location_code"] not in R.locations():
+        raise ValueError("Cài đặt check rank không hợp lệ")
+    s = {**p["settings"], **new}
+    con.execute("UPDATE projects SET settings = ?, updated_at = ?, updated_by = ? WHERE slug = ?",
+                (json.dumps(s, ensure_ascii=False), _now(), user, slug))
+    con.commit()
+    return s
 
 
 # ---- Cài đặt chung của tool (file dữ liệu chính) ----

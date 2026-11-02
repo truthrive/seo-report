@@ -26,6 +26,7 @@ class RankSettings:
     location_code: int = 2704  # Việt Nam
     language_code: str = "vi"
     device: str = "mobile"
+    se_domain: str = "google.com.vn"  # tên miền Google dùng để tìm (vùng Google)
     paused: bool = False  # tạm ngưng: không gửi yêu cầu DataForSEO nào (check rank, volume) cho website này
 
 

@@ -651,7 +651,17 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         budget_card = shell("Từ khóa & rank", user, P, page_ctx(P), period=False, group=False)
-        build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh)
+
+        def save_target(fields):
+            slug = P.project["slug"]
+            with app_connect() as c:
+                s = PJ.set_rank_target(c, slug, fields, user)
+            with P.connect() as c:
+                U.log_change(c, user, P.site, "Đổi nơi check rank", None,
+                             R.describe_target(SimpleNamespace(**{k: s[k] for k in (
+                                 "se_domain", "device", "location_code", "language_code")})))
+            LIVE.kick(project=slug)  # mọi trang của dự án (cả trang này) tải lại với cài đặt mới
+        build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh, save_target=save_target)
 
     @ui.page("/stars")
     def stars_page():
@@ -691,6 +701,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             t_add = ui.tab("Thêm link")
             t_suggest = ui.tab("Gợi ý")
             t_all = ui.tab("Tất cả URL")
+            t_target = ui.tab("URL mục tiêu của từ khóa")
             t_log = ui.tab("Nhật ký")
 
         def type_changer(get_selected, after):
@@ -756,6 +767,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 type_changer(lambda: all_table.selected, lambda: refresh())
                 ui.label("Nguồn phân loại: rule = theo đường dẫn, schema = đọc trong trang, manual = sửa tay "
                          "(sửa tay luôn được giữ).").classes("text-sm muted")
+
+            with ui.tab_panel(t_target):
+                from .web_targets import build_target_panel
+                build_target_panel(ui, P.cfg, connect, user, site)
 
             with ui.tab_panel(t_log):
                 log_table = ui.table(

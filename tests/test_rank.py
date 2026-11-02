@@ -72,6 +72,26 @@ class RankTest(unittest.TestCase):
         self.assertIsNone(kws["kính mắt giá rẻ"]["target_url"])
         self.assertEqual(self.add(f"gọng kính | {B}")["updated"], ["gọng kính"])
 
+    def test_star_adds_keyword_without_target_and_team_sets_it(self):
+        self.assertTrue(R.toggle_star(self.con, SITE, self.s, END, self.a, "gọng kính", "test")[0])
+        k = R.keywords(self.con, SITE, END)[0]
+        self.assertIsNone(k["target_url"])  # không tự gán URL của màn ★
+        self.assertEqual(R.set_target_url(self.con, SITE, k["id"], B + "?utm_source=x", "test"), B)
+        self.assertEqual(R.keywords(self.con, SITE, END)[0]["target_url"], B)
+        with self.assertRaises(ValueError):
+            R.set_target_url(self.con, SITE, k["id"], "https://other.vn/a/", "test")
+        R.set_target_url(self.con, SITE, k["id"], "", "test")
+        self.assertIsNone(R.keywords(self.con, SITE, END)[0]["target_url"])
+
+    def test_url_suggestions_from_gsc(self):
+        self.assertEqual([x["url"] for x in R.url_suggestions(self.con, SITE, "Gọng kính", END)], [A])
+
+    def test_check_target_settings(self):
+        self.assertEqual(R.locations()[2704], "Toàn quốc (Việt Nam)")
+        self.assertIn(1028581, R.locations())  # Ho Chi Minh City
+        s = RankSettings(location_code=1028581, device="desktop")
+        self.assertEqual(R.describe_target(s), "google.com.vn · Máy tính · Ho Chi Minh City (nội thành) · Tiếng Việt")
+
     def test_schedule_weekdays_with_catch_up_and_monthly(self):
         sched = {"type": "weekdays", "weekdays": [1], "day": 1, "depth": "auto"}
         self.assertEqual(R.last_scheduled_day(sched, date(2026, 10, 29)), TUE)  # thứ Năm → check bù thứ Ba
@@ -144,3 +164,25 @@ class RankTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HiddenLinkTest(unittest.TestCase):
+    """Google mobile giấu link một số kết quả sau google.com/goto?url=…: nhận site qua breadcrumb."""
+    TASK = {"result": [{"items": [
+        {"type": "organic", "rank_group": 1, "domain": "google.com", "url": "https://google.com/goto?url=AAA",
+         "breadcrumb": "https://matkinhtamduc.com"},
+        {"type": "organic", "rank_group": 2, "domain": "google.com", "url": "https://google.com/goto?url=BBB",
+         "breadcrumb": "https://www.other.com"},
+        {"type": "organic", "rank_group": 5, "domain": "matkinhtamduc.com",
+         "url": "https://matkinhtamduc.com/b/?srsltid=x"},
+    ]}]}
+
+    def test_hidden_result_counts_for_the_site(self):
+        got = R.parse_rank(self.TASK, "sc-domain:matkinhtamduc.com", "https://matkinhtamduc.com/a/",
+                           resolve=lambda u: "https://matkinhtamduc.com/a/?srsltid=y")
+        self.assertEqual(got, (1, "https://matkinhtamduc.com/a/", 1))
+
+    def test_unresolved_hidden_link_keeps_rank(self):
+        got = R.parse_rank(self.TASK, "sc-domain:matkinhtamduc.com", "https://matkinhtamduc.com/b/",
+                           resolve=lambda u: None)
+        self.assertEqual(got, (1, None, 5))

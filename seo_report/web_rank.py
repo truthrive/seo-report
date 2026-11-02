@@ -20,6 +20,13 @@ def _pos(rank, depth) -> str:
     return str(rank) if rank is not None else f">{depth}"
 
 
+# Check ngay chạy nền phía server, không gắn với trang đã bấm: đổi trang / đóng tab vẫn check tiếp, xong thì báo trên
+# trang người bấm đang mở và làm mới bảng ở mọi trang Từ khóa & rank của website đó.
+_RUNNING: set[str] = set()  # website đang check
+_VIEWS: dict[str, dict[str, object]] = {}  # website → {client id: hàm làm mới bảng}
+
+SOURCES = {"kpi": "Cam kết", "manual": "Nhập tay", "gsc": "Từ GSC (★)"}
+
 RANK_TONES = [(3, ("#E7F3EA", "#1E7C31")), (10, ("#F2F7DC", "#5E7414")), (30, ("#FBF1DE", "#B7791F"))]
 
 
@@ -28,7 +35,8 @@ def change_text(k: dict) -> tuple[str, str, int]:
     return rank_change(k["date"], k["rank"], k["last_depth"], k["prev"], k["prev_depth"])
 
 
-def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
+def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, save_target=None) -> None:
+    """save_target(fields): lưu nơi check rank của dự án (vùng Google, thiết bị, vị trí, ngôn ngữ) rồi tải lại trang."""
     from .access import can_edit
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không thêm/bỏ keyword, không check (tốn tiền), không sửa lịch
@@ -38,15 +46,17 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
 
     from . import ui_theme as T
     right = T.page_header(ui, "leaderboard", "Từ khóa & rank",
-                          f"Google mobile, Việt Nam, qua DataForSEO. Ngân sách {cfg.rank.monthly_budget_usd:.0f} "
-                          "USD/tháng.")
+                          f"Check qua DataForSEO. Ngân sách {cfg.rank.monthly_budget_usd:.0f} USD/tháng.")
     with right:
         if cfg.rank.paused:
             T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
         if ed:
             ui.button("Thêm keyword", icon="add", on_click=lambda: add_dialog.open()).props("outline no-caps")
             check_btn = ui.button("Check ngay", icon="play_arrow", on_click=lambda: check_now()).props(
-                "unelevated no-caps").tooltip("Check các keyword đã tích chọn, hoặc toàn bộ nếu không chọn gì")
+                "unelevated no-caps").tooltip("Check các keyword đã tích chọn, hoặc toàn bộ nếu không chọn gì. "
+                                              "Đổi trang vẫn check tiếp, xong sẽ báo")
+            if site in _RUNNING:
+                check_btn.props("loading")
             if cfg.rank.paused:  # tạm ngưng: không gửi yêu cầu DataForSEO nào; quản trị bật lại ở màn Ngân sách
                 check_btn.disable()
                 check_btn.tooltip("Website đang tạm ngưng check rank. Quản trị bật lại ở màn Ngân sách check rank")
@@ -65,6 +75,45 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
             if ed:
                 ui.button("Sửa lịch", icon="edit_calendar", on_click=lambda: sched_dialog.open()).props(
                     "flat no-caps")
+
+    # ---- Nơi check: như người dùng tìm trên Google ở vùng / thiết bị / thành phố đó (theo dự án) ----
+    with ui.element("div").classes("sr-card q-px-md q-py-sm w-full"):
+        with ui.row().classes("w-full items-center gap-3 no-wrap"):
+            with ui.element("div").classes("sr-icon-bubble").style(f"background:{T.TONES['green'][0]}"):
+                ui.icon("travel_explore", size="18px").style(f"color:{T.GREEN}")
+            with ui.column().classes("gap-0"):
+                ui.label("Nơi check rank (áp dụng cho mọi keyword của website)").classes("text-xs muted")
+                ui.label(R.describe_target(cfg.rank)).classes("text-sm font-medium")
+            ui.space()
+            if ed and save_target:
+                ui.button("Sửa", icon="tune", on_click=lambda: target_dialog.open()).props("flat no-caps")
+
+    with ui.dialog() as target_dialog, ui.card().style("min-width: 520px; border-radius: 14px"):
+        ui.label("Nơi check rank").classes("text-lg font-semibold")
+        ui.label("Tool tìm từ khóa như một người dùng ở nơi này. Chọn đúng nơi khách hàng của website tìm kiếm thì "
+                 "vị trí sát với thực tế hơn.").classes("text-sm muted")
+        t_domain = ui.select(R.SE_DOMAINS, value=cfg.rank.se_domain, label="Vùng Google").props(
+            "outlined dense").classes("w-full")
+        t_device = ui.select(R.DEVICES, value=cfg.rank.device, label="Thiết bị").props("outlined dense").classes(
+            "w-full")
+        t_loc = ui.select(R.locations(), value=cfg.rank.location_code, label="Vị trí tìm kiếm",
+                          with_input=True).props("outlined dense").classes("w-full")
+        t_lang = ui.select(R.LANGUAGES, value=cfg.rank.language_code, label="Ngôn ngữ").props(
+            "outlined dense").classes("w-full")
+        ui.label("Đổi nơi check thì các lần check sau có thể lệch so với trước (do Google trả kết quả khác theo nơi "
+                 "tìm), không phải do website lên / xuống hạng.").classes("text-xs").style(f"color:{T.AMBER_TEXT}")
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Hủy", on_click=target_dialog.close).props("flat no-caps")
+
+            def save_where():
+                if not ed or not save_target:
+                    return
+                try:
+                    save_target({"se_domain": t_domain.value, "device": t_device.value,
+                                 "location_code": t_loc.value, "language_code": t_lang.value})
+                except ValueError as e:
+                    ui.notify(str(e), type="negative")
+            ui.button("Lưu", on_click=save_where).props("unelevated no-caps")
 
     with ui.dialog() as sched_dialog, ui.card().style("min-width: 520px; border-radius: 14px"):
         ui.label("Lịch check rank").classes("text-lg font-semibold")
@@ -134,6 +183,16 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
             "text-sm muted")
         paste = ui.textarea(placeholder=f"từ khóa 1\ntừ khóa 2 | https://{domain(cfg.site_url)}/trang-muc-tieu/").props("outlined autogrow").classes("w-full")
         add_result = ui.label().classes("text-sm")
+        with connect() as c:
+            from . import kpi as KP
+            has_sheet = bool(KP.sheet_id(c))
+        if has_sheet:  # từ khóa cam kết: lấy cả URL mục tiêu và Top mục tiêu trong sheet
+            ui.separator()
+            with ui.row().classes("w-full items-center no-wrap gap-2"):
+                ui.label("Hoặc lấy toàn bộ từ khóa trong tab Từ khóa cam kết của sheet dự án (kèm URL mục tiêu và Top "
+                         "mục tiêu).").classes("text-sm col")
+                sheet_btn = ui.button("Lấy từ sheet", icon="sync", on_click=lambda: from_sheet()).props(
+                    "outline no-caps")
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button("Đóng", on_click=add_dialog.close).props("flat no-caps")
             ui.button("Thêm vào danh sách", icon="playlist_add", on_click=lambda: add()).props("unelevated no-caps")
@@ -208,6 +267,9 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
     selection_bar.set_visibility(False)
     table = ui.table(columns=[
         {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
+        {"name": "source", "label": "Nguồn", "field": "source", "align": "left", "sortable": True},
+        {"name": "top", "label": "Top mục tiêu", "field": "top", "align": "center", "sortable": True,
+         ":sort": "(a, b, rowA, rowB) => (rowA.top_n || 999) - (rowB.top_n || 999)"},
         {"name": "volume", "label": "Volume", "field": "volume", "align": "right", "sortable": True,
          ":format": "v => v === null || v === undefined ? 'chờ lấy' : (v < 0 ? '< 10' : v.toLocaleString('vi-VN'))"},
         {"name": "pos", "label": "Vị trí", "field": "pos", "align": "center", "sortable": True,
@@ -289,19 +351,31 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
     def short(url):
         return (url or "").replace(site.rstrip("/"), "") or ("/" if url else "")
 
+    from nicegui import context
+    _client = context.client
+    _VIEWS.setdefault(site, {})[_client.id] = lambda: (check_btn.props(remove="loading") if ed else None, refresh())
+    _client.on_delete(lambda: _VIEWS.get(site, {}).pop(_client.id, None))
+
     def refresh():
         from . import volume as V
+        from . import kpi as KP
         with connect() as c:
             kws = R.keywords(c, site, end)
             vols = V.latest(c)
+            ver = KP.version_at(KP.versions(c), date.today())
+        committed = {k["keyword"].strip().lower(): k.get("target") for k in (ver or {}).get("keywords", [])}
         rows = []
         for k in kws:
             cur = k["rank"] if k["rank"] is not None else (k["last_depth"] or 0) + 1
             text, color, move = change_text(k)
+            kw_l = k["keyword"].strip().lower()
             bg, fg = next((t for lim, t in RANK_TONES if k["rank"] is not None and k["rank"] <= lim),
                           ("#F1F0EA", "#6B6A5E"))
             rows.append({
                 "id": k["id"], "keyword": k["keyword"], "pos": _pos(k["rank"], k["last_depth"]),
+                "source": "Cam kết" if kw_l in committed else SOURCES.get(k["source"], k["source"]),
+                "top": f"Top {committed[kw_l]}" if committed.get(kw_l) else "",
+                "top_n": committed.get(kw_l),
                 "volume": ((vols[k["id"]]["volume"] if vols[k["id"]]["volume"] is not None else -1)
                            if k["id"] in vols else None),
                 "checked": bool(k["date"]), "sort_pos": cur or 999, "bg": bg, "fg": fg,
@@ -318,6 +392,32 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
         update_schedule_view()
         if on_budget_change:
             on_budget_change()
+
+    async def from_sheet():
+        if not ed:
+            return
+        from nicegui import run
+
+        from . import kpi as KP
+
+        def work():
+            with connect() as c:
+                return KP.sync(c, cfg, user)
+        sheet_btn.props("loading")
+        try:
+            info = await run.io_bound(work)
+        except Exception as e:  # noqa: BLE001
+            add_result.text = f"Không đọc được sheet: {e}"
+            return
+        finally:
+            sheet_btn.props(remove="loading")
+        parts = [f"Sheet có {info['keywords']} từ khóa cam kết, thêm mới {info['added']}"]
+        if info["over_budget"]:
+            parts.append(f"KHÔNG thêm {len(info['over_budget'])} từ khóa vì vượt ngân sách")
+        if info["bad_url"]:
+            parts.append(f"bỏ qua {len(info['bad_url'])} dòng có URL không thuộc site")
+        add_result.text = " · ".join(parts) + "."
+        refresh()
 
     async def add():
         if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
@@ -368,8 +468,11 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
     async def check_now():
         if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
             return
-        from nicegui import run
+        from nicegui import background_tasks
 
+        if site in _RUNNING:
+            ui.notify("Đang check rank cho website này, xong sẽ báo.", type="info")
+            return
         ids = [r["id"] for r in table.selected] or [r["id"] for r in table.rows]
         if not ids:
             return
@@ -377,24 +480,10 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
         if not creds:
             ui.notify(f"Chưa có API key DataForSEO trong {cfg.dataforseo_secret}", type="negative")
             return
-
-        def work():
-            logs = []
-            with connect() as c:
-                R.run(c, site, cfg.rank, R.DataForSEO(*creds), end, only_ids=ids, wait_minutes=5, log=logs.append)
-            return logs
-
+        _RUNNING.add(site)
         check_btn.props("loading")
-        try:
-            logs = await run.io_bound(work)
-            failed = any(m.startswith(("Không gửi được", "Dừng")) for m in logs)
-            ui.notify(" ".join(logs) or "Không có keyword nào được gửi", type="warning" if failed else "positive",
-                      multi_line=True, timeout=0 if failed else 8000, close_button="Đóng" if failed else None)
-        except Exception as e:
-            ui.notify(f"Check rank thất bại: {e}", type="negative", multi_line=True, timeout=10000)
-        finally:
-            check_btn.props(remove="loading")
-        refresh()
+        ui.notify(f"Đã bắt đầu check {len(ids)} keyword. Có thể sang trang khác, xong tool sẽ báo.", type="info")
+        background_tasks.create(_check_job(cfg, connect, site, end, ids, creds, user))
 
     def export() -> bytes:
         from openpyxl import Workbook
@@ -425,3 +514,37 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None) -> None:
         return buf.getvalue()
 
     refresh()
+
+
+async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: str) -> None:
+    """Check rank chạy nền: không phụ thuộc trang đã bấm (trang có thể đã đóng)."""
+    from nicegui import run
+
+    from . import live as LIVE
+
+    def work():
+        logs = []
+        with connect() as c:
+            R.run(c, site, cfg.rank, R.DataForSEO(*creds), end, only_ids=ids, wait_minutes=5, log=logs.append)
+        return logs
+    try:
+        logs = await run.io_bound(work)
+        failed = any(m.startswith(("Không gửi được", "Dừng")) for m in logs)
+        LIVE.notify(user, f"Check rank {domain(site)}: " + (" ".join(logs) or "không có keyword nào được gửi"),
+                    type="warning" if failed else "positive", multi_line=True, timeout=0 if failed else 10000,
+                    close_button="Đóng" if failed else None)
+    except Exception as e:  # noqa: BLE001
+        LIVE.notify(user, f"Check rank {domain(site)} thất bại: {e}", type="negative", multi_line=True,
+                    timeout=0, close_button="Đóng")
+    finally:
+        _RUNNING.discard(site)
+        from nicegui import Client
+        for cid, fn in list(_VIEWS.get(site, {}).items()):
+            client = Client.instances.get(cid)
+            if client is None:
+                continue
+            try:
+                with client:
+                    fn()
+            except Exception:  # noqa: BLE001  (trang vừa đóng)
+                pass

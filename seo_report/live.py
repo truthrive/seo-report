@@ -4,11 +4,38 @@ của trang cũ không còn chạy được, kể cả khi trình duyệt cố g
 import asyncio
 
 _PAGES: dict[str, tuple[str, str]] = {}  # client id → (email, mã dự án)
+_PENDING: dict[str, list[tuple[str, dict]]] = {}  # email → thông báo chưa gửi được (lúc đó không mở trang nào)
 
 
 def register(client, email: str, project: str) -> None:
     _PAGES[client.id] = (str(email).strip().lower(), project)
     client.on_delete(lambda: _PAGES.pop(client.id, None))
+    for message, opts in _PENDING.pop(_PAGES[client.id][0], []):  # việc chạy nền xong lúc đang chuyển trang
+        _show(client, message, opts)
+
+
+def notify(email: str, message: str, **opts) -> int:
+    """Hiện thông báo trên mọi trang người này đang mở (việc chạy nền như check rank xong khi họ đã sang trang khác).
+    Không mở trang nào thì giữ lại, hiện ở trang kế tiếp họ mở. Trả số trang đã hiện."""
+    from nicegui import Client
+    n = 0
+    for cid in targets(email):
+        client = Client.instances.get(cid)
+        if client is not None and _show(client, message, opts):
+            n += 1
+    if not n:
+        _PENDING.setdefault(str(email).strip().lower(), []).append((message, opts))
+    return n
+
+
+def _show(client, message: str, opts: dict) -> bool:
+    try:
+        from nicegui import ui
+        with client:
+            ui.notify(message, **opts)
+        return True
+    except Exception:  # noqa: BLE001  (trang vừa đóng)
+        return False
 
 
 def targets(email: str | None = None, project: str | None = None, keep: str | None = None) -> list[str]:
