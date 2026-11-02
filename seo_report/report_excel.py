@@ -11,7 +11,8 @@ from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .projects import domain
-from .report import WeeklyReport, change, period_text, rank_change, rank_summary, summary
+from .report import (WeeklyReport, change, period_short, period_text, rank_change, rank_summary, summary,
+                     trend_label)
 
 GREEN = "1E7C31"
 RED = "C2410C"
@@ -189,6 +190,8 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
             for col in (2, 3):
                 s.ws.cell(s.row - len(rows) + i, col).number_format = fmt
 
+    cur_h = period_short(rep.kind, rep.week)
+    cmp_h = period_short(rep.kind, rep.prev_week, rep.week[0].year)
     s.section("Kết quả SEO · traffic từ Google Search")
     o = rep.organic if rep.organic and not rep.organic.get("error") else None
     sk, sp = rep.site_kpi, rep.site_prev
@@ -196,15 +199,27 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
              o["change"] if o else None],
             ["Click (GSC)", sk.clicks, sp.clicks, change(sk.clicks, sp.clicks)],
             ["Impression (GSC)", sk.impressions, sp.impressions, change(sk.impressions, sp.impressions)]]
-    s.table(["Chỉ số", f"{unit.capitalize()} này", f"{unit.capitalize()} trước", "% thay đổi"], rows,
+    s.table(["Chỉ số", cur_h, cmp_h, "% thay đổi"], rows,
             [None, "#,##0", "#,##0", pct_fmt], [[None, None, None, _delta_color(r[3])] for r in rows])
     s.text("Click đếm lượt bấm từ Google (GSC); phiên đếm lượt vào site (GA4). Hai nguồn đo khác nhau nên số không bằng "
            "nhau.", italic=True)
     s.gap()
+    cur_x, cmp_x = trend_label(rep.kind, rep.week), trend_label(rep.kind, rep.prev_week)
+    labels = [t["week"] for t in rep.trend]
+    s.text(f"Xu hướng {len(rep.trend)} {unit} gần nhất, tính đến {unit} báo cáo (để xem nhịp tăng giảm; bảng so "
+           f"sánh ở trên chỉ gồm 2 {unit})."
+           + ("" if cmp_x in labels else f" {cmp_h} nằm ngoài khoảng này."), italic=True)
     trend_top = s.row
-    s.table(["Tháng" if month else "Tuần (bắt đầu)", "Phiên Organic (GA4)", "Click (GSC)"],
-            [[t["week"], (o["spark"][i] if o else None), t["site_clicks"]] for i, t in enumerate(rep.trend)],
-            [None, "#,##0", "#,##0"])
+    tags = {cur_x: f"{unit.capitalize()} báo cáo", cmp_x: f"{unit.capitalize()} so sánh"}
+    s.table(["Tháng" if month else "Tuần (bắt đầu)", "Phiên Organic (GA4)", "Click (GSC)", "Ghi chú"],
+            [[t["week"], (o["spark"][i] if o else None), t["site_clicks"], tags.get(t["week"], "")]
+             for i, t in enumerate(rep.trend)],
+            [None, "#,##0", "#,##0", None])
+    for i, t in enumerate(rep.trend):  # tô dòng kỳ báo cáo (xanh) và kỳ so sánh (vàng)
+        fill = "E7F3EA" if t["week"] == cur_x else "FBF1DE" if t["week"] == cmp_x else None
+        if fill:
+            for col in range(1, 5):
+                s.ws.cell(trend_top + 1 + i, col).fill = PatternFill("solid", fgColor=fill)
     chart = LineChart()
     chart.title, chart.height, chart.width = None, 7, 16
     chart.add_data(Reference(ws, min_col=2, max_col=3, min_row=trend_top, max_row=trend_top + len(rep.trend)),
@@ -214,7 +229,7 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
         series.graphicalProperties.line.solidFill = color
         series.graphicalProperties.line.width = 28000
         series.smooth = False
-    ws.add_chart(chart, f"E{trend_top}")
+    ws.add_chart(chart, f"F{trend_top}")
     s.gap(max(0, 15 - len(rep.trend) - 1))
 
     s.section("Kết quả GEO · hiện diện trên AI Search")
@@ -229,7 +244,7 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
         rows.append(["Hiển thị trong AI Overviews (GSC)", aio["impressions"], aio["prev"], aio["change"]])
     else:
         rows.append(["Hiển thị trong AI Overviews (GSC)", "chưa có", "", None])
-    s.table(["Chỉ số", f"{unit.capitalize()} này", f"{unit.capitalize()} trước", "% thay đổi"], rows,
+    s.table(["Chỉ số", cur_h, cmp_h, "% thay đổi"], rows,
             [None, "#,##0", "#,##0", pct_fmt], [[None, None, None, _delta_color(r[3])] for r in rows])
     if aio and aio["impressions"] is not None and aio["share"] is not None:
         s.text(f"Tỷ lệ trên tổng hiển thị Google: {aio['share'] * 100:.1f}%".replace(".", ","))
@@ -293,17 +308,17 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
     if month:
         by_type = [r for r in rep.by_type if r["clicks"]]
         s.section("Phụ lục · theo loại trang (cộng theo trang)")
-        s.table(["Loại trang", "Click", "Click tháng trước", "% thay đổi", "Impression"],
+        s.table(["Loại trang", "Click", f"Click {cmp_h.lower()}", "% thay đổi", "Impression"],
                 [[r["type"], r["clicks"], r["prev_clicks"], r["change"], r["impressions"]] for r in by_type],
                 [None, "#,##0", "#,##0", pct_fmt, "#,##0"],
                 [[None, None, None, _delta_color(r["change"]), None] for r in by_type])
         s.section("Phụ lục · top 10 trang nhiều click nhất tháng")
-        s.table(["Trang", "Loại", "Click", "Click tháng trước", "% thay đổi"],
+        s.table(["Trang", "Loại", "Click", f"Click {cmp_h.lower()}", "% thay đổi"],
                 [[_short(r["url"], rep.site), r["type"], r["clicks"], r["prev"], r["change"]] for r in rep.top_urls],
                 [None, None, "#,##0", "#,##0", pct_fmt],
                 [[None, None, None, None, _delta_color(r["change"])] for r in rep.top_urls])
         s.section("Phụ lục · top 10 từ khóa (GSC) nhiều click nhất tháng")
-        s.table(["Từ khóa", "Click", "Impression", "Click tháng trước", "% thay đổi"],
+        s.table(["Từ khóa", "Click", "Impression", f"Click {cmp_h.lower()}", "% thay đổi"],
                 [[r["query"], r["clicks"], r["impressions"], r["prev"], r["change"]] for r in rep.top_queries],
                 [None, "#,##0", "#,##0", "#,##0", pct_fmt],
                 [[None, None, None, None, _delta_color(r["change"])] for r in rep.top_queries])

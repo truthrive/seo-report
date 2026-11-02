@@ -273,6 +273,20 @@ def compare_period(kind: str, cur: tuple[date, date], default_prev: tuple[date, 
     return start.replace(day=1), start.replace(day=calendar.monthrange(start.year, start.month)[1])
 
 
+def period_short(kind: str, period: tuple[date, date], ref_year: int | None = None) -> str:
+    """Nhãn kỳ ngắn cho cột bảng / dòng so sánh: "Tuần 14/09–20/09", "Tháng 09/2026"."""
+    s, e = period
+    if kind == "month":
+        return f"Tháng {s:%m/%Y}"
+    return f"Tuần {s:%d/%m}–{e:%d/%m}" + (f"/{e:%Y}" if ref_year and e.year != ref_year else "")
+
+
+def trend_label(kind: str, period: tuple[date, date]) -> str:
+    """Nhãn một kỳ trên trục biểu đồ xu hướng (khớp rep.trend[i]["week"])."""
+    s, _ = period
+    return f"{s:%d/%m}" if kind == "week" else f"T{s.month}/{s:%y}"
+
+
 def period_text(kind: str, period: tuple[date, date], ref_year: int | None = None) -> str:
     """"tuần 19/10 – 25/10" / "tháng 10/2026"; thêm năm cho tuần khác năm với kỳ báo cáo (so với cùng kỳ năm trước)."""
     s, e = period

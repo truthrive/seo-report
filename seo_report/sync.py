@@ -37,7 +37,10 @@ def sync(cfg: Config, service, con, backfill: bool = False, today: date | None =
     # Tổng theo property: một lần gọi cho cả khoảng. Lần đầu (bảng trống) lấy toàn bộ 16 tháng.
     has_totals = con.execute("SELECT 1 FROM gsc_site_daily WHERE site = ? LIMIT 1", (cfg.site_url,)).fetchone()
     start = min(days) if days and has_totals else (today - timedelta(days=cfg.backfill_months * 30)).isoformat()
-    totals = gsc.query_site_totals(service, cfg.site_url, start, (today - timedelta(days=1)).isoformat(), sleep=sleep)
+    meta: dict = {}
+    totals = gsc.query_site_totals(service, cfg.site_url, start, (today - timedelta(days=1)).isoformat(), sleep=sleep,
+                                   meta=meta)
     db.save_site_totals(con, cfg.site_url, totals)
+    db.save_first_incomplete(con, cfg.site_url, meta.get("firstIncompleteDate"))
     log(f"Tổng theo property: {len(totals)} ngày.")
     return len(days)

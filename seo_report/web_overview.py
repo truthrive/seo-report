@@ -11,7 +11,8 @@ from datetime import date, timedelta
 from . import ai_format as F
 from .projects import domain
 from . import ui_theme as T
-from .report import BUCKETS, build, build_month, change, note_key, period_text, rank_summary, save_note
+from .report import (BUCKETS, build, build_month, change, note_key, period_short, period_text, rank_summary,
+                     save_note, trend_label)
 
 RANK_TONE = [(3, "green"), (10, "lime"), (30, "amber")]
 
@@ -126,6 +127,13 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
     # Thứ tự khối giống nhau ở màn Báo cáo, file Excel và slide: KPI cam kết → SEO → GEO → Thứ hạng → Công việc → Điểm
     # cần chú ý → (tháng) Phụ lục. Tổng quan dùng cùng các khối, thay Công việc / Điểm cần chú ý bằng "Cần xử lý".
     wl = [t["week"] for t in rep.trend]
+    cmp_label = (f"Tháng {ps:%m/%Y}" if month else f"Tuần {ps:%d/%m}" + (f"/{ps:%Y}" if ps.year != ws.year else ""))
+    # ↑ dòng so sánh trong ô (gọn cho vừa ô): "Tuần 14/09: 73 · +15"; đủ ngày ở tiêu đề "So với tuần 14/09 – 20/09"
+    chart_marks = {trend_label(kind, (ws, we)): "Đang xem", trend_label(kind, (ps, pe)): "So sánh"}
+    trend_note = (f"Biểu đồ: {len(wl)} {unit} gần nhất đến {unit} đang xem; vạch đứt đánh dấu {unit} đang xem và "
+                  f"{unit} so sánh" + ("" if trend_label(kind, (ps, pe)) in wl else
+                                      f" ({period_short(kind, (ps, pe), ws.year).lower()} nằm ngoài khoảng biểu "
+                                      "đồ)") + ". ")
     prev_label = period_text(kind, (ps, pe), ws.year)
 
     @ui.refreshable
@@ -182,21 +190,24 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                             "hint": "Chưa kết nối GA4" if not o else "Không lấy được số GA4"}
             else:
                 o_metric = {"value": F.n(o["sessions"]), "delta": F.delta_pct(o["change"], o["prev"]),
+                            "prev": F.vs(o["sessions"], o["prev"], label=cmp_label),
                             "good": T.good_of(o["change"]), "data": o["spark"], "hint": "Kênh Organic Search"}
             dc, di = change(sk.clicks, sp.clicks), change(sk.impressions, sp.impressions)
             T.trend_chart(ui, [
                 {"key": "sessions", "label": "Lượt truy cập", "color": T.GREEN, "icon": "groups", "on": True,
                  "axis": "traffic", "zero": True, "source": "Nguồn: Google Analytics (GA4)", **o_metric},
                 {"key": "clicks", "label": "Click", "color": T.BLUE, "value": F.n(sk.clicks), "delta": F.delta_pct(dc),
+                 "prev": F.vs(sk.clicks, sp.clicks, label=cmp_label),
                  "good": T.good_of(dc), "data": [t["site_clicks"] for t in rep.trend], "on": True,
                  "axis": "traffic", "zero": True, "hint": "Lượt bấm vào site trên Google",
                  "source": "Nguồn: Google Search Console"},
                 {"key": "impr", "label": "Lượt hiển thị", "color": "#0E7C86", "value": F.n(sk.impressions),
                  "delta": F.delta_pct(di), "good": T.good_of(di), "data": [t.get("site_impressions") for t in rep.trend],
+                 "prev": F.vs(sk.impressions, sp.impressions, label=cmp_label),
                  "zero": True, "hint": "Số lần site hiện trên Google", "source": "Nguồn: Google Search Console"},
-            ], wl)
-            ui.label("Bấm ô để bật / tắt đường. Lượt truy cập và click đo bằng hai công cụ khác nhau nên số không "
-                     "bằng nhau.").classes("text-xs muted")
+            ], wl, marks=chart_marks)
+            ui.label(trend_note + "Bấm ô để bật / tắt đường. Lượt truy cập và click đo bằng hai công cụ khác nhau nên "
+                     "số không bằng nhau.").classes("text-xs muted")
 
     @ui.refreshable
     def geo_section():
@@ -213,6 +224,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 top = a["sources"][0] if a["sources"] else None
                 total = sum(x["sessions"] for x in a["sources"]) or 1
                 ai_metric = {"value": F.n(k["sessions"]), "delta": F.delta_pct(dl.get("sessions"), pv.get("sessions")),
+                             "prev": F.vs(k["sessions"], pv.get("sessions"), label=cmp_label),
                              "good": T.good_of(dl.get("sessions")), "data": state["ai_trend"],
                              "hint": (f"Nhiều nhất: {F.SOURCE_NAMES.get(top['source'], top['source'])} "
                                       f"{top['sessions'] / total * 100:.0f}%" if top else "ChatGPT, Gemini, Perplexity…")}
@@ -228,9 +240,11 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 dp = (aio["share"] - aio["prev_share"]) if aio["share"] is not None and \
                     aio.get("prev_share") is not None else None
                 aio_metric = {"value": F.n(aio["impressions"]), "delta": F.delta_pct(aio["change"], aio["prev"]),
+                              "prev": F.vs(aio["impressions"], aio["prev"], label=cmp_label),
                               "good": T.good_of(aio["change"]), "data": aio.get("spark"),
                               "hint": "AI Overviews và AI Mode"}
                 share_metric = {"value": F.pct(aio["share"], 1), "delta": F.delta_points(dp), "good": T.good_of(dp),
+                                "prev": F.vs(aio["share"], aio.get("prev_share"), "pct", label=cmp_label),
                                 "data": aio.get("share_spark"),
                                 "hint": "Phần lượt hiển thị Google nằm trong câu trả lời AI"}
             T.trend_chart(ui, [
@@ -240,7 +254,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                  "fmt": "pct", "on": True, "source": "Nguồn: Google Search Console", **share_metric},
                 {"key": "aio", "label": "Lượt hiện trong AI", "color": T.BLUE, "icon": "lightbulb",
                  "source": "Câu trả lời AI của Google · Nguồn: Google Search Console", **aio_metric},
-            ], wl)
+            ], wl, marks=chart_marks)
             ui.label("Cột: lượt vào site từ trợ lý AI. Đường: phần lượt hiển thị Google nằm trong câu trả lời AI. "
                      "Hai số đo riêng, không cộng với nhau.").classes("text-xs muted")
 

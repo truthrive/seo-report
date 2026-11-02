@@ -28,6 +28,17 @@ def delta_pct(v, base=None) -> str:
     return "" if v is None else f"{v * 100:+.1f}%".replace(".", ",")
 
 
+def vs(now, before, fmt: str = "num", label: str = "Kỳ trước") -> str:
+    """Dòng so sánh kiểu GSC: kỳ so sánh, số của kỳ đó và mức chênh tuyệt đối, ví dụ "Tuần 14/09–20/09: 73 · +15".
+    Trống khi không có số."""
+    if now is None or before is None:
+        return ""
+    if fmt == "pct":
+        return f"{label}: {pct(before, 1)}"
+    diff = now - before
+    return f"{label}: {n(before)} · {'+' if diff > 0 else '−' if diff < 0 else '±'}{n(abs(diff))}"
+
+
 def delta_points(v) -> str:
     """Thay đổi của một tỷ lệ, tính bằng điểm phần trăm."""
     return "" if v is None else f"{v * 100:+.2f} điểm".replace(".", ",")

@@ -152,7 +152,7 @@ class MonthlyReportTest(unittest.TestCase):
         texts = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
         for t in ("Báo cáo SEO & GEO tháng 10/2026", "Kế hoạch tháng sau", "Viết 5 bài.",
                   "Phụ lục · theo loại trang (cộng theo trang)", "Phụ lục · top 10 từ khóa (GSC) nhiều click nhất tháng",
-                  "Tháng này"):
+                  "Tháng 10/2026", "Tháng 09/2026", "Tháng báo cáo", "Tháng so sánh"):  # cột / dòng ghi đúng kỳ
             self.assertIn(t, texts)
 
 
@@ -217,3 +217,44 @@ class DashboardWindowTest(unittest.TestCase):
         cur90, _ = windows(date(2026, 10, 31), 90)
         b = buckets(cur90, 90)
         self.assertEqual((len(b), b[0][0], b[-1][1]), (13, cur90[0], cur90[1]))  # 90 ngày: theo tuần, phủ đủ
+
+
+class FinalDateTest(unittest.TestCase):
+    def test_latest_date_stops_before_first_incomplete_day(self):
+        import sqlite3
+        from datetime import date
+
+        from seo_report import db
+        from seo_report import keywords as K
+        con = sqlite3.connect(":memory:")
+        con.executescript(db.SCHEMA)
+        site = "https://x.vn/"
+        for d in ("2026-10-30", "2026-10-31", "2026-11-01"):
+            con.execute("INSERT INTO gsc_fetch_log VALUES (?, ?, 1, 1, 'x')", (site, d))
+        self.assertEqual(K.latest_date(con, site), date(2026, 11, 1))  # chưa biết ngày sơ bộ: như cũ
+        db.save_first_incomplete(con, site, "2026-10-31")
+        self.assertEqual(K.latest_date(con, site), date(2026, 10, 30))
+        db.save_first_incomplete(con, site, None)  # mọi ngày đã chốt
+        self.assertEqual(K.latest_date(con, site), date(2026, 11, 1))
+
+
+class CompareLineTest(unittest.TestCase):
+    def test_vs(self):
+        from seo_report import ai_format as F
+        self.assertEqual(F.vs(88, 70), "Kỳ trước: 70 · +18")
+        self.assertEqual(F.vs(4402, 4570, label="Tuần 14/09–20/09"), "Tuần 14/09–20/09: 4.570 · −168")
+        self.assertEqual(F.vs(0.263, 0.2253, "pct"), "Kỳ trước: 22,5%")
+        self.assertEqual(F.vs(5, None), "")
+
+
+class PeriodLabelTest(unittest.TestCase):
+    def test_labels(self):
+        from datetime import date
+
+        from seo_report.report import period_short, trend_label
+        wk = (date(2026, 9, 14), date(2026, 9, 20))
+        self.assertEqual(period_short("week", wk), "Tuần 14/09–20/09")
+        self.assertEqual(period_short("week", wk, 2027), "Tuần 14/09–20/09/2026")
+        self.assertEqual(period_short("month", (date(2026, 9, 1), date(2026, 9, 30))), "Tháng 09/2026")
+        self.assertEqual(trend_label("week", wk), "14/09")
+        self.assertEqual(trend_label("month", (date(2026, 9, 1), date(2026, 9, 30))), "T9/26")

@@ -47,6 +47,8 @@ HEAD = """
   .sr-kpi { transition: box-shadow .15s, transform .15s; flex: 1 1 0; min-width: 160px; align-self: stretch;
             display: flex; flex-direction: column; border-radius: 12px !important; }
   .sr-kpi-hint { margin-top: auto; padding-top: 6px; line-height: 1.3; }
+  .sr-prev { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden;
+             text-overflow: ellipsis; max-width: 100%; }
   .sr-kpi-row { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; align-items: stretch; }
   .sr-kpi.clickable:hover { box-shadow: 0 6px 18px rgba(31,34,30,.08); transform: translateY(-1px); cursor: pointer; }
   .sr-kpi-value { font-family: var(--head); font-size: 22px; font-weight: 700; letter-spacing: -0.025em;
@@ -368,15 +370,18 @@ def _value_js(fmt: str) -> str:
             if fmt == "pct" else "v => v == null ? 'chưa có' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})")
 
 
-def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230) -> None:
+def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
+                marks: dict[str, str] | None = None) -> None:
     """Kiểu biểu đồ Hiệu suất của Google Search Console: mỗi chỉ số là một ô bấm để bật/tắt đường của nó trên biểu
     đồ chung bên dưới. Mỗi đường có trục riêng (ẩn) nên chỉ số nhỏ (phiên ~5.000) và lớn (impression ~180.000) cùng
     hiện rõ; rê chuột hiện số mọi đường của kỳ đó.
 
-    metrics: [{"key", "label", "value", "delta", "good", "data": [số theo kỳ], "color", "icon", "hint", "fmt": "num" |
+    metrics: [{"key", "label", "value", "delta", "good", "prev": dòng kỳ trước, "data": [số theo kỳ], "color", "icon",
+    "hint", "fmt": "num" |
     "pct", "kind": "line" | "bar", "axis": nhóm trục, "zero": trục từ 0, "source": nguồn (tooltip), "on": bật sẵn hay
     không}]. Chỉ số không có dữ liệu xu hướng thì ô không bấm được.
-    Trục số của hai chỉ số bật đầu tiên hiện ở trái / phải, cùng màu đường."""
+    Trục số của hai chỉ số bật đầu tiên hiện ở trái / phải, cùng màu đường.
+    marks: {nhãn trục: chữ} vạch dọc đánh dấu kỳ đang xem / kỳ so sánh (nhãn không có trên trục thì bỏ qua)."""
     import json
     on = {m["key"] for m in metrics if m.get("on") and _has(m)}
     if not on:
@@ -403,8 +408,10 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230) -
                         ui.label(m["label"]).classes("sr-trend-label")
                     with ui.row().classes("items-baseline gap-2 q-mt-xs").style("row-gap:2px"):  # hẹp thì % xuống dòng
                         ui.label(m["value"]).classes("sr-trend-value num")
-                        if m.get("delta"):
+                        if m.get("delta") and not (m.get("prev") and m["delta"].startswith("kỳ trước")):
                             delta_badge(ui, m["delta"], m.get("good"))
+                    if m.get("prev"):
+                        ui.label(m["prev"]).classes("sr-prev num").props["title"] = m["prev"]
                     hint = ui.label(m.get("hint") or " ").classes("sr-trend-hint")
                     full = " · ".join(x for x in (m.get("hint"), m.get("source")) if x)
                     if full:  # chữ phụ có thể bị cắt "…" và nguồn số liệu: rê chuột để đọc đủ
@@ -429,6 +436,14 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230) -
                                "symbolSize": 6, "showSymbol": len(labels) <= 12, "connectNulls": False, "z": 3,
                                "lineStyle": {"width": 2.5, "color": m["color"]},
                                "areaStyle": {"color": m["color"], "opacity": 0.05 if len(shown) > 1 else 0.1}})
+        if marks and series:  # vạch dọc: kỳ đang xem / kỳ so sánh, để biết hai cột số ở ô nằm đâu trên biểu đồ
+            series[0]["markLine"] = {
+                "symbol": "none", "silent": True, "animation": False,
+                "lineStyle": {"color": "#8C8A7E", "type": "dashed", "width": 1},
+                "label": {"position": "end", "color": "#4A4A40", "fontSize": 10.5, "fontWeight": 600},
+                "data": [{"xAxis": x, "label": {"formatter": text,  # mốc ở mép phải: canh chữ vào trong
+                                                **({"align": "right"} if x == labels[-1] else {})}}
+                         for x, text in marks.items() if x in labels]}
         pct_js = "v => (v * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%'"
         num_js = ("v => Math.abs(v) >= 1000 ? (v / 1000).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + 'k' "
                   ": v.toLocaleString('vi-VN')")
@@ -456,7 +471,8 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230) -
                "? (p.value * 100).toLocaleString('vi-VN', {maximumFractionDigits: 1}) + '%' : "
                "p.value.toLocaleString('vi-VN'))) + '</b>').join('')")
         ui.echart({"animation": False, "legend": {"show": False},
-                   "grid": {"left": 44, "right": 48 if len(groups) > 1 else 14, "top": 14, "bottom": 26},
+                   "grid": {"left": 44, "right": 48 if len(groups) > 1 else 14, "top": 26 if marks else 14,
+                            "bottom": 26},
                    "tooltip": {"trigger": "axis", "confine": True, ":formatter": tip,
                                "axisPointer": {"type": "shadow" if has_bar else "line",
                                                "shadowStyle": {"color": "rgba(31,34,30,0.04)"},
@@ -483,7 +499,7 @@ def _has(m: dict) -> bool:
 
 def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | None = None, hint: str = "",
         spark: list | None = None, tone: str = "green", href: str | None = None, spark_kind: str = "bar",
-        spark_labels: list | None = None, spark_fmt: str = "num"):
+        spark_labels: list | None = None, spark_fmt: str = "num", prev: str = ""):
     """Thẻ KPI: icon + nhãn, số lớn, nhãn thay đổi (xanh/đỏ), sparkline, dòng phụ. Có href thì bấm để đi sâu.
     Bố cục cố định để mọi thẻ cùng hàng cao bằng nhau: spark=[] giữ chỗ biểu đồ dù không có số, dòng phụ luôn có
     chỗ (để trống nếu không có)."""
@@ -499,7 +515,10 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
             ui.label(label).classes("text-sm muted").style("line-height:1.2")
         with ui.row().classes("items-baseline gap-2 q-mt-sm no-wrap"):
             ui.label(value).classes("sr-kpi-value num")
-            delta_badge(ui, delta, good)
+            if not (prev and delta.startswith("kỳ trước")):  # số kỳ trước đã có ở dòng dưới
+                delta_badge(ui, delta, good)
+        if prev:  # số kỳ trước và mức chênh (như ô so sánh của GSC)
+            ui.label(prev).classes("sr-prev num").props["title"] = prev
         if spark is not None:
             with ui.element("div").classes("q-mt-xs w-full"):
                 sparkline(ui, spark, fg, labels=spark_labels, fmt=spark_fmt)
