@@ -28,15 +28,21 @@ def delta_pct(v, base=None) -> str:
     return "" if v is None else f"{v * 100:+.1f}%".replace(".", ",")
 
 
-def vs(now, before, fmt: str = "num", label: str = "Kỳ trước") -> str:
-    """Dòng so sánh kiểu GSC: kỳ so sánh, số của kỳ đó và mức chênh tuyệt đối, ví dụ "Tuần 14/09–20/09: 73 · +15".
-    Trống khi không có số."""
+def vs_parts(now, before, fmt: str = "num", label: str = "Kỳ trước") -> dict | None:
+    """Khối so sánh kiểu GSC: {"label": kỳ so sánh, "value": số của kỳ đó, "diff": chênh tuyệt đối ('' với tỷ lệ:
+    chênh đã có ở nhãn điểm)}. None khi không có số."""
     if now is None or before is None:
-        return ""
+        return None
     if fmt == "pct":
-        return f"{label}: {pct(before, 1)}"
-    diff = now - before
-    return f"{label}: {n(before)} · {'+' if diff > 0 else '−' if diff < 0 else '±'}{n(abs(diff))}"
+        return {"label": label, "value": pct(before, 1), "diff": ""}
+    d = now - before
+    return {"label": label, "value": n(before), "diff": f"{'+' if d > 0 else '−' if d < 0 else '±'}{n(abs(d))}"}
+
+
+def vs(now, before, fmt: str = "num", label: str = "Kỳ trước") -> str:
+    """Dạng chữ một dòng của vs_parts, ví dụ "Tuần 14/09–20/09: 73 · +15". Trống khi không có số."""
+    p = vs_parts(now, before, fmt, label)
+    return "" if p is None else f"{p['label']}: {p['value']}" + (f" · {p['diff']}" if p["diff"] else "")
 
 
 def delta_points(v) -> str:

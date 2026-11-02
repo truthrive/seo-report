@@ -47,8 +47,14 @@ HEAD = """
   .sr-kpi { transition: box-shadow .15s, transform .15s; flex: 1 1 0; min-width: 160px; align-self: stretch;
             display: flex; flex-direction: column; border-radius: 12px !important; }
   .sr-kpi-hint { margin-top: auto; padding-top: 6px; line-height: 1.3; }
-  .sr-prev { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden;
-             text-overflow: ellipsis; max-width: 100%; }
+  /* Khối so sánh dưới số chính (như GSC): kỳ so sánh · số của kỳ đó · chênh lệch tô màu */
+  .sr-cmp { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; margin-top: 8px; padding-top: 6px;
+            border-top: 1px dashed #DEDCD2; white-space: nowrap; min-width: 0; }
+  .sr-cmp .lab { flex-basis: 100%; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+                 line-height: 1.3; }
+  .sr-cmp .val { font-size: 15px; font-weight: 650; color: #4A4A40; font-variant-numeric: tabular-nums; }
+  .sr-cmp .diff { font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sr-cmp .diff.up { color: #1E7C31; } .sr-cmp .diff.down { color: #C2410C; } .sr-cmp .diff.flat { color: #6B6A5E; }
   .sr-kpi-row { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; align-items: stretch; }
   .sr-kpi.clickable:hover { box-shadow: 0 6px 18px rgba(31,34,30,.08); transform: translateY(-1px); cursor: pointer; }
   .sr-kpi-value { font-family: var(--head); font-size: 22px; font-weight: 700; letter-spacing: -0.025em;
@@ -334,6 +340,16 @@ def page_header(ui, icon: str, title: str, subtitle: str = "", tone: str = "gree
     return right
 
 
+def compare_line(ui, parts: dict, good: bool | None) -> None:
+    """Khối so sánh dưới số chính: "Tuần 28/09   5.535   +126" (chênh tô xanh / đỏ theo tốt / xấu)."""
+    with ui.element("div").classes("sr-cmp") as box:
+        ui.label(parts["label"]).classes("lab")
+        ui.label(parts["value"]).classes("val")
+        if parts.get("diff"):
+            ui.label(parts["diff"]).classes("diff " + ("flat" if good is None else "up" if good else "down"))
+    box.props["title"] = f"{parts['label']}: {parts['value']}" + (f" ({parts['diff']})" if parts.get("diff") else "")
+
+
 def delta_badge(ui, text: str, good: bool | None):
     if not text:
         return
@@ -411,7 +427,7 @@ def trend_chart(ui, metrics: list[dict], labels: list[str], height: int = 230,
                         if m.get("delta") and not (m.get("prev") and m["delta"].startswith("kỳ trước")):
                             delta_badge(ui, m["delta"], m.get("good"))
                     if m.get("prev"):
-                        ui.label(m["prev"]).classes("sr-prev num").props["title"] = m["prev"]
+                        compare_line(ui, m["prev"], m.get("good"))
                     hint = ui.label(m.get("hint") or " ").classes("sr-trend-hint")
                     full = " · ".join(x for x in (m.get("hint"), m.get("source")) if x)
                     if full:  # chữ phụ có thể bị cắt "…" và nguồn số liệu: rê chuột để đọc đủ
@@ -499,7 +515,7 @@ def _has(m: dict) -> bool:
 
 def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | None = None, hint: str = "",
         spark: list | None = None, tone: str = "green", href: str | None = None, spark_kind: str = "bar",
-        spark_labels: list | None = None, spark_fmt: str = "num", prev: str = ""):
+        spark_labels: list | None = None, spark_fmt: str = "num", prev: dict | None = None):
     """Thẻ KPI: icon + nhãn, số lớn, nhãn thay đổi (xanh/đỏ), sparkline, dòng phụ. Có href thì bấm để đi sâu.
     Bố cục cố định để mọi thẻ cùng hàng cao bằng nhau: spark=[] giữ chỗ biểu đồ dù không có số, dòng phụ luôn có
     chỗ (để trống nếu không có)."""
@@ -515,10 +531,10 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
             ui.label(label).classes("text-sm muted").style("line-height:1.2")
         with ui.row().classes("items-baseline gap-2 q-mt-sm no-wrap"):
             ui.label(value).classes("sr-kpi-value num")
-            if not (prev and delta.startswith("kỳ trước")):  # số kỳ trước đã có ở dòng dưới
+            if not (prev and (delta or "").startswith("kỳ trước")):  # số kỳ trước đã có ở dòng dưới
                 delta_badge(ui, delta, good)
-        if prev:  # số kỳ trước và mức chênh (như ô so sánh của GSC)
-            ui.label(prev).classes("sr-prev num").props["title"] = prev
+        if prev:  # số kỳ so sánh và mức chênh (như ô so sánh của GSC)
+            compare_line(ui, prev, good)
         if spark is not None:
             with ui.element("div").classes("q-mt-xs w-full"):
                 sparkline(ui, spark, fg, labels=spark_labels, fmt=spark_fmt)

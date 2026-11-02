@@ -116,16 +116,16 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
             now, before, spark = g[key]
             d = change(now, before)
             return T.kpi(ui, icon, label, F.n(now), F.delta_pct(d, before), T.good_of(d), hint, spark=spark,
-                         tone=tone, spark_kind="line", spark_labels=labels, prev=F.vs(now, before, label=prev_label))
+                         tone=tone, spark_kind="line", spark_labels=labels, prev=F.vs_parts(now, before, label=prev_label))
 
         with ui.element("div").classes("sr-dash-grid w-full"):
             dc, di = change(clicks, clicks_prev), change(impr, impr_prev)
             T.kpi(ui, "ads_click", "Click từ Google", F.n(clicks), F.delta_pct(dc, clicks_prev), T.good_of(dc),
                   "Google Search Console", spark=[total(s, e, 0) for s, e in bks], tone="blue", spark_kind="line",
-                  spark_labels=labels, href="/url", prev=F.vs(clicks, clicks_prev, label=prev_label))
+                  spark_labels=labels, href="/url", prev=F.vs_parts(clicks, clicks_prev, label=prev_label))
             T.kpi(ui, "visibility", "Lượt hiển thị", F.n(impr), F.delta_pct(di, impr_prev), T.good_of(di),
                   "Số lần site hiện trên Google", spark=[total(s, e, 1) for s, e in bks], tone="blue",
-                  spark_kind="line", spark_labels=labels, href="/url", prev=F.vs(impr, impr_prev, label=prev_label))
+                  spark_kind="line", spark_labels=labels, href="/url", prev=F.vs_parts(impr, impr_prev, label=prev_label))
             ga4_tile("groups", "Lượt truy cập (mọi kênh)", "all", "green", "Google Analytics 4")
             ga4_tile("travel_explore", "Lượt truy cập Organic", "organic", "green", "Kênh Organic Search (GA4)")
             ga4_tile("smart_toy", "Truy cập từ AI", "ai", "purple", "ChatGPT, Gemini, Perplexity… (GA4)")
@@ -136,7 +136,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                       T.good_of(dp), "Phần lượt hiển thị Google trong câu trả lời AI"
                       + (f" · số đến {aio['until']:%d/%m}" if aio.get("until") else ""),
                       spark=aio.get("share_spark") or [], tone="amber", spark_kind="line", spark_labels=labels,
-                      spark_fmt="pct", href="/ai", prev=F.vs(aio["share"], aio.get("prev_share"), "pct", label=prev_label))
+                      spark_fmt="pct", href="/ai", prev=F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=prev_label))
             else:
                 T.kpi(ui, "lightbulb", "Tỷ lệ hiện trong AI", "…" if loading else "chưa có",
                       hint="Cần nhập file Generative AI từ GSC" if not loading else "Đang tính", spark=[],

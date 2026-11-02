@@ -190,20 +190,20 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                             "hint": "Chưa kết nối GA4" if not o else "Không lấy được số GA4"}
             else:
                 o_metric = {"value": F.n(o["sessions"]), "delta": F.delta_pct(o["change"], o["prev"]),
-                            "prev": F.vs(o["sessions"], o["prev"], label=cmp_label),
+                            "prev": F.vs_parts(o["sessions"], o["prev"], label=cmp_label),
                             "good": T.good_of(o["change"]), "data": o["spark"], "hint": "Kênh Organic Search"}
             dc, di = change(sk.clicks, sp.clicks), change(sk.impressions, sp.impressions)
             T.trend_chart(ui, [
                 {"key": "sessions", "label": "Lượt truy cập", "color": T.GREEN, "icon": "groups", "on": True,
                  "axis": "traffic", "zero": True, "source": "Nguồn: Google Analytics (GA4)", **o_metric},
                 {"key": "clicks", "label": "Click", "color": T.BLUE, "value": F.n(sk.clicks), "delta": F.delta_pct(dc),
-                 "prev": F.vs(sk.clicks, sp.clicks, label=cmp_label),
+                 "prev": F.vs_parts(sk.clicks, sp.clicks, label=cmp_label),
                  "good": T.good_of(dc), "data": [t["site_clicks"] for t in rep.trend], "on": True,
                  "axis": "traffic", "zero": True, "hint": "Lượt bấm vào site trên Google",
                  "source": "Nguồn: Google Search Console"},
                 {"key": "impr", "label": "Lượt hiển thị", "color": "#0E7C86", "value": F.n(sk.impressions),
                  "delta": F.delta_pct(di), "good": T.good_of(di), "data": [t.get("site_impressions") for t in rep.trend],
-                 "prev": F.vs(sk.impressions, sp.impressions, label=cmp_label),
+                 "prev": F.vs_parts(sk.impressions, sp.impressions, label=cmp_label),
                  "zero": True, "hint": "Số lần site hiện trên Google", "source": "Nguồn: Google Search Console"},
             ], wl, marks=chart_marks)
             ui.label(trend_note + "Bấm ô để bật / tắt đường. Lượt truy cập và click đo bằng hai công cụ khác nhau nên "
@@ -224,7 +224,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 top = a["sources"][0] if a["sources"] else None
                 total = sum(x["sessions"] for x in a["sources"]) or 1
                 ai_metric = {"value": F.n(k["sessions"]), "delta": F.delta_pct(dl.get("sessions"), pv.get("sessions")),
-                             "prev": F.vs(k["sessions"], pv.get("sessions"), label=cmp_label),
+                             "prev": F.vs_parts(k["sessions"], pv.get("sessions"), label=cmp_label),
                              "good": T.good_of(dl.get("sessions")), "data": state["ai_trend"],
                              "hint": (f"Nhiều nhất: {F.SOURCE_NAMES.get(top['source'], top['source'])} "
                                       f"{top['sessions'] / total * 100:.0f}%" if top else "ChatGPT, Gemini, Perplexity…")}
@@ -240,11 +240,11 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 dp = (aio["share"] - aio["prev_share"]) if aio["share"] is not None and \
                     aio.get("prev_share") is not None else None
                 aio_metric = {"value": F.n(aio["impressions"]), "delta": F.delta_pct(aio["change"], aio["prev"]),
-                              "prev": F.vs(aio["impressions"], aio["prev"], label=cmp_label),
+                              "prev": F.vs_parts(aio["impressions"], aio["prev"], label=cmp_label),
                               "good": T.good_of(aio["change"]), "data": aio.get("spark"),
                               "hint": "AI Overviews và AI Mode"}
                 share_metric = {"value": F.pct(aio["share"], 1), "delta": F.delta_points(dp), "good": T.good_of(dp),
-                                "prev": F.vs(aio["share"], aio.get("prev_share"), "pct", label=cmp_label),
+                                "prev": F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=cmp_label),
                                 "data": aio.get("share_spark"),
                                 "hint": "Phần lượt hiển thị Google nằm trong câu trả lời AI"}
             T.trend_chart(ui, [

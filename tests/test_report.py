@@ -258,3 +258,12 @@ class PeriodLabelTest(unittest.TestCase):
         self.assertEqual(period_short("month", (date(2026, 9, 1), date(2026, 9, 30))), "Tháng 09/2026")
         self.assertEqual(trend_label("week", wk), "14/09")
         self.assertEqual(trend_label("month", (date(2026, 9, 1), date(2026, 9, 30))), "T9/26")
+
+
+class ComparepartsTest(unittest.TestCase):
+    def test_vs_parts(self):
+        from seo_report import ai_format as F
+        self.assertEqual(F.vs_parts(5661, 5535, label="Tuần 28/09"),
+                         {"label": "Tuần 28/09", "value": "5.535", "diff": "+126"})
+        self.assertEqual(F.vs_parts(0.263, 0.2253, "pct")["diff"], "")
+        self.assertIsNone(F.vs_parts(1, None))
