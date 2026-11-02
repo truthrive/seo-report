@@ -360,25 +360,38 @@ def delta_badge(ui, text: str, good: bool | None):
 
 
 def sparkline(ui, values: list, color: str = GREEN, height: int = 40, labels: list | None = None,
-              fmt: str = "num", **_):
+              fmt: str = "num", compare: list | None = None, compare_labels: list | None = None, **_):
     """Đường nhỏ theo kỳ (cũ → mới) có nền mờ, chấm đậm ở kỳ đang xem, rê chuột hiện số. Trục từ 0 để độ dốc đúng tỷ
-    lệ: không phóng đại -0,6% thành một cú tụt; muốn xem chênh lệch chính xác thì xem nhãn % cạnh số lớn."""
+    lệ: không phóng đại -0,6% thành một cú tụt; muốn xem chênh lệch chính xác thì xem nhãn % cạnh số lớn.
+    compare: số của kỳ so sánh, cùng số điểm, vẽ nét đứt chồng lên cùng biểu đồ (như chế độ so sánh của GSC);
+    compare_labels: ngày của từng điểm kỳ so sánh, hiện khi rê chuột."""
+    import json
     vals = list(values)
     if not any(v for v in vals if v is not None):
         ui.element("div").style(f"height:{height}px")  # giữ chỗ để các thẻ cùng hàng thẳng nhau
         return
     last = max(i for i, v in enumerate(vals) if v is not None)
     data = [{"value": v, "symbolSize": 6 if i == last else 0} for i, v in enumerate(vals)]
-    ui.echart({"animation": False, "grid": {"left": 3, "right": 5, "top": 5, "bottom": 2},
-               "tooltip": {"trigger": "axis", "confine": True,
-                           "axisPointer": {"type": "line", "lineStyle": {"color": "#D9D8CF"}},
-                           "textStyle": {"fontSize": 11}, "padding": [4, 8], ":valueFormatter": _value_js(fmt)},
-               "xAxis": {"type": "category", "show": False, "boundaryGap": False,
-                         "data": labels or [str(i) for i in range(len(vals))]},
+    xs = labels or [str(i) for i in range(len(vals))]
+    series = [{"type": "line", "data": data, "name": "Kỳ này", "smooth": 0.3, "symbol": "circle", "z": 3,
+               "lineStyle": {"color": color, "width": 2}, "itemStyle": {"color": color},
+               "areaStyle": {"color": color, "opacity": 0.12}}]
+    tooltip = {"trigger": "axis", "confine": True, "axisPointer": {"type": "line", "lineStyle": {"color": "#D9D8CF"}},
+               "textStyle": {"fontSize": 11}, "padding": [4, 8], ":valueFormatter": _value_js(fmt)}
+    if compare and any(v is not None for v in compare):
+        series.append({"type": "line", "data": list(compare)[:len(vals)], "name": "Kỳ so sánh", "smooth": 0.3,
+                       "symbol": "none", "z": 2, "lineStyle": {"color": "#8C8A7E", "width": 1.5, "type": [4, 3],
+                                                                "opacity": 0.9}, "itemStyle": {"color": "#8C8A7E"}})
+        cl = list(compare_labels or [])
+        fmt_js = _value_js(fmt)
+        tooltip[":formatter"] = (  # mỗi dòng ghi ngày của chính kỳ đó: "24/10 Kỳ này 700" / "26/09 Kỳ so sánh 650"
+            "ps => ps.map(p => p.marker + (p.seriesIndex === 0 ? " + json.dumps(xs) + "[p.dataIndex] + ' · Kỳ này' : "
+            "(" + json.dumps(cl) + "[p.dataIndex] || '') + ' · Kỳ so sánh') + ': <b>' + (" + fmt_js + ")(p.value) "
+            "+ '</b>').join('<br/>')")
+    ui.echart({"animation": False, "grid": {"left": 3, "right": 5, "top": 5, "bottom": 2}, "tooltip": tooltip,
+               "xAxis": {"type": "category", "show": False, "boundaryGap": False, "data": xs},
                "yAxis": {"type": "value", "show": False, "min": 0},
-               "series": [{"type": "line", "data": data, "name": "", "smooth": 0.3, "symbol": "circle",
-                           "lineStyle": {"color": color, "width": 2}, "itemStyle": {"color": color},
-                           "areaStyle": {"color": color, "opacity": 0.12}}]}).style(f"height:{height}px; width:100%")
+               "series": series}).style(f"height:{height}px; width:100%")
 
 
 def _value_js(fmt: str) -> str:
@@ -515,7 +528,8 @@ def _has(m: dict) -> bool:
 
 def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | None = None, hint: str = "",
         spark: list | None = None, tone: str = "green", href: str | None = None, spark_kind: str = "bar",
-        spark_labels: list | None = None, spark_fmt: str = "num", prev: dict | None = None):
+        spark_labels: list | None = None, spark_fmt: str = "num", prev: dict | None = None,
+        spark_compare: list | None = None, spark_compare_labels: list | None = None):
     """Thẻ KPI: icon + nhãn, số lớn, nhãn thay đổi (xanh/đỏ), sparkline, dòng phụ. Có href thì bấm để đi sâu.
     Bố cục cố định để mọi thẻ cùng hàng cao bằng nhau: spark=[] giữ chỗ biểu đồ dù không có số, dòng phụ luôn có
     chỗ (để trống nếu không có)."""
@@ -537,7 +551,8 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
             compare_line(ui, prev, good)
         if spark is not None:
             with ui.element("div").classes("q-mt-xs w-full"):
-                sparkline(ui, spark, fg, labels=spark_labels, fmt=spark_fmt)
+                sparkline(ui, spark, fg, labels=spark_labels, fmt=spark_fmt, compare=spark_compare,
+                          compare_labels=spark_compare_labels)
         ui.label(hint or " ").classes("text-xs muted sr-kpi-hint")
     return card
 

@@ -85,11 +85,14 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
             okr = None
     bks = buckets(cur, days)
     labels = [f"{s:%d/%m}" for s, _ in bks]
+    pbks = buckets(prev, days)  # kỳ so sánh, cùng số điểm: vẽ nét đứt trên cùng biểu đồ nhỏ
+    plabels = [f"{s:%d/%m}" for s, _ in pbks]
     ed = A.can_edit(user)
 
     T.page_header(ui, "space_dashboard", "Tổng quan",
-                  f"{days} ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}) so với {days} ngày trước · "
-                  f"{domain(site)}")
+                  f"{days} ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}) so với {days} ngày trước đó "
+                  f"({prev[0]:%d/%m} – {prev[1]:%d/%m}) · {domain(site)}. Biểu đồ trong ô: nét liền là kỳ này, "
+                  "nét đứt là kỳ so sánh")
     if ed:
         health_strip(ui, cfg, connect, None)
 
@@ -113,19 +116,22 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
             if g.get("error") or key not in g:
                 return T.kpi(ui, icon, label, "chưa có", hint="Chưa kết nối GA4" if not cfg.ga4_property
                              else "Không lấy được số GA4", spark=[], tone=tone)
-            now, before, spark = g[key]
+            now, before, spark, spark_prev = g[key]
             d = change(now, before)
             return T.kpi(ui, icon, label, F.n(now), F.delta_pct(d, before), T.good_of(d), hint, spark=spark,
-                         tone=tone, spark_kind="line", spark_labels=labels, prev=F.vs_parts(now, before, label=prev_label))
+                         tone=tone, spark_kind="line", spark_labels=labels, prev=F.vs_parts(now, before, label=prev_label),
+                         spark_compare=spark_prev, spark_compare_labels=plabels)
 
         with ui.element("div").classes("sr-dash-grid w-full"):
             dc, di = change(clicks, clicks_prev), change(impr, impr_prev)
             T.kpi(ui, "ads_click", "Click từ Google", F.n(clicks), F.delta_pct(dc, clicks_prev), T.good_of(dc),
                   "Google Search Console", spark=[total(s, e, 0) for s, e in bks], tone="blue", spark_kind="line",
-                  spark_labels=labels, href="/url", prev=F.vs_parts(clicks, clicks_prev, label=prev_label))
+                  spark_labels=labels, href="/url", prev=F.vs_parts(clicks, clicks_prev, label=prev_label),
+                  spark_compare=[total(s, e, 0) for s, e in pbks], spark_compare_labels=plabels)
             T.kpi(ui, "visibility", "Lượt hiển thị", F.n(impr), F.delta_pct(di, impr_prev), T.good_of(di),
                   "Số lần site hiện trên Google", spark=[total(s, e, 1) for s, e in bks], tone="blue",
-                  spark_kind="line", spark_labels=labels, href="/url", prev=F.vs_parts(impr, impr_prev, label=prev_label))
+                  spark_kind="line", spark_labels=labels, href="/url", prev=F.vs_parts(impr, impr_prev, label=prev_label),
+                  spark_compare=[total(s, e, 1) for s, e in pbks], spark_compare_labels=plabels)
             ga4_tile("groups", "Lượt truy cập (mọi kênh)", "all", "green", "Google Analytics 4")
             ga4_tile("travel_explore", "Lượt truy cập Organic", "organic", "green", "Kênh Organic Search (GA4)")
             ga4_tile("smart_toy", "Truy cập từ AI", "ai", "purple", "ChatGPT, Gemini, Perplexity… (GA4)")
@@ -136,7 +142,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                       T.good_of(dp), "Phần lượt hiển thị Google trong câu trả lời AI"
                       + (f" · số đến {aio['until']:%d/%m}" if aio.get("until") else ""),
                       spark=aio.get("share_spark") or [], tone="amber", spark_kind="line", spark_labels=labels,
-                      spark_fmt="pct", href="/ai", prev=F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=prev_label))
+                      spark_fmt="pct", href="/ai", prev=F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=prev_label),
+                      spark_compare=aio.get("share_spark_prev"), spark_compare_labels=aio.get("prev_labels"))
             else:
                 T.kpi(ui, "lightbulb", "Tỷ lệ hiện trong AI", "…" if loading else "chưa có",
                       hint="Cần nhập file Generative AI từ GSC" if not loading else "Đang tính", spark=[],
@@ -237,6 +244,12 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     out["aio"] = aio_block(c, site, c2, p2, buckets(c2, days))
                     if out["aio"]:
                         out["aio"]["until"] = until
+                else:
+                    c2, p2 = cur, prev
+                if out["aio"]:  # đường nét đứt của kỳ so sánh trên biểu đồ nhỏ
+                    pa = aio_block(c, site, p2, p2, buckets(p2, days))
+                    out["aio"]["share_spark_prev"] = (pa or {}).get("share_spark")
+                    out["aio"]["prev_labels"] = [f"{s_:%d/%m}" for s_, _ in buckets(p2, days)]
                 if not cfg.ga4_property:
                     return out
                 try:
@@ -258,7 +271,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     def tot(src, s, e, i=None):
                         return sum((v[i] if i is not None else v) for d, v in src.items() if s <= d <= e)
                     for key, src, i in (("all", by_day, 0), ("organic", by_day, 1), ("ai", ai_day, None)):
-                        out[key] = (tot(src, *cur, i), tot(src, *prev, i), [tot(src, s, e, i) for s, e in bks])
+                        out[key] = (tot(src, *cur, i), tot(src, *prev, i), [tot(src, s, e, i) for s, e in bks],
+                                    [tot(src, s, e, i) for s, e in pbks])
                 except (Exception, SystemExit) as e:  # noqa: BLE001
                     out["error"] = str(e)
             return out
