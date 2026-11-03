@@ -41,6 +41,7 @@ class Config:
     keywords: KeywordSettings = field(default_factory=KeywordSettings)
     rank: RankSettings = field(default_factory=RankSettings)
     dataforseo_secret: Path = Path("secrets/dataforseo.toml")
+    google_ads_secret: Path = Path("secrets/google_ads.toml")  # developer token + Customer ID: volume miễn phí
     ga4_property: str = ""  # dạng properties/123456789; để trống khi chưa kết nối GA4
     okr: OkrSettings = field(default_factory=OkrSettings)  # sheet OKR / Weekly Task Tracker (báo cáo công việc)
     access: AccessSettings = field(default_factory=AccessSettings)  # ai được vào / sửa khi mở qua Cloudflare
@@ -70,6 +71,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
         }),
         rank=RankSettings(**raw.get("rank", {})),
         dataforseo_secret=base / raw.get("dataforseo_secret", "secrets/dataforseo.toml"),
+        google_ads_secret=base / raw.get("google_ads_secret", "secrets/google_ads.toml"),
         ga4_property=_ga4_property(raw.get("ga4_property", "")),
         okr=OkrSettings(**raw.get("okr", {})),
         access=AccessSettings(**raw.get("access", {})),

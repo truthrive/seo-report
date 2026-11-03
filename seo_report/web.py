@@ -641,7 +641,37 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Dự án", user, P, page_ctx(P), period=False, group=False)
-        build_projects_page(ui, base, app_connect, user)
+        local = A.is_local(request.client.host if request.client else None, request.headers)
+        build_projects_page(ui, base, app_connect, user,
+                            google_origin=f"http://{request.headers.get('host')}" if local else None,
+                            google_notice=request.query_params.get("google"))
+
+    @app.get("/oauth/google")
+    def google_callback(request: Request):
+        """Google gọi về sau khi Chủ tool đồng ý cấp quyền (nút Kết nối Google ở màn Dự án). Chỉ nhận trên máy chạy
+        tool; mã state phải khớp phiên vừa tạo (auth.web_login_finish kiểm tra)."""
+        from fastapi.responses import RedirectResponse
+
+        from . import auth
+        if not A.is_local(request.client.host if request.client else None, request.headers):
+            return RedirectResponse("/projects", status_code=303)
+        q = request.query_params
+        if q.get("error"):
+            result = "cancel" if q["error"] == "access_denied" else "fail"
+        else:
+            try:
+                creds = auth.web_login_finish(base, q.get("state", ""), str(request.url))
+                miss = auth.missing_scopes(creds.scopes or [], auth.SCOPES)
+                result = "missing" if miss else "ok"
+                with app_connect() as c:  # email hiện ở màn Dự án: đọc lại theo tài khoản mới
+                    c.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                    c.execute("DELETE FROM app_settings WHERE key = 'tool_google_email'")
+                    c.commit()
+            except Exception as e:  # noqa: BLE001
+                print(f"Kết nối Google không thành công: {e}")
+                result = "expired" if isinstance(e, ValueError) else "fail"
+        # chỉ mã ngắn, không đưa chữ từ đường dẫn lên trang
+        return RedirectResponse(f"/projects?google={result}", status_code=303)
 
     @ui.page("/index")
     def index_page(request: Request):

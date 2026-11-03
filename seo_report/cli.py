@@ -79,6 +79,44 @@ def cmd_ga4_check(cfg) -> None:
         raise SystemExit(ga4.explain(e))
 
 
+def cmd_ads_check(cfg) -> None:
+    """Thử Google Ads API với vài keyword đang theo dõi, in cạnh số đã lưu (DataForSEO) để so. Không tốn tiền."""
+    from contextlib import closing
+
+    from . import auth, db, google_ads as GA, keywords, rank, volume
+    if GA.write_template(cfg.google_ads_secret):
+        print(f"Đã tạo file mẫu {cfg.google_ads_secret}: mở file, điền developer_token, login_customer_id, "
+              "customer_id rồi chạy lại lệnh này.")
+        return
+    settings = GA.load_settings(cfg.google_ads_secret)
+    if not settings:
+        print(f"Chưa điền đủ developer_token và customer_id trong {cfg.google_ads_secret}.")
+        return
+    try:
+        creds = auth.get_credentials(cfg, need=(auth.ADS_SCOPE,))
+    except SystemExit as e:
+        print(e)
+        return
+    with closing(db.connect(cfg.db_path)) as con:
+        kws = rank.keywords(con, cfg.site_url, keywords.latest_date(con, cfg.site_url))[:8]
+        old = volume.latest(con)
+    if not kws:
+        print("Chưa có keyword theo dõi để thử.")
+        return
+    try:
+        res = GA.historical_metrics(creds, settings, [k["keyword"] for k in kws], cfg.rank.location_code,
+                                    cfg.rank.language_code)
+    except RuntimeError as e:
+        print(f"Lỗi: {e}")
+        return
+    got = {r["keyword"].strip().lower(): r for r in res["result"]}
+    print(f"Google Ads trả về {len(res['result'])} dòng. So với số đã lưu (DataForSEO):")
+    for k in kws:
+        g = got.get(k["keyword"].strip().lower()) or {}
+        o = (old.get(k["id"]) or {}).get("volume")
+        print(f"  {k['keyword'][:40]:40}  Google Ads: {g.get('search_volume', '–')!s:>8}   đã lưu: {o!s:>8}")
+
+
 def cmd_sync(cfg, backfill: bool) -> None:
     from googleapiclient.errors import HttpError
 
@@ -418,6 +456,7 @@ def main(argv=None) -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="Đăng nhập Google, liệt kê property GSC và GA4")
     sub.add_parser("ga4-check", help="Kiểm tra kết nối GA4 cho module AI Search & GEO")
+    sub.add_parser("ads-check", help="Thử lấy volume từ Google Ads API (miễn phí), so với số đã lưu")
     ais = sub.add_parser("ai-summary", help="In số liệu traffic AI từ GA4 (đối soát)")
     ais.add_argument("--days", type=int, default=28)
     s = sub.add_parser("sync", help="Lấy dữ liệu GSC về máy")
@@ -442,6 +481,8 @@ def main(argv=None) -> None:
     cfg, all_projects = _projects(base, args.project)
     if args.cmd == "login":
         cmd_login(cfg)
+    elif args.cmd == "ads-check":
+        cmd_ads_check(cfg)
     elif args.cmd == "ga4-check":
         cmd_ga4_check(cfg)
     elif args.cmd == "ai-summary":

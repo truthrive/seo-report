@@ -1,4 +1,5 @@
-"""Volume tìm kiếm của keyword SEO (keyword theo dõi rank) từ DataForSEO Keywords Data (Google Ads), Việt Nam.
+"""Volume tìm kiếm của keyword SEO (keyword theo dõi rank), số của Google Ads (Keyword Planner). Lấy thẳng từ Google
+Ads API khi đã cấu hình (miễn phí, xem google_ads.py); chưa cấu hình hoặc lỗi thì qua DataForSEO Keywords Data.
 
 Google Ads chỉ cập nhật volume theo tháng, nên mỗi keyword lấy một lần mỗi tháng (lịch hằng ngày tự lấy cho keyword
 chưa có số của tháng này; keyword mới thêm thì lấy ngay). Chi phí thật do DataForSEO trả về được cộng vào ngân sách
@@ -6,14 +7,17 @@ check rank chung.
 """
 import json
 import sqlite3
+import threading
 from datetime import date, datetime, timezone
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from . import rank as R
 
 ENDPOINT = "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live"
-BATCH = 1000  # tối đa keyword mỗi lần gọi
+BATCH = 1000  # tối đa keyword mỗi lần gọi DataForSEO
+GA_BATCH = 10000  # tối đa keyword mỗi lần gọi Google Ads (Keyword Planner)
 EST_COST_PER_CALL = 0.075  # ước tính để chặn trước khi gọi; số trừ thật lấy từ phản hồi
 
 SCHEMA = """
@@ -99,9 +103,38 @@ def save(con: sqlite3.Connection, todo: list[dict], result: dict, today: date) -
     return len(todo)
 
 
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(site: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(site, threading.Lock())
+
+
 def refresh(con: sqlite3.Connection, site: str, cfg, end: date, today: date | None = None,
             only_ids: list[int] | None = None, log=print, fetcher=fetch) -> int:
-    """Lấy volume cho keyword chưa có số tháng này (hoặc chỉ `only_ids`). Trả về số keyword đã lưu."""
+    """Lấy volume cho keyword chưa có số tháng này (hoặc chỉ `only_ids`). Trả về số keyword đã lưu.
+    Hai lần lấy cùng lúc cho một website (ví dụ Lấy từ sheet và thêm keyword) chạy lần lượt; lần sau thấy keyword đã
+    có số thì không gọi lại (trước đây cả hai cùng gọi và bị tính tiền hai lần)."""
+    with _lock_for(site):
+        return _refresh(con, site, cfg, end, today, only_ids, log, fetcher)
+
+
+def _google_ads(cfg):
+    """(creds, settings) khi dùng được Google Ads API để lấy volume (miễn phí); chưa cấu hình / chưa cấp quyền: None."""
+    from . import auth
+    from . import google_ads as GA
+    settings = GA.load_settings(getattr(cfg, "google_ads_secret", Path("secrets/google_ads.toml")))
+    if not settings:
+        return None
+    try:
+        return auth.get_credentials(cfg, need=(auth.ADS_SCOPE,)), settings
+    except (Exception, SystemExit):  # noqa: BLE001  (chưa cấp quyền Google Ads: dùng DataForSEO)
+        return None
+
+
+def _refresh(con, site, cfg, end, today, only_ids, log, fetcher) -> int:
     if getattr(cfg.rank, "paused", False):  # tạm ngưng check rank = ngưng mọi chi phí DataForSEO của website
         log("Tạm ngưng: không lấy volume keyword.")
         return 0
@@ -109,6 +142,23 @@ def refresh(con: sqlite3.Connection, site: str, cfg, end: date, today: date | No
     todo = missing(con, site, end, today, only_ids)
     if not todo:
         return 0
+    ads = _google_ads(cfg) if fetcher is fetch else None  # test truyền fetcher riêng: không gọi Google Ads
+    if ads:
+        from . import google_ads as GA
+        saved = 0
+        try:
+            for i in range(0, len(todo), GA_BATCH):
+                chunk = todo[i:i + GA_BATCH]
+                res = GA.historical_metrics(*ads, [k["keyword"] for k in chunk], cfg.rank.location_code,
+                                            cfg.rank.language_code)
+                saved += save(con, chunk, res, today)
+            log(f"Đã lấy volume cho {saved} keyword (Google Ads, miễn phí).")
+            return saved
+        except Exception as e:  # noqa: BLE001
+            log(f"Không lấy được volume từ Google Ads ({e}); dùng DataForSEO.")
+            todo = missing(con, site, end, today, only_ids)
+            if not todo:
+                return saved
     creds = R.load_credentials(cfg.dataforseo_secret)
     if not creds:
         log(f"Chưa có API key DataForSEO trong {cfg.dataforseo_secret}: bỏ qua lấy volume.")
