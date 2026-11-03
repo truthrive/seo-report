@@ -274,9 +274,14 @@ HEAD = """
   .q-drawer--mini .sr-account { justify-content: center; padding: 6px 0; }
   .sr-account-menu { border-radius: 14px !important; border: 1px solid var(--line);
                      box-shadow: 0 12px 32px rgba(31,34,30,.14) !important; }
+  .sr-account-menu { overflow-x: hidden !important; }
   .sr-account-menu .q-item { min-height: 40px; padding: 6px 10px; margin: 1px 6px; border-radius: 10px; }
   .sr-account-menu .q-item .q-focus-helper { display: none; }  /* lớp phủ xám mặc định của Quasar: thay bằng nền nhẹ */
   .sr-account-menu .q-item:hover, .sr-account-menu .q-item:focus-visible { background: #F1F0EA; }
+  .sr-account-menu .q-item { min-height: 34px; padding: 5px 14px; }
+  .sr-account-menu .q-separator { margin: 4px 0; }
+  .sr-account-menu .sr-acct-head { padding: 12px 14px 8px; }
+  .sr-account-menu .sr-acct-group { padding: 6px 14px 2px; }
   .sr-account-menu .q-item.sr-current { background: #EEF6F0; }
   /* Biểu tượng dự án (logo website) */
   .sr-proj-icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;

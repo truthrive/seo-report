@@ -1,4 +1,5 @@
-"""Màn Hồ sơ của tôi: mỗi người tự sửa tên hiển thị, ảnh đại diện và mật khẩu của mình (khách hàng cũng mở được)."""
+"""Hồ sơ của tôi: mỗi người tự sửa tên hiển thị, ảnh đại diện và mật khẩu của mình (khách hàng cũng mở được). Mở
+bằng hộp thoại từ menu tài khoản; trang /tai-khoan dùng cùng nội dung (link cũ vẫn mở được)."""
 from . import access as A
 from . import presence as PR
 from . import ui_theme as T
@@ -26,6 +27,33 @@ def photo_uri(content: bytes, size: int = 128) -> str:
 
 
 def build_profile_page(ui, cfg, connect, user) -> None:
+    T.page_header(ui, "account_circle", "Hồ sơ của tôi", "Tên và ảnh hiện ở menu, nhóm avatar và màn Phân quyền.",
+                  tone="grey")
+    with ui.element("div").classes("sr-card q-pa-md").style("max-width: 560px; width: 100%"):
+        profile_form(ui, cfg, connect, user)
+
+
+def profile_dialog(ui, cfg, connect, user):
+    """Hộp thoại Hồ sơ của tôi: dựng nội dung lần đầu mở (không làm nặng mọi trang). Trả hàm mở hộp thoại."""
+    with ui.dialog() as dialog, ui.card().classes("sr-profile-dialog").style(
+            "width: 520px; max-width: 94vw; border-radius: 14px"):
+        with ui.row().classes("w-full items-center no-wrap"):
+            ui.label("Hồ sơ của tôi").classes("text-lg font-semibold col")
+            ui.button(icon="close", on_click=dialog.close).props("flat round dense").tooltip("Đóng")
+        body = ui.column().classes("w-full gap-0")
+    built = {"done": False}
+
+    def open_():
+        if not built["done"]:
+            with body:
+                profile_form(ui, cfg, connect, user, on_close=dialog.close)
+            built["done"] = True
+        dialog.open()
+    return open_
+
+
+def profile_form(ui, cfg, connect, user, on_close=None) -> None:
+    """Hai thẻ: Thông tin (tên, ảnh) và Mật khẩu."""
     from nicegui import app
 
     email = str(user)
@@ -37,11 +65,11 @@ def build_profile_page(ui, cfg, connect, user) -> None:
     role_text = ("Chủ tool · toàn quyền" if A.is_admin(user) or user.role == A.LOCAL
                  else A.PROJECT_ROLES.get(user.role, "Theo từng website"))
 
-    T.page_header(ui, "account_circle", "Hồ sơ của tôi", "Tên và ảnh hiện ở menu, nhóm avatar và màn Phân quyền. "
-                  "Đổi mật khẩu đăng nhập ở khung bên dưới.", tone="grey")
-
-    # ---- Hồ sơ ----
-    with T.section(ui, "Thông tin", "badge"):
+    with ui.tabs().classes("w-full sr-tabs").props("align=left no-caps dense inline-label") as tabs:
+        t_info = ui.tab("Thông tin", icon="badge")
+        t_pass = ui.tab("Mật khẩu", icon="key")
+    panels = ui.tab_panels(tabs, value=t_info).classes("w-full").props("animated=false")
+    with panels, ui.tab_panel(t_info).classes("q-px-none q-pb-none"):
         with ui.row().classes("items-center gap-4 no-wrap w-full"):
             @ui.refreshable
             def avatar_box():
@@ -70,8 +98,7 @@ def build_profile_page(ui, cfg, connect, user) -> None:
                         avatar_box.refresh()
                     ui.button("Bỏ ảnh", icon="hide_image", on_click=drop_photo).props("flat dense no-caps")
                 ui.label("PNG, JPG hoặc WEBP, tối đa 5 MB. Tool tự cắt vuông và thu nhỏ.").classes("text-xs muted")
-        with ui.element("div").classes("w-full q-mt-md").style(
-                "display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px"):
+        with ui.element("div").classes("w-full q-mt-md").style("display:grid; gap: 10px"):
             name = ui.input("Tên hiển thị", value=prof["name"], placeholder="ví dụ: Trường Thịnh").props(
                 f"outlined dense counter maxlength={A.MAX_NAME}")
             ui.input("Email / tên đăng nhập", value=email).props("outlined dense readonly").tooltip(
@@ -92,11 +119,12 @@ def build_profile_page(ui, cfg, connect, user) -> None:
             ui.notify("Đã lưu hồ sơ", type="positive")
             ui.navigate.reload()  # menu, avatar trên thanh trên cùng cập nhật theo
 
-        with ui.row().classes("w-full justify-end q-mt-sm"):
+        with ui.row().classes("w-full justify-end q-mt-sm gap-2"):
+            if on_close:
+                ui.button("Hủy", on_click=on_close).props("flat no-caps")
             ui.button("Lưu hồ sơ", icon="check", on_click=save_profile).props("unelevated no-caps")
 
-    # ---- Mật khẩu ----
-    with T.section(ui, "Mật khẩu", "key"):
+    with panels, ui.tab_panel(t_pass).classes("q-px-none q-pb-none"):
         if user.via != "password" and user.role != A.LOCAL:
             ui.label("Bạn đăng nhập qua Cloudflare Access / Tailscale nên không có mật khẩu trong tool.").classes(
                 "text-sm muted")
@@ -105,8 +133,7 @@ def build_profile_page(ui, cfg, connect, user) -> None:
         ui.label(("Mật khẩu để đăng nhập khi mở tool từ máy khác (qua tên miền). " if local else "")
                  + f"Mật khẩu mới ít nhất {A.MIN_PASSWORD} ký tự. Đổi xong, các máy khác đang đăng nhập bằng mật "
                    "khẩu cũ sẽ phải đăng nhập lại.").classes("text-sm muted")
-        with ui.element("div").classes("w-full").style(
-                "display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px"):
+        with ui.element("div").classes("w-full q-mt-sm").style("display:grid; gap: 10px"):
             cur = None if local else ui.input("Mật khẩu hiện tại", password=True, password_toggle_button=True).props(
                 "outlined dense autocomplete=current-password")
             new = ui.input("Mật khẩu mới", password=True, password_toggle_button=True).props(

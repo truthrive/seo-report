@@ -272,6 +272,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             app.storage.user.pop("auth", None)
             ui.navigate.to("/login")
 
+        from .web_profile import profile_dialog
+        open_profile = profile_dialog(ui, base, app_connect, user)
+        full = user.role == A.LOCAL or A.is_admin(user)  # toàn quyền mọi website: không ghi quyền từng dòng
+
         with ui.row().classes("sr-account w-full items-center gap-2 q-mt-sm no-wrap").props(
                 'tabindex=0 role=button aria-haspopup=menu aria-label="Tài khoản và cài đặt"').style(
                 "flex-shrink:0; min-width:0") as acc_row:  # w-full: email dài thì cắt "…" thay vì tràn khỏi menu
@@ -284,17 +288,19 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             ui.icon("unfold_more", size="18px").classes("muted sr-mini-hide")
             with ui.menu().props('anchor="top left" self="bottom left" :offset="[0, 8]"').classes(
                     "sr-account-menu").style("width: 300px") as acc_menu:
-                with ui.row().classes("items-center gap-3 no-wrap q-pa-md"):
+                with ui.row().classes("items-center gap-3 no-wrap sr-acct-head"):
                     T.presence_avatar(ui, name, st, st_text, size=40, colors=T.avatar_color(str(user)), photo=photo)
-                    with ui.column().classes("gap-0").style("min-width:0"):
+                    with ui.column().classes("gap-0 col").style("min-width:0"):
                         ui.label(name).classes("text-sm font-semibold ellipsis")
                         if name != str(user):
                             ui.label(str(user)).classes("text-xs muted ellipsis")
-                        ui.label(role_text).classes("text-xs muted")
-                        ui.label(st_text).classes("text-xs").style(
-                            f"color:{T.GREEN if st == PR.AVAILABLE else T.MUTED}")
+                        with ui.row().classes("items-center gap-1").style("row-gap:0"):  # dài thì xuống dòng
+                            ui.label(role_text).classes("text-xs muted")
+                            ui.label("·").classes("text-xs muted")
+                            ui.label(st_text).classes("text-xs").style(
+                                f"color:{T.GREEN if st == PR.AVAILABLE else T.MUTED}; white-space:nowrap")
                 ui.separator()
-                ui.label(f"Website của tôi · {len(P.projects)}").classes("sr-nav-group q-px-md q-pt-sm")
+                ui.label(f"Website của tôi · {len(P.projects)}").classes("sr-nav-group sr-acct-group")
                 with ui.column().classes("gap-0 w-full").style("max-height: 260px; overflow-y: auto"):
                     for p in P.projects:
                         cur = p["slug"] == P.project["slug"]
@@ -303,9 +309,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             T.project_icon(ui, p, 26)
                             with ui.column().classes("gap-0 col").style("min-width:0"):
                                 ui.label(p["name"]).classes("text-sm ellipsis" + (" font-semibold" if cur else ""))
-                                r = P.roles.get(p["slug"], "")
-                                ui.label("Toàn quyền" if r == A.LOCAL else A.PROJECT_ROLES.get(r, "")).classes(
-                                    "text-xs muted")
+                                if not full:
+                                    r = P.roles.get(p["slug"], "")
+                                    ui.label(A.PROJECT_ROLES.get(r, "")).classes("text-xs muted")
                             if cur:
                                 ui.icon("check", size="16px").style(f"color:{T.GREEN}")
                 if A.is_admin(user):
@@ -317,7 +323,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             ui.icon(icon, size="18px").classes("muted")
                             ui.label(label).classes("text-sm")
                 ui.separator()
-                with ui.menu_item(on_click=lambda: ui.navigate.to("/tai-khoan")).classes("items-center gap-3"):
+                with ui.menu_item(on_click=open_profile).classes("items-center gap-3"):
                     ui.icon("account_circle", size="18px").classes("muted")
                     ui.label("Hồ sơ của tôi").classes("text-sm")
                 if user.via == "password":
