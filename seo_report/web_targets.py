@@ -1,14 +1,12 @@
-"""Tab "URL mục tiêu" ở màn Quản lý URL: team gán URL mục tiêu cho từng từ khóa check rank. Từ khóa cam kết có URL
-trong sheet thì lấy theo sheet (sửa trong sheet để đổi, lần đồng bộ sau tool cập nhật theo), tool không tự gán."""
+"""Tab "URL mục tiêu" ở màn Quản lý URL: team gán URL mục tiêu cho từng từ khóa check rank (mọi bộ). Từ khóa ở bộ Cam
+kết đi theo sheet: sửa ở màn Từ khóa & rank (tool ghi lên sheet) hoặc trên sheet; tool không tự gán."""
 from . import keywords as K
 from . import rank as R
 from .web_rank import SOURCES
 
 
 def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
-    from . import kpi as KP
     from . import ui_theme as T
-    from datetime import date
 
     state = {"kw": None}
 
@@ -22,6 +20,7 @@ def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
         only_empty = ui.checkbox("Chỉ từ khóa chưa có URL mục tiêu", on_change=lambda: refresh()).props("dense")
     table = ui.table(columns=[
         {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
+        {"name": "set", "label": "Bộ", "field": "set", "align": "left", "sortable": True},
         {"name": "source", "label": "Nguồn", "field": "source", "align": "left", "sortable": True},
         {"name": "top", "label": "Top mục tiêu", "field": "top", "align": "center"},
         {"name": "target", "label": "URL mục tiêu", "field": "target", "align": "left"},
@@ -35,7 +34,7 @@ def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
             <span v-if="props.value" class="ellipsis" :title="props.row.target_full">{{ props.value }}</span>
             <span v-else class="muted">chưa gán</span>
             <q-icon v-if="props.row.locked" name="lock" size="14px" color="grey-6">
-              <q-tooltip>Theo sheet Từ khóa cam kết: sửa trong sheet để đổi</q-tooltip>
+              <q-tooltip>Từ khóa cam kết: sửa ở màn Từ khóa &amp; rank (tab Cam kết), tool ghi lên sheet</q-tooltip>
             </q-icon>
           </div>
         </q-td>""")
@@ -109,19 +108,16 @@ def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
     def refresh():
         with connect() as c:
             kws = R.keywords(c, site, K.latest_date(c, site))
-            ver = KP.version_at(KP.versions(c), date.today())
-        sheet = {k["keyword"].strip().lower(): k for k in (ver or {}).get("keywords", [])}
         rows = []
         for k in kws:
-            com = sheet.get(k["keyword"].strip().lower())
             if only_empty.value and k["target_url"]:
                 continue
             rows.append({
-                "id": k["id"], "keyword": k["keyword"],
-                "source": "Cam kết" if com else SOURCES.get(k["source"], k["source"]),
-                "top": f"Top {com['target']}" if com and com.get("target") else "",
+                "id": k["id"], "keyword": k["keyword"], "set": k["set_name"],
+                "source": "Cam kết" if k["set_kind"] == "kpi" else SOURCES.get(k["source"], k["source"]),
+                "top": f"Top {k['top_target']}" if k.get("top_target") else "",
                 "target": short(k["target_url"]), "target_full": k["target_url"] or "",
-                "locked": bool(com and com.get("url")),
+                "locked": k["set_kind"] == "kpi",
                 "ranking": short(k["ranking_url"]), "ranking_full": k["ranking_url"] or "",
                 "wrong": bool(k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"]),
             })

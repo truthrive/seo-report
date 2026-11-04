@@ -42,7 +42,7 @@ def gsc_daily(con, site: str, lo: date, hi: date) -> dict[date, tuple[int, int]]
 
 
 def rank_snapshot(con, site: str, end: date) -> dict:
-    kws = R.keywords(con, site, end)
+    kws = R.primary_keywords(con, site, end)
     checked = [k for k in kws if k["date"]]
     ranked = [k for k in checked if k["rank"]]
     moved = [k for k in checked if k["rank"] is not None and k["prev"] is not None]

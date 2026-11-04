@@ -383,7 +383,7 @@ def _build(con, cfg, group_id, cur, prev, trend_periods, kind, with_ai) -> Weekl
     # của tháng trước.
     rank_cutoff = we + timedelta(days=7) if kind == "week" else we
     counts = {b: [0, 0] for b in BUCKETS}  # [lần check này, lần check trước]
-    for k in R.keywords(con, site, end):
+    for k in R.primary_keywords(con, site, end):
         cur_check = _rank_at(con, k["id"], rank_cutoff)
         if not cur_check or cur_check[0] < ws.isoformat():
             continue  # không có lần check nào trong khoảng này

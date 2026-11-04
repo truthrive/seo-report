@@ -687,17 +687,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         budget_card = shell("Từ khóa & rank", user, P, page_ctx(P), period=False, group=False)
-
-        def save_target(fields):
-            slug = P.project["slug"]
-            with app_connect() as c:
-                s = PJ.set_rank_target(c, slug, fields, user)
-            with P.connect() as c:
-                U.log_change(c, user, P.site, "Đổi nơi check rank", None,
-                             R.describe_target(SimpleNamespace(**{k: s[k] for k in (
-                                 "se_domain", "device", "location_code", "language_code")})))
-            LIVE.kick(project=slug)  # mọi trang của dự án (cả trang này) tải lại với cài đặt mới
-        build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh, save_target=save_target)
+        bo = request.query_params.get("bo", "")  # bộ (tab) đang mở
+        build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh,
+                        set_id=int(bo) if bo.isdigit() else None)
 
     @ui.page("/stars")
     def stars_page():

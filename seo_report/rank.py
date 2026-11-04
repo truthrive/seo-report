@@ -1,9 +1,11 @@
-"""Check rank thực tế qua DataForSEO cho danh sách keyword theo dõi.
+"""Check rank thực tế qua DataForSEO cho các bộ từ khóa của dự án.
 
-- Keyword đến từ hai nguồn: gắn ★ ở màn URL (keyword GSC của một URL) hoặc nhập tay ở màn Check rank. Mỗi keyword
-  theo dõi một lần; URL mục tiêu là tùy chọn.
-- Một lịch chung cho mọi keyword: các thứ trong tuần, một ngày trong tháng, hoặc chỉ khi bấm "Check ngay". Lỡ lịch
-  (máy tắt) thì lần chạy sau check bù.
+- Bộ từ khóa (tab ở màn Từ khóa & rank): mỗi bộ có nơi check riêng (vùng Google, thiết bị, vị trí, ngôn ngữ; để trống
+  = theo dự án), lịch và độ sâu riêng. Bộ "Cam kết" tự khớp tab Từ khóa cam kết của sheet dự án; các bộ khác team tự
+  tạo. Một từ khóa nằm ở nhiều bộ thì mỗi bộ check riêng (mỗi dòng rank_keywords là một từ khóa trong một bộ).
+- Keyword đến từ: sheet cam kết, nhập tay, hoặc gắn ★ ở màn URL. URL mục tiêu và Top mục tiêu là tùy chọn.
+- Lịch: các thứ trong tuần, một ngày trong tháng, hoặc chỉ khi bấm "Check ngay". Lỡ lịch (máy tắt) thì lần chạy sau
+  check bù.
 - Độ sâu: "auto" (lần đầu top 30; sau đó theo vị trí check lần trước: ≤ 8 → top 10, ≤ 18 → top 20, còn lại → top 30)
   hoặc cố định 10/20/30/50/100. Giá tính theo từng trang 10 kết quả. Không dùng position GSC: đó là số trung bình,
   không phải rank.
@@ -68,6 +70,17 @@ def describe_target(s) -> str:
 DEFAULT_SCHEDULE = {"type": "weekdays", "weekdays": [1], "day": 1, "depth": "auto"}  # thứ Ba, trước báo cáo thứ Năm
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS rank_sets (
+    id INTEGER PRIMARY KEY,
+    site TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,          -- 'kpi': bộ Cam kết (theo sheet); 'custom': team tự tạo
+    settings TEXT,               -- JSON {se_domain, device, location_code, language_code}; NULL = theo dự án
+    schedule TEXT NOT NULL,      -- JSON lịch + độ sâu
+    position INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS rank_keywords (
     id INTEGER PRIMARY KEY,
     site TEXT NOT NULL,
@@ -76,7 +89,9 @@ CREATE TABLE IF NOT EXISTS rank_keywords (
     source TEXT NOT NULL,
     added_by TEXT NOT NULL,
     added_at TEXT NOT NULL,
-    UNIQUE (site, keyword)
+    set_id INTEGER NOT NULL,
+    top_target INTEGER,          -- Top mục tiêu (3, 5, 10…); bộ Cam kết lấy theo sheet
+    UNIQUE (set_id, keyword)
 );
 CREATE TABLE IF NOT EXISTS rank_tasks (
     task_id TEXT PRIMARY KEY,
@@ -118,6 +133,181 @@ def _now() -> str:
 def ensure_tables(con: sqlite3.Connection) -> None:
     _migrate_stars(con)
     con.executescript(SCHEMA)
+    _migrate_sets(con)
+
+
+def _committed_texts(con: sqlite3.Connection) -> dict[str, int | None] | None:
+    """{từ khóa: Top target} của tab Từ khóa cam kết (phiên bản sheet mới nhất đã đồng bộ); chưa có sheet: None."""
+    try:
+        from . import kpi as KP
+        ver = KP.version_at(KP.versions(con), date.today())
+    except sqlite3.Error:
+        return None
+    return {k["keyword"].strip().lower(): k.get("target") for k in ver.get("keywords", [])} if ver else None
+
+
+def _migrate_sets(con: sqlite3.Connection) -> None:
+    """Bản trước: một danh sách từ khóa chung cho cả dự án, một lịch chung (app_settings 'rank_schedule'). Chuyển sang
+    bộ: từ khóa có trong sheet cam kết → bộ "Cam kết", còn lại → bộ "Từ khóa chính". Giữ nguyên id nên lịch sử rank
+    (rank_checks, rank_tasks) không đổi."""
+    if "set_id" in [c[1] for c in con.execute("PRAGMA table_info(rank_keywords)")]:
+        return
+    row = con.execute("SELECT value FROM app_settings WHERE key = 'rank_schedule'").fetchone()
+    sched = json.dumps({**DEFAULT_SCHEDULE, **(json.loads(row[0]) if row else {})})
+    committed = _committed_texts(con)
+    with con:
+        con.execute("ALTER TABLE rank_keywords RENAME TO rank_keywords_old")
+        con.executescript(SCHEMA)
+        old = con.execute("SELECT id, site, keyword, url_id, source, added_by, added_at FROM rank_keywords_old "
+                          "ORDER BY id").fetchall()
+        sets_by_site: dict[tuple[str, str], int] = {}
+
+        def set_for(site_: str, kind: str) -> int:
+            if (site_, kind) not in sets_by_site:
+                name = KPI_SET_NAME if kind == "kpi" else DEFAULT_SET_NAME
+                cur = con.execute("INSERT INTO rank_sets (site, name, kind, settings, schedule, position, created_by, "
+                                  "created_at) VALUES (?, ?, ?, NULL, ?, ?, 'tool', ?)",
+                                  (site_, name, kind, sched, 0 if kind == "kpi" else 1, _now()))
+                sets_by_site[(site_, kind)] = cur.lastrowid
+            return sets_by_site[(site_, kind)]
+        for kid, site_, kw, url_id, source, by, at in old:
+            key = kw.strip().lower()
+            kind = "kpi" if committed is not None and key in committed else "custom"
+            con.execute("INSERT INTO rank_keywords (id, site, keyword, url_id, source, added_by, added_at, set_id, "
+                        "top_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (kid, site_, kw, url_id, source, by, at, set_for(site_, kind),
+                         committed.get(key) if kind == "kpi" else None))
+        con.execute("DROP TABLE rank_keywords_old")
+
+
+# ---- Bộ từ khóa ----
+
+SET_SETTING_KEYS = ("se_domain", "device", "location_code", "language_code")
+KPI_SET_NAME, DROPPED_SET_NAME, DEFAULT_SET_NAME = "Cam kết", "Ngoài cam kết", "Từ khóa chính"
+
+
+def _set_row(r) -> dict:
+    sid, site, name, kind, settings, schedule, pos = r
+    return {"id": sid, "site": site, "name": name, "kind": kind,
+            "settings": json.loads(settings) if settings else None,
+            "schedule": {**DEFAULT_SCHEDULE, **json.loads(schedule)}, "position": pos}
+
+
+def sets(con: sqlite3.Connection, site: str) -> list[dict]:
+    """Các bộ của website: bộ Cam kết trước, rồi theo thứ tự tạo. Kèm số từ khóa ("count")."""
+    ensure_tables(con)
+    rows = con.execute("SELECT id, site, name, kind, settings, schedule, position FROM rank_sets WHERE site = ? "
+                       "ORDER BY kind != 'kpi', position, id", (site,)).fetchall()
+    counts = dict(con.execute("SELECT set_id, COUNT(*) FROM rank_keywords WHERE site = ? GROUP BY set_id", (site,)))
+    return [{**_set_row(r), "count": counts.get(r[0], 0)} for r in rows]
+
+
+def get_set(con: sqlite3.Connection, set_id: int) -> dict | None:
+    ensure_tables(con)
+    r = con.execute("SELECT id, site, name, kind, settings, schedule, position FROM rank_sets WHERE id = ?",
+                    (set_id,)).fetchone()
+    return _set_row(r) if r else None
+
+
+def _clean_settings(settings: dict | None) -> str | None:
+    if not settings:
+        return None
+    out = {}
+    for k in SET_SETTING_KEYS:
+        v = settings.get(k)
+        if v in (None, ""):
+            continue
+        if k == "location_code":
+            v = int(v)
+            if v not in locations():
+                raise ValueError("Vị trí tìm kiếm không hợp lệ")
+        elif v not in {"se_domain": SE_DOMAINS, "device": DEVICES, "language_code": LANGUAGES}[k]:
+            raise ValueError("Cài đặt check rank không hợp lệ")
+        out[k] = v
+    return json.dumps(out) if out else None
+
+
+def create_set(con: sqlite3.Connection, site: str, name: str, user: str, kind: str = "custom",
+               settings: dict | None = None, schedule: dict | None = None) -> int:
+    ensure_tables(con)
+    name = " ".join((name or "").split())[:60]
+    if not name:
+        raise ValueError("Chưa nhập tên bộ từ khóa")
+    if con.execute("SELECT 1 FROM rank_sets WHERE site = ? AND lower(name) = lower(?)", (site, name)).fetchone():
+        raise ValueError(f"Đã có bộ tên “{name}”")
+    pos = con.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM rank_sets WHERE site = ?", (site,)).fetchone()[0]
+    with con:
+        cur = con.execute("INSERT INTO rank_sets (site, name, kind, settings, schedule, position, created_by, "
+                          "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          (site, name, kind, _clean_settings(settings),
+                           json.dumps({**DEFAULT_SCHEDULE, **(schedule or {})}), pos, user, _now()))
+        U.log_change(con, user, site, "Tạo bộ từ khóa", None, name)
+    return cur.lastrowid
+
+
+def update_set(con: sqlite3.Connection, set_id: int, user: str, name: str | None = None,
+               settings: dict | None | bool = False, schedule: dict | None = None) -> None:
+    """Đổi tên (bộ Cam kết giữ tên), nơi check (settings=None: theo dự án; False: không đổi), lịch."""
+    st = get_set(con, set_id)
+    if not st:
+        raise ValueError("Không có bộ từ khóa này")
+    with con:
+        if name is not None and st["kind"] != "kpi":
+            name = " ".join(name.split())[:60]
+            if not name:
+                raise ValueError("Chưa nhập tên bộ từ khóa")
+            if con.execute("SELECT 1 FROM rank_sets WHERE site = ? AND lower(name) = lower(?) AND id != ?",
+                           (st["site"], name, set_id)).fetchone():
+                raise ValueError(f"Đã có bộ tên “{name}”")
+            con.execute("UPDATE rank_sets SET name = ? WHERE id = ?", (name, set_id))
+        if settings is not False:
+            con.execute("UPDATE rank_sets SET settings = ? WHERE id = ?", (_clean_settings(settings), set_id))
+        if schedule is not None:
+            con.execute("UPDATE rank_sets SET schedule = ? WHERE id = ?",
+                        (json.dumps({**DEFAULT_SCHEDULE, **schedule}), set_id))
+        U.log_change(con, user, st["site"], "Sửa bộ từ khóa", None, name or st["name"])
+
+
+def delete_set(con: sqlite3.Connection, set_id: int, user: str) -> None:
+    """Xóa một bộ team tạo (bộ Cam kết theo sheet thì không). Từ khóa trong bộ thôi được check; lịch sử rank vẫn
+    nằm trong file dữ liệu."""
+    st = get_set(con, set_id)
+    if not st:
+        raise ValueError("Không có bộ từ khóa này")
+    if st["kind"] == "kpi":
+        raise ValueError("Bộ Cam kết đi theo sheet dự án, không xóa được")
+    with con:
+        con.execute("DELETE FROM rank_keywords WHERE set_id = ?", (set_id,))
+        con.execute("DELETE FROM rank_sets WHERE id = ?", (set_id,))
+        U.log_change(con, user, st["site"], "Xóa bộ từ khóa", None, st["name"])
+
+
+def kpi_set(con: sqlite3.Connection, site: str, create: bool = False, user: str = "tool") -> dict | None:
+    st = next((x for x in sets(con, site) if x["kind"] == "kpi"), None)
+    if st is None and create:
+        st = get_set(con, create_set(con, site, KPI_SET_NAME, user, kind="kpi", schedule=get_schedule(con)))
+    return st
+
+
+def named_set(con: sqlite3.Connection, site: str, name: str, user: str = "tool", like: dict | None = None) -> dict:
+    """Bộ team tạo theo tên; chưa có thì tạo (cùng nơi check / lịch với bộ `like` nếu có)."""
+    st = next((x for x in sets(con, site) if x["kind"] != "kpi" and x["name"].lower() == name.lower()), None)
+    if st is None:
+        st = get_set(con, create_set(con, site, name, user, settings=(like or {}).get("settings"),
+                                     schedule=(like or {}).get("schedule") or get_schedule(con)))
+    return st
+
+
+def default_set(con: sqlite3.Connection, site: str, user: str = "tool") -> dict:
+    """Bộ nhận từ khóa thêm từ màn URL (★): bộ team tạo đầu tiên, chưa có thì tạo "Từ khóa chính"."""
+    st = next((x for x in sets(con, site) if x["kind"] != "kpi"), None)
+    return st or named_set(con, site, DEFAULT_SET_NAME, user, like=kpi_set(con, site))
+
+
+def settings_for(base: RankSettings, st: dict | None) -> RankSettings:
+    """Nơi check của một bộ: cài đặt riêng của bộ, phần trống lấy theo dự án."""
+    from dataclasses import replace
+    return replace(base, **((st or {}).get("settings") or {}))
 
 
 def _migrate_stars(con: sqlite3.Connection) -> None:
@@ -131,22 +321,34 @@ def _migrate_stars(con: sqlite3.Connection) -> None:
             con.execute("DROP TABLE rank_checks")
             con.execute("DROP TABLE IF EXISTS rank_tasks")
         con.executescript(SCHEMA)
-        con.execute("""INSERT OR IGNORE INTO rank_keywords (site, keyword, url_id, source, added_by, added_at)
-                       SELECT u.site, s.query, s.url_id, 'gsc', s.starred_by, s.starred_at
-                       FROM rank_stars s JOIN urls u ON u.id = s.url_id""")
+        for site_, in con.execute("SELECT DISTINCT u.site FROM rank_stars s JOIN urls u ON u.id = s.url_id").fetchall():
+            sid = con.execute("INSERT INTO rank_sets (site, name, kind, settings, schedule, position, created_by, "
+                              "created_at) VALUES (?, ?, 'custom', NULL, ?, 1, 'tool', ?)",
+                              (site_, DEFAULT_SET_NAME, json.dumps(DEFAULT_SCHEDULE), _now())).lastrowid
+            con.execute("""INSERT OR IGNORE INTO rank_keywords (site, keyword, url_id, source, added_by, added_at,
+                           set_id) SELECT u.site, s.query, s.url_id, 'gsc', s.starred_by, s.starred_at, ?
+                           FROM rank_stars s JOIN urls u ON u.id = s.url_id WHERE u.site = ?""", (sid, site_))
         con.execute("DROP TABLE rank_stars")
 
 
 # ---- Lịch và độ sâu ----
 
-def get_schedule(con: sqlite3.Connection) -> dict:
+def get_schedule(con: sqlite3.Connection, set_id: int | None = None) -> dict:
+    """Lịch của một bộ; không chỉ bộ thì lịch mặc định cho bộ mới (lịch chung trước khi có bộ)."""
     ensure_tables(con)
+    if set_id is not None:
+        st = get_set(con, set_id)
+        if st:
+            return st["schedule"]
     row = con.execute("SELECT value FROM app_settings WHERE key = 'rank_schedule'").fetchone()
     return {**DEFAULT_SCHEDULE, **(json.loads(row[0]) if row else {})}
 
 
-def set_schedule(con: sqlite3.Connection, site: str, schedule: dict, user: str) -> None:
+def set_schedule(con: sqlite3.Connection, site: str, schedule: dict, user: str, set_id: int | None = None) -> None:
     ensure_tables(con)
+    if set_id is not None:
+        update_set(con, set_id, user, schedule=schedule)
+        return
     with con:
         con.execute("INSERT OR REPLACE INTO app_settings VALUES ('rank_schedule', ?)", (json.dumps(schedule),))
         U.log_change(con, user, site, "Đổi lịch check rank", None, describe_schedule(schedule))
@@ -160,6 +362,14 @@ def describe_schedule(s: dict) -> str:
     if s["type"] == "monthly":
         return f"Hằng tháng vào ngày {s['day']}; {depth}"
     return f"Chỉ khi bấm Check ngay; {depth}"
+
+
+def describe_sets(con: sqlite3.Connection, site: str) -> str:
+    """Lịch của mọi bộ, một dòng: "Cam kết: Hằng tuần vào Thứ 3; top 20 · Blog: Hằng tháng vào ngày 1; …"."""
+    rows = sets(con, site)
+    if not rows:
+        return describe_schedule(get_schedule(con))
+    return " · ".join(f"{x['name']}: {describe_schedule(x['schedule'])}" for x in rows)
 
 
 def checks_per_month(s: dict) -> float:
@@ -203,16 +413,21 @@ def depth_for(setting, last_rank: int | None, last_depth: int | None) -> int:
 
 # ---- Danh sách keyword ----
 
-def keywords(con: sqlite3.Connection, site: str, end: date) -> list[dict]:
-    """Mọi keyword theo dõi kèm lần check gần nhất, lần trước, vị trí tốt nhất và độ sâu dự kiến."""
+def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None = None) -> list[dict]:
+    """Từ khóa theo dõi (mọi bộ, hoặc một bộ) kèm bộ, lần check gần nhất, lần trước, vị trí tốt nhất, độ sâu dự kiến.
+    Một từ khóa ở hai bộ là hai dòng (mỗi bộ check riêng)."""
     ensure_tables(con)
-    sched = get_schedule(con)
+    by_set = {x["id"]: x for x in sets(con, site)}
     rows = con.execute(
-        """SELECT k.id, k.keyword, k.url_id, u.url, k.source, k.added_by, k.added_at
-           FROM rank_keywords k LEFT JOIN urls u ON u.id = k.url_id WHERE k.site = ? ORDER BY k.id""",
-        (site,)).fetchall()
+        """SELECT k.id, k.keyword, k.url_id, u.url, k.source, k.added_by, k.added_at, k.set_id, k.top_target
+           FROM rank_keywords k LEFT JOIN urls u ON u.id = k.url_id
+           WHERE k.site = ? AND (? IS NULL OR k.set_id = ?) ORDER BY k.id""",
+        (site, set_id, set_id)).fetchall()
     out = []
-    for kid, kw, url_id, url, source, by, at in rows:
+    for kid, kw, url_id, url, source, by, at, sid, top in rows:
+        st = by_set.get(sid) or {"id": sid, "name": "", "kind": "custom", "settings": None,
+                                 "schedule": DEFAULT_SCHEDULE}
+        sched = st["schedule"]
         checks = con.execute(
             "SELECT check_date, rank, ranking_url, target_rank, depth FROM rank_checks WHERE keyword_id = ? "
             "ORDER BY check_date DESC LIMIT 2", (kid,)).fetchall()
@@ -221,7 +436,8 @@ def keywords(con: sqlite3.Connection, site: str, end: date) -> list[dict]:
         prev = checks[1] if len(checks) > 1 else None
         out.append({
             "id": kid, "keyword": kw, "url_id": url_id, "target_url": url, "source": source, "added_by": by,
-            "added_at": at, "best": best,
+            "added_at": at, "best": best, "set_id": sid, "set_name": st["name"], "set_kind": st["kind"],
+            "set": st, "top_target": top,
             "date": last[0] if last else None, "rank": last[1] if last else None,
             "ranking_url": last[2] if last else None, "target_rank": last[3] if last else None,
             "last_depth": last[4] if last else None, "prev": prev[1] if prev else None,
@@ -229,6 +445,18 @@ def keywords(con: sqlite3.Connection, site: str, end: date) -> list[dict]:
             "depth": depth_for(sched["depth"], last[1] if last else None, last[4] if last else None),
         })
     return out
+
+
+def primary_keywords(con: sqlite3.Connection, site: str, end: date) -> list[dict]:
+    """Mỗi từ khóa một dòng (báo cáo, Tổng quan, KPI, màn URL): ưu tiên dòng ở bộ Cam kết, rồi bộ tạo trước."""
+    seen, out = set(), []
+    order = {x["id"]: i for i, x in enumerate(sets(con, site))}
+    for k in sorted(keywords(con, site, end), key=lambda k: (order.get(k["set_id"], 99), k["id"])):
+        key = k["keyword"].strip().lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(k)
+    return sorted(out, key=lambda k: k["id"])
 
 
 def history(con: sqlite3.Connection, keyword_id: int) -> list[tuple[str, int | None, int]]:
@@ -282,9 +510,20 @@ def estimate(con: sqlite3.Connection, s: RankSettings, schedule: dict, depths: l
     return sum(_pages(d) for d in depths) * s.price_per_page * checks_per_month(schedule)
 
 
+def estimate_all(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
+                 extra: dict[int, list[int]] | None = None) -> float:
+    """Tiền dự kiến mỗi tháng của mọi bộ (mỗi bộ theo lịch của nó); extra: {bộ: [độ sâu của từ khóa sắp thêm]}."""
+    depths: dict[int, list[int]] = {}
+    for k in keywords(con, site, end):
+        depths.setdefault(k["set_id"], []).append(k["depth"])
+    for sid, ds in (extra or {}).items():
+        depths.setdefault(sid, []).extend(ds)
+    return sum(estimate(con, s, get_schedule(con, sid), ds) for sid, ds in depths.items())
+
+
 def budget_status(con: sqlite3.Connection, site: str, s: RankSettings, end: date, today: date | None = None) -> dict:
     kws = keywords(con, site, end)
-    est = estimate(con, s, get_schedule(con), [k["depth"] for k in kws])
+    est = estimate_all(con, site, s, end)
     return {"stars": len(kws), "estimate": est, "spent": spent_this_month(con, today),
             "budget": s.monthly_budget_usd, "ratio": est / s.monthly_budget_usd if s.monthly_budget_usd else 0}
 
@@ -305,64 +544,167 @@ def parse_lines(text: str) -> list[tuple[str, str | None]]:
     return out
 
 
-def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date, items: list[tuple[str, str | None]],
-                 user: str, source: str = "manual") -> dict:
-    """Thêm keyword (kèm URL mục tiêu nếu có). Từ chối phần vượt ngân sách."""
+def _target_url_id(con, site: str, raw_url: str | None):
+    """(url_id, lỗi): URL mục tiêu phải thuộc website."""
+    if not raw_url:
+        return None, None
+    url = U.normalize(raw_url)
+    if domain(url) != domain(site):
+        return None, "bad"
+    return U._match_existing(con, site, url) or U._get_or_create_url(con, site, url), None
+
+
+def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date, items: list[tuple],
+                 user: str, source: str = "manual", set_id: int | None = None) -> dict:
+    """Thêm keyword vào một bộ (mặc định: bộ team tạo đầu tiên). items: (keyword, URL mục tiêu) hoặc (keyword, URL,
+    Top mục tiêu). Keyword đã có trong bộ: cập nhật URL / Top nếu có. Từ chối phần vượt ngân sách."""
     ensure_tables(con)
-    sched = get_schedule(con)
-    current = keywords(con, site, end)
-    depths = [k["depth"] for k in current]
-    existing = {k["keyword"]: k for k in current}
+    st = get_set(con, set_id) if set_id is not None else default_set(con, site, user)
+    if not st:
+        raise ValueError("Không có bộ từ khóa này")
+    sched = st["schedule"]
+    current = keywords(con, site, end, st["id"])
+    existing = {k["keyword"].strip().lower(): k for k in current}
+    total = estimate_all(con, site, s, end)
+    per_kw = estimate(con, s, sched, [depth_for(sched["depth"], None, None)])
     res = {"added": [], "updated": [], "exists": [], "over_budget": [], "bad_url": []}
     with con:
-        for kw, raw_url in items:
-            url_id = None
-            if raw_url:
-                url = U.normalize(raw_url)
-                if domain(url) != domain(site):
-                    res["bad_url"].append(f"{kw} | {raw_url}")
-                    continue
-                url_id = U._match_existing(con, site, url) or U._get_or_create_url(con, site, url)
-            if kw in existing:
-                if url_id and existing[kw]["url_id"] != url_id:
-                    con.execute("UPDATE rank_keywords SET url_id = ? WHERE id = ?", (url_id, existing[kw]["id"]))
-                    U.log_change(con, user, site, "Đổi URL mục tiêu", raw_url, kw)
-                    res["updated"].append(kw)
-                else:
-                    res["exists"].append(kw)
+        for item in items:
+            kw, raw_url, top = (list(item) + [None, None])[:3]
+            kw = " ".join(str(kw).split())
+            url_id, err = _target_url_id(con, site, raw_url)
+            if err:
+                res["bad_url"].append(f"{kw} | {raw_url}")
                 continue
-            d = depth_for(sched["depth"], None, None)
-            if estimate(con, s, sched, depths + [d]) > s.monthly_budget_usd:
+            old = existing.get(kw.lower())
+            if old:
+                changes = []
+                if url_id and old["url_id"] != url_id:
+                    con.execute("UPDATE rank_keywords SET url_id = ? WHERE id = ?", (url_id, old["id"]))
+                    U.log_change(con, user, site, "Đổi URL mục tiêu", raw_url, kw)
+                    changes.append("url")
+                if top and old.get("top_target") != top:
+                    con.execute("UPDATE rank_keywords SET top_target = ? WHERE id = ?", (top, old["id"]))
+                    changes.append("top")
+                res["updated" if changes else "exists"].append(kw)
+                continue
+            if total + per_kw > s.monthly_budget_usd:
                 res["over_budget"].append(kw)
                 continue
-            con.execute("INSERT INTO rank_keywords (site, keyword, url_id, source, added_by, added_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)", (site, kw, url_id, source, user, _now()))
-            U.log_change(con, user, site, "Thêm keyword check rank", raw_url, kw)
-            depths.append(d)
-            existing[kw] = {"id": None, "url_id": url_id}
+            con.execute("INSERT INTO rank_keywords (site, keyword, url_id, source, added_by, added_at, set_id, "
+                        "top_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (site, kw, url_id, source, user, _now(), st["id"], top))
+            U.log_change(con, user, site, f"Thêm keyword check rank ({st['name']})", raw_url, kw)
+            total += per_kw
+            existing[kw.lower()] = {"id": None, "url_id": url_id, "top_target": top}
             res["added"].append(kw)
-    res["estimate"] = estimate(con, s, sched, depths)
+    res["estimate"] = total
     return res
 
 
-def estimate_add(con: sqlite3.Connection, site: str, s: RankSettings, end: date, keywords_in: list[str]) -> dict:
-    """Ước tính chi phí trước khi thêm keyword: số keyword mới (bỏ trùng và keyword đã theo dõi), tiền mỗi lần check
-    thêm, tiền thêm mỗi tháng theo lịch hiện tại, tổng dự kiến cả tháng so với ngân sách. Keyword mới check lần đầu
-    ở độ sâu của lịch (tự động: top 30)."""
+def estimate_add(con: sqlite3.Connection, site: str, s: RankSettings, end: date, keywords_in: list[str],
+                 set_id: int | None = None) -> dict:
+    """Ước tính chi phí trước khi thêm keyword vào một bộ: số keyword mới (bỏ trùng và keyword đã có trong bộ), tiền
+    mỗi lần check thêm, tiền thêm mỗi tháng theo lịch của bộ, tổng dự kiến cả tháng (mọi bộ) so với ngân sách.
+    Keyword mới check lần đầu ở độ sâu của lịch (tự động: top 30)."""
     ensure_tables(con)
-    sched = get_schedule(con)
-    current = keywords(con, site, end)
-    have = {k["keyword"].strip().lower() for k in current}
+    st = get_set(con, set_id) if set_id is not None else default_set(con, site)
+    sched = st["schedule"]
+    have = {k["keyword"].strip().lower() for k in keywords(con, site, end, st["id"])}
     new = list(dict.fromkeys(" ".join(k.split()).lower() for k in keywords_in if k.strip()))
     fresh = [k for k in new if k not in have]
     d = depth_for(sched["depth"], None, None)
-    depths = [k["depth"] for k in current]
-    before = estimate(con, s, sched, depths)
-    after = estimate(con, s, sched, depths + [d] * len(fresh))
+    before = estimate_all(con, site, s, end)
+    after = estimate_all(con, site, s, end, {st["id"]: [d] * len(fresh)})
     return {"new": len(fresh), "existing": len(new) - len(fresh), "depth": d,
             "per_check": _pages(d) * len(fresh) * s.price_per_page, "checks_per_month": checks_per_month(sched),
             "monthly_add": after - before, "monthly_total": after, "budget": s.monthly_budget_usd,
             "ratio": after / s.monthly_budget_usd if s.monthly_budget_usd else 0.0, "schedule": sched}
+
+
+def set_top_target(con: sqlite3.Connection, site: str, keyword_id: int, top: int | None, user: str) -> None:
+    """Top mục tiêu của một từ khóa (bộ team tạo; bộ Cam kết sửa qua sheet: kpi.sheet_keyword_op)."""
+    row = con.execute("SELECT keyword FROM rank_keywords WHERE id = ? AND site = ?", (keyword_id, site)).fetchone()
+    if not row:
+        raise ValueError("Không có từ khóa này")
+    if top is not None and not 1 <= int(top) <= 100:
+        raise ValueError("Top mục tiêu từ 1 đến 100")
+    with con:
+        con.execute("UPDATE rank_keywords SET top_target = ? WHERE id = ?", (top, keyword_id))
+        U.log_change(con, user, site, "Đổi Top mục tiêu", None, f"{row[0]}: {f'Top {top}' if top else 'bỏ'}")
+
+
+def sync_kpi_set(con: sqlite3.Connection, site: str, s: RankSettings, end: date, sheet_keywords: list[dict],
+                 user: str = "tool") -> dict:
+    """Bộ Cam kết khớp tab Từ khóa cam kết: thêm từ khóa mới (kèm URL, Top), cập nhật URL / Top theo sheet; từ khóa
+    đã bỏ khỏi sheet chuyển sang bộ "Ngoài cam kết" (vẫn check, giữ lịch sử), hoặc thôi theo dõi nếu đã có ở bộ khác."""
+    st = kpi_set(con, site, create=bool(sheet_keywords), user=user)
+    if not st:
+        return {"added": [], "updated": [], "exists": [], "over_budget": [], "bad_url": [], "moved": []}
+    res = add_keywords(con, site, s, end, [(k["keyword"], k.get("url") or None, k.get("target"))
+                                           for k in sheet_keywords], user, source="kpi", set_id=st["id"])
+    want = {k["keyword"].strip().lower(): k for k in sheet_keywords}
+    res["moved"] = []
+    with con:
+        for k in keywords(con, site, end, st["id"]):
+            sk = want.get(k["keyword"].strip().lower())
+            if sk is not None:
+                if k.get("top_target") != sk.get("target"):  # sheet bỏ Top: tool bỏ theo
+                    con.execute("UPDATE rank_keywords SET top_target = ? WHERE id = ?", (sk.get("target"), k["id"]))
+                continue
+            elsewhere = con.execute("SELECT 1 FROM rank_keywords WHERE site = ? AND lower(keyword) = lower(?) AND "
+                                    "set_id != ?", (site, k["keyword"], st["id"])).fetchone()
+            if elsewhere:
+                con.execute("DELETE FROM rank_keywords WHERE id = ?", (k["id"],))
+            else:
+                dropped = named_set(con, site, DROPPED_SET_NAME, user, like=st)
+                con.execute("UPDATE rank_keywords SET set_id = ?, source = 'manual' WHERE id = ?",
+                            (dropped["id"], k["id"]))
+            U.log_change(con, user, site, "Bỏ khỏi bộ Cam kết (sheet)", None, k["keyword"])
+            res["moved"].append(k["keyword"])
+    return res
+
+
+def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30) -> list[dict]:
+    """Tăng trưởng của một bộ theo từng ngày check: số từ khóa Top 3 / 4–10 / 11–30 / ngoài top 30 (hoặc chưa thấy),
+    vị trí trung bình (từ khóa có thứ hạng), số từ khóa lên / xuống / giữ nguyên so với lần check trước, tỷ lệ đạt Top
+    mục tiêu. Mỗi ngày lấy lần check gần nhất (≤ ngày đó) của từng từ khóa trong bộ."""
+    ensure_tables(con)
+    kws = con.execute("SELECT id, top_target FROM rank_keywords WHERE set_id = ? AND site = ?",
+                      (set_id, site)).fetchall()
+    tops = dict(kws)
+    if not tops:
+        return []
+    marks = ",".join("?" * len(tops))
+    checks = con.execute(f"SELECT keyword_id, check_date, rank, depth FROM rank_checks WHERE keyword_id IN ({marks}) "
+                         "ORDER BY check_date", list(tops)).fetchall()
+    by_day: dict[str, list] = {}
+    for kid, d, r, depth in checks:
+        by_day.setdefault(d, []).append((kid, r, depth))
+    state: dict[int, int | None] = {}
+    out = []
+    for d in sorted(by_day):
+        before = dict(state)
+        for kid, r, _ in by_day[d]:
+            state[kid] = r
+        ranks = list(state.values())
+        ranked = [r for r in ranks if r is not None]
+        up = down = same = 0
+        for kid, r in state.items():
+            if kid not in before:
+                continue
+            a, b = (before[kid] if before[kid] is not None else 999), (r if r is not None else 999)
+            up, down, same = up + (b < a), down + (b > a), same + (b == a)
+        with_target = [(state[k], t) for k, t in tops.items() if t and k in state]
+        out.append({
+            "date": d, "checked": len(state),
+            "top3": sum(1 for r in ranked if r <= 3), "top10": sum(1 for r in ranked if 3 < r <= 10),
+            "top30": sum(1 for r in ranked if 10 < r <= 30), "out": sum(1 for r in ranks if r is None or r > 30),
+            "avg": round(sum(ranked) / len(ranked), 1) if ranked else None,
+            "up": up, "down": down, "same": same,
+            "target_total": len(with_target),
+            "target_hit": sum(1 for r, t in with_target if r is not None and r <= t)})
+    return out[-limit:]
 
 
 def set_target_url(con: sqlite3.Connection, site: str, keyword_id: int, raw_url: str | None, user: str) -> str | None:
@@ -408,13 +750,17 @@ def remove_keywords(con: sqlite3.Connection, site: str, ids: list[int], user: st
 
 def toggle_star(con: sqlite3.Connection, site: str, s: RankSettings, end: date, url_id: int, query: str,
                 user: str) -> tuple[bool, str]:
-    """★ ở màn URL: thêm keyword GSC vào check rank (không tự gán URL mục tiêu: team gán ở màn Quản lý URL, hoặc lấy
-    từ sheet cam kết), hoặc bỏ nếu đã theo dõi."""
+    """★ ở màn URL: thêm keyword GSC vào bộ team tạo đầu tiên (không tự gán URL mục tiêu: team gán ở màn Quản lý URL,
+    hoặc lấy từ sheet cam kết), hoặc bỏ khỏi các bộ team tạo nếu đã theo dõi. Từ khóa cam kết bỏ ở sheet."""
     ensure_tables(con)
-    row = con.execute("SELECT id FROM rank_keywords WHERE site = ? AND keyword = ?", (site, query)).fetchone()
-    if row:
-        remove_keywords(con, site, [row[0]], user)
+    rows = con.execute("SELECT k.id, s.kind FROM rank_keywords k JOIN rank_sets s ON s.id = k.set_id "
+                       "WHERE k.site = ? AND lower(k.keyword) = lower(?)", (site, query)).fetchall()
+    custom = [kid for kid, kind in rows if kind != "kpi"]
+    if custom:
+        remove_keywords(con, site, custom, user)
         return True, f"Đã bỏ theo dõi “{query}”"
+    if rows:
+        return False, f"“{query}” là từ khóa cam kết: bỏ ở tab Từ khóa cam kết của sheet dự án"
     r = add_keywords(con, site, s, end, [(query, None)], user, source="gsc")
     if r["over_budget"]:
         return False, (f"Không thêm được “{query}”: ước tính chi phí tháng sẽ vượt ngân sách "
@@ -427,11 +773,11 @@ def toggle_star(con: sqlite3.Connection, site: str, s: RankSettings, end: date, 
 
 def tracked_queries(con: sqlite3.Connection, site: str) -> set[str]:
     ensure_tables(con)
-    return {r[0] for r in con.execute("SELECT keyword FROM rank_keywords WHERE site = ?", (site,))}
+    return {r[0].strip().lower() for r in con.execute("SELECT keyword FROM rank_keywords WHERE site = ?", (site,))}
 
 
 def latest_by_keyword(con: sqlite3.Connection, site: str) -> dict[str, dict]:
-    return {k["keyword"]: k for k in keywords(con, site, date.today())}
+    return {k["keyword"].strip().lower(): k for k in primary_keywords(con, site, date.today())}
 
 
 # ---- Gọi DataForSEO ----
@@ -483,12 +829,12 @@ class DataForSEO:
 
 
 def due(con: sqlite3.Connection, site: str, end: date, today: date) -> list[dict]:
-    """Keyword cần check theo lịch: chưa có lần check (hoặc task đang chờ) từ ngày theo lịch gần nhất."""
-    sched_day = last_scheduled_day(get_schedule(con), today)
-    if sched_day is None:
-        return []
+    """Keyword cần check theo lịch của bộ chứa nó: chưa có lần check (hoặc task đang chờ) từ ngày theo lịch gần nhất."""
     out = []
     for k in keywords(con, site, end):
+        sched_day = last_scheduled_day(k["set"]["schedule"], today)
+        if sched_day is None:
+            continue
         pending = con.execute("SELECT MAX(check_date) FROM rank_tasks WHERE keyword_id = ? AND status = 'posted'",
                               (k["id"],)).fetchone()[0]
         last = max(filter(None, [k["date"], pending]), default=None)
@@ -506,8 +852,11 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
         log(f"Dừng check rank: đã dùng {usd(spent)} USD tháng này, lượt này cần {usd(batch_cost, 3)} USD, "
             f"vượt ngân sách {s.monthly_budget_usd:.0f} USD.")
         return 0
-    tasks = [{"keyword": k["keyword"], "location_code": s.location_code, "language_code": s.language_code,
-              "device": s.device, "se_domain": s.se_domain, "depth": k["depth"], "tag": str(k["id"])} for k in todo]
+    tasks = []
+    for k in todo:  # mỗi từ khóa check theo nơi check của bộ chứa nó
+        w = settings_for(s, k.get("set"))
+        tasks.append({"keyword": k["keyword"], "location_code": w.location_code, "language_code": w.language_code,
+                      "device": w.device, "se_domain": w.se_domain, "depth": k["depth"], "tag": str(k["id"])})
     posted, errors = 0, {}
     with con:
         for k, t in zip(todo, client.post(tasks)):

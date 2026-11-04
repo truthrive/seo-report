@@ -98,7 +98,7 @@ def cmd_ads_check(cfg) -> None:
         print(e)
         return
     with closing(db.connect(cfg.db_path)) as con:
-        kws = rank.keywords(con, cfg.site_url, keywords.latest_date(con, cfg.site_url))[:8]
+        kws = rank.primary_keywords(con, cfg.site_url, keywords.latest_date(con, cfg.site_url))[:8]
         old = volume.latest(con)
     if not kws:
         print("Chưa có keyword theo dõi để thử.")
@@ -169,7 +169,7 @@ def cmd_rank(cfg, wait_minutes: int) -> None:
         hint = " Vào https://app.dataforseo.com/ để xác minh tài khoản." if "40104" in str(e) else ""
         raise SystemExit(f"Check rank thất bại: {e}{hint}")
     st = rank.budget_status(con, cfg.site_url, cfg.rank, end)
-    print(f"Lịch: {rank.describe_schedule(rank.get_schedule(con))}. Ngân sách: đã dùng {rank.usd(st['spent'], 3)} USD "
+    print(f"Lịch: {rank.describe_sets(con, cfg.site_url)}. Ngân sách: đã dùng {rank.usd(st['spent'], 3)} USD "
           f"tháng này; {st['stars']} keyword ước tính {rank.usd(st['estimate'])}/{st['budget']:.0f} USD/tháng. "
           f"Số dư DataForSEO: {client.balance()} USD.")
 

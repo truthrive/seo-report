@@ -355,7 +355,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         from . import volume as V
         from .report import rank_change
         with connect() as c:
-            committed = [k for k in R.keywords(c, site, end) if k["target_url"] == row["url"]]
+            committed = [k for k in R.primary_keywords(c, site, end) if k["target_url"] == row["url"]]
             vols = V.latest(c)
             ranks = R.latest_by_keyword(c, site)
         starred = set(ranks)
@@ -444,7 +444,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 return
             with connect() as c:
                 r = R.add_keywords(c, site, cfg.rank, end, items, user)
-                ids = [k["id"] for k in R.keywords(c, site, end) if k["keyword"] in {i[0] for i in items}]
+                ids = [k["id"] for k in R.keywords(c, site, end) if k["keyword"].lower() in {i[0] for i in items}]
             add_btn.props("loading")
             try:
                 def work():

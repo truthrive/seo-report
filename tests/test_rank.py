@@ -123,7 +123,8 @@ class RankTest(unittest.TestCase):
 
     def test_manual_schedule_only_runs_on_check_now(self):
         self.add("gọng kính")
-        R.set_schedule(self.con, SITE, {"type": "manual", "weekdays": [], "day": 1, "depth": 50}, "test")
+        R.set_schedule(self.con, SITE, {"type": "manual", "weekdays": [], "day": 1, "depth": 50}, "test",
+                       set_id=R.default_set(self.con, SITE)["id"])
         fake = FakeDataForSEO({})
         run(self.con, self.s, fake, TUE)
         self.assertEqual(fake.posted, [])

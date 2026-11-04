@@ -36,7 +36,7 @@ def collect(base, projects: list[dict], today: date | None = None) -> list[dict]
         cfg = PJ.config_for(base, p)
         with closing(db.connect(cfg.db_path)) as c:
             st = R.budget_status(c, cfg.site_url, cfg.rank, K.latest_date(c, cfg.site_url), today)
-            schedule = R.describe_schedule(R.get_schedule(c))
+            schedule = R.describe_sets(c, cfg.site_url)
             hist = R.cost_by_month(c, months)
         budget = st["budget"]
         st["monthly"] = st["estimate"]  # chi phí một tháng đủ theo lịch hiện tại

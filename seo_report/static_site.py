@@ -49,7 +49,7 @@ def collect(cfg, today: date | None = None) -> dict:
         week = build(c, cfg, gid, 0, with_ai=True)
         month = build_month(c, cfg, gid, 0, with_ai=True)
         end = K.latest_date(c, site)
-        ranks = R.keywords(c, site, end)
+        ranks = R.primary_keywords(c, site, end)
         vols = V.latest(c)
         okr = None
         if O.sheet_id(cfg.okr.sheet) and O.sync_info(c):

@@ -88,6 +88,30 @@ def fetch(login: str, password: str, keywords: list[str], location: int, languag
     return {"cost": task.get("cost") or resp.get("cost") or 0, "result": task.get("result") or []}
 
 
+def _texts(rows: list[dict]) -> list[str]:
+    """Từ khóa không trùng (một từ khóa ở hai bộ là hai dòng nhưng chỉ hỏi volume một lần)."""
+    return list(dict.fromkeys(k["keyword"].strip().lower() for k in rows))
+
+
+def _copy_known(con: sqlite3.Connection, todo: list[dict], today: date) -> list[dict]:
+    """Dòng có cùng từ khóa với dòng khác đã có volume tháng này: chép số sang, trả các dòng còn phải hỏi."""
+    month = today.strftime("%Y-%m")
+    known = {}
+    for kw, vol, comp, at in con.execute(
+            "SELECT lower(k.keyword), v.volume, v.competition, v.fetched_at FROM keyword_volume v "
+            "JOIN rank_keywords k ON k.id = v.keyword_id WHERE v.month = ?", (month,)):
+        known[kw.strip()] = (vol, comp, at)
+    rest = []
+    with con:
+        for k in todo:
+            hit = known.get(k["keyword"].strip().lower())
+            if hit:
+                con.execute("INSERT OR REPLACE INTO keyword_volume VALUES (?, ?, ?, ?, ?)", (k["id"], month, *hit))
+            else:
+                rest.append(k)
+    return rest
+
+
 def save(con: sqlite3.Connection, todo: list[dict], result: dict, today: date) -> int:
     """Lưu kết quả; keyword Google Ads không trả về thì lưu volume None để không hỏi lại trong tháng."""
     month = today.strftime("%Y-%m")
@@ -140,6 +164,7 @@ def _refresh(con, site, cfg, end, today, only_ids, log, fetcher) -> int:
         return 0
     today = today or date.today()
     todo = missing(con, site, end, today, only_ids)
+    todo = _copy_known(con, todo, today)  # cùng từ khóa ở bộ khác đã có số tháng này: chép, không hỏi lại
     if not todo:
         return 0
     ads = _google_ads(cfg) if fetcher is fetch else None  # test truyền fetcher riêng: không gọi Google Ads
@@ -149,8 +174,7 @@ def _refresh(con, site, cfg, end, today, only_ids, log, fetcher) -> int:
         try:
             for i in range(0, len(todo), GA_BATCH):
                 chunk = todo[i:i + GA_BATCH]
-                res = GA.historical_metrics(*ads, [k["keyword"] for k in chunk], cfg.rank.location_code,
-                                            cfg.rank.language_code)
+                res = GA.historical_metrics(*ads, _texts(chunk), cfg.rank.location_code, cfg.rank.language_code)
                 saved += save(con, chunk, res, today)
             log(f"Đã lấy volume cho {saved} keyword (Google Ads, miễn phí).")
             return saved
@@ -171,7 +195,7 @@ def _refresh(con, site, cfg, end, today, only_ids, log, fetcher) -> int:
     saved = 0
     for i in range(0, len(todo), BATCH):
         chunk = todo[i:i + BATCH]
-        res = fetcher(*creds, [k["keyword"] for k in chunk], cfg.rank.location_code, cfg.rank.language_code)
+        res = fetcher(*creds, _texts(chunk), cfg.rank.location_code, cfg.rank.language_code)
         saved += save(con, chunk, res, today)
     log(f"Đã lấy volume cho {saved} keyword.")
     return saved

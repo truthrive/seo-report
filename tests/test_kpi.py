@@ -121,9 +121,11 @@ class ProgressTest(unittest.TestCase):
         self.con = sqlite3.connect(":memory:")
         R.ensure_tables(self.con)
         self.ids = {}
+        sid = self.con.execute("INSERT INTO rank_sets (site, name, kind, schedule, created_by, created_at) "
+                               "VALUES (?, 'Cam kết', 'kpi', '{}', 't', '2026-11-01')", (SITE,)).lastrowid
         for kw in ("a", "b", "c", "d"):
-            cur = self.con.execute("INSERT INTO rank_keywords (site, keyword, url_id, source, added_by, added_at) "
-                                   "VALUES (?, ?, NULL, 'kpi', 't', '2026-11-01')", (SITE, kw))
+            cur = self.con.execute("INSERT INTO rank_keywords (site, keyword, url_id, source, added_by, added_at, "
+                                   "set_id) VALUES (?, ?, NULL, 'kpi', 't', '2026-11-01', ?)", (SITE, kw, sid))
             self.ids[kw] = cur.lastrowid
         self.keywords = [{"keyword": k, "url": "", "target": t} for k, t in
                          (("a", 3), ("b", 3), ("c", 10), ("d", None))]

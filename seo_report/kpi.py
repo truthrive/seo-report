@@ -228,8 +228,8 @@ def _top(v) -> int | None:
     return int(m.group(0)) if m and 0 < int(m.group(0)) <= 100 else None
 
 
-def parse_keywords(rows: list[list]) -> list[dict]:
-    """Đọc theo tên cột ở dòng tiêu đề (Từ khóa, URL mục tiêu, Top target), nên thêm hay đổi thứ tự cột vẫn đúng."""
+def _kw_columns(rows: list[list]) -> tuple[dict, int]:
+    """Vị trí cột (Từ khóa, URL mục tiêu, Top target) theo dòng tiêu đề và dòng dữ liệu đầu tiên."""
     col = {"kw": 0, "url": 1, "target": None}
     start = 0
     for i, r in enumerate(rows[:5]):
@@ -244,6 +244,12 @@ def parse_keywords(rows: list[list]) -> list[dict]:
                     col["target"] = j
             start = i + 1
             break
+    return col, start
+
+
+def parse_keywords(rows: list[list]) -> list[dict]:
+    """Đọc theo tên cột ở dòng tiêu đề (Từ khóa, URL mục tiêu, Top target), nên thêm hay đổi thứ tự cột vẫn đúng."""
+    col, start = _kw_columns(rows)
 
     def cell(r, j):
         return r[j] if j is not None and j < len(r) and r[j] not in (None, "") else None
@@ -325,10 +331,8 @@ def sync(con, cfg, user: str = "tool", today: date | None = None) -> dict:
     data = parse_kpi(tables[KPI_TAB], today)
     data["keywords"] = parse_keywords(tables.get(KW_TAB, []))
     changed = save(con, data, today)
-    added = {"added": [], "over_budget": [], "bad_url": []}
-    if data["keywords"]:  # từ khóa cam kết phải có trong danh sách check rank
-        added = R.add_keywords(con, cfg.site_url, cfg.rank, K.latest_date(con, cfg.site_url),
-                               [(k["keyword"], k["url"] or None) for k in data["keywords"]], user, source="kpi")
+    # bộ Cam kết ở màn Từ khóa & rank khớp tab Từ khóa cam kết (thêm mới, cập nhật URL / Top, chuyển từ khóa đã bỏ)
+    added = R.sync_kpi_set(con, cfg.site_url, cfg.rank, K.latest_date(con, cfg.site_url), data["keywords"], user)
     info = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "changed": changed,
             "months": len(data["months"]), "lines": len(data["lines"]), "keywords": len(data["keywords"]),
             "added": len(added["added"]), "over_budget": added["over_budget"], "bad_url": added["bad_url"]}
@@ -358,7 +362,10 @@ def _rank_items(con, site: str, kws: list[dict], s: date, e: date) -> dict:
     """Lần check cuối trong [s, e] của từng từ khóa cam kết."""
     from . import rank as R
     R.ensure_tables(con)
-    ids = {k.lower(): i for i, k in con.execute("SELECT id, keyword FROM rank_keywords WHERE site = ?", (site,))}
+    ids = {}  # dòng ở bộ Cam kết thắng dòng cùng từ khóa ở bộ khác (nơi check có thể khác)
+    for i, k, kind in con.execute("SELECT k.id, k.keyword, s.kind FROM rank_keywords k JOIN rank_sets s ON "
+                                  "s.id = k.set_id WHERE k.site = ? ORDER BY s.kind = 'kpi', k.id", (site,)):
+        ids[k.lower()] = i
     out = {"total": len(kws), "checked": 0, "missing": [], "items": [], "target_set": 0, "target_ok": 0}
     for k in kws:
         kid = ids.get(k["keyword"].lower())
@@ -776,7 +783,8 @@ def create_template(con, cfg) -> dict:
     svc = D.build_service(cfg)
     folder, _ = D.target_folder(con, svc, cfg.site_url, cfg.drive_parent)
     host = domain(cfg.site_url)
-    kws = [(k["keyword"], k["target_url"] or "") for k in R.keywords(con, cfg.site_url, K.latest_date(con, cfg.site_url))]
+    kws = [(k["keyword"], k["target_url"] or "")
+           for k in R.primary_keywords(con, cfg.site_url, K.latest_date(con, cfg.site_url))]
     f = D.upload(svc, template_xlsx(f"SEO {host}", kws), f"KPI cam kết SEO – {host}", D.XLSX, folder, D.SHEET)
     set_sheet(con, f["id"])
     return f
@@ -1013,6 +1021,83 @@ def create_project_sheet(con, cfg, data: dict, keywords: list[tuple], master: st
 
 
 # ---- Sửa cam kết trên tool (ghi ngược vào sheet) ----
+
+def _a1(col: int) -> str:
+    out = ""
+    col += 1
+    while col:
+        col, r = divmod(col - 1, 26)
+        out = chr(65 + r) + out
+    return out
+
+
+def keyword_row_plan(rows: list[list], op: str, keyword: str, url: str | None = None,
+                     target: int | None = None) -> dict:
+    """Cách sửa đúng một dòng của tab Từ khóa cam kết (giữ nguyên các cột khác như Ghi chú):
+    {"action": "update", "row": i, "cells": {cột: giá trị}} | {"action": "append", "values": [...]} |
+    {"action": "delete", "row": i} | {"action": "header", "col": j} (thêm cột Top target trước) | {"action": "none"}.
+    row / col tính từ 0."""
+    col, start = _kw_columns(rows)
+    key = " ".join(keyword.split()).lower()
+    idx = next((i for i in range(start, len(rows)) if col["kw"] < len(rows[i]) and
+                " ".join(str(rows[i][col["kw"]]).split()).lower() == key), None)
+    if op == "delete":
+        return {"action": "delete", "row": idx} if idx is not None else {"action": "none"}
+    if col["target"] is None and target is not None:
+        width = max([len(r) for r in rows[:max(start, 1)]] + [2])
+        return {"action": "header", "col": width, "header_row": max(start - 1, 0)}
+    cells = {col["url"]: url or ""}
+    if col["target"] is not None:
+        cells[col["target"]] = f"Top {target}" if target else ""
+    if idx is None:
+        width = max(cells) + 1
+        values = [""] * max(width, col["kw"] + 1)
+        values[col["kw"]] = keyword
+        for j, v in cells.items():
+            values[j] = v
+        return {"action": "append", "values": values}
+    return {"action": "update", "row": idx, "cells": cells}
+
+
+def sheet_keyword_op(cfg, sid: str, op: str, keyword: str, url: str | None = None, target: int | None = None) -> None:
+    """Sửa một từ khóa cam kết ngay trên Google Sheet: op 'upsert' (thêm / sửa URL mục tiêu + Top target) hoặc
+    'delete'. Chỉ đụng dòng của từ khóa đó; đọc sheet ngay trước khi ghi nên không đè sửa của người khác ở dòng
+    khác. Cần quyền ghi Google Sheets. Sau đó gọi sync() để tool đọc lại."""
+    from googleapiclient.discovery import build
+
+    from . import auth
+    sh = build("sheets", "v4", credentials=auth.get_credentials(cfg, need=(auth.SHEETS_WRITE_SCOPE,)),
+               cache_discovery=False)
+    meta = sh.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(sheetId,title))").execute()
+    tab = next((x["properties"] for x in meta["sheets"] if _norm_tab(x["properties"]["title"]) == KW_TAB.lower()),
+               None)
+    if tab is None:
+        if op == "delete":
+            return
+        write_tabs(sh, sid, {KW_TAB: [["Từ khóa", "URL mục tiêu", "Top target", "Ghi chú"]]})
+        return sheet_keyword_op(cfg, sid, op, keyword, url, target)
+    name = "'" + tab["title"].replace("'", "''") + "'"
+    for _ in range(2):  # lần đầu có thể chỉ thêm cột Top target
+        rows = sh.spreadsheets().values().get(spreadsheetId=sid, range=name + "!A1:Z2000",
+                                              valueRenderOption="UNFORMATTED_VALUE").execute().get("values", [])
+        plan = keyword_row_plan(rows, "delete" if op == "delete" else "upsert", keyword, url, target)
+        if plan["action"] != "header":
+            break
+        sh.spreadsheets().values().update(
+            spreadsheetId=sid, range=f"{name}!{_a1(plan['col'])}{plan['header_row'] + 1}",
+            valueInputOption="USER_ENTERED", body={"values": [["Top target"]]}).execute()
+    if plan["action"] == "update":
+        data = [{"range": f"{name}!{_a1(j)}{plan['row'] + 1}", "values": [[v]]} for j, v in plan["cells"].items()]
+        sh.spreadsheets().values().batchUpdate(spreadsheetId=sid, body={"valueInputOption": "USER_ENTERED",
+                                                                        "data": data}).execute()
+    elif plan["action"] == "append":
+        sh.spreadsheets().values().append(spreadsheetId=sid, range=name + "!A1", valueInputOption="USER_ENTERED",
+                                          insertDataOption="INSERT_ROWS", body={"values": [plan["values"]]}).execute()
+    elif plan["action"] == "delete":
+        sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": [{"deleteDimension": {"range": {
+            "sheetId": tab["sheetId"], "dimension": "ROWS", "startIndex": plan["row"],
+            "endIndex": plan["row"] + 1}}}]}).execute()
+
 
 class SheetChanged(Exception):
     """Sheet đã bị sửa từ lúc mở form: không ghi đè khi chưa hỏi lại."""
