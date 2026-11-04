@@ -30,7 +30,7 @@ NUMBER = "val => val.toLocaleString('vi-VN')"
 NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
             ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
-    ("SEO", [("Hiệu suất URL", "/url", "link"), ("Từ khóa & rank", "/rank", "leaderboard"),
+    ("SEO", [("Hiệu suất URL", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
              ("Index", "/index", "travel_explore"), ("Quản lý URL", "/urls", "folder_open")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"),
                   ("Chất lượng dữ liệu", "/ai?tab=chat-luong", "verified")]),
@@ -697,7 +697,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request)):
             return
         user, P = opened
-        budget_card = shell("Từ khóa & rank", user, P, page_ctx(P), period=False, group=False)
+        budget_card = shell("Từ khóa & Thứ hạng", user, P, page_ctx(P), period=False, group=False)
         bo = request.query_params.get("bo", "")  # bộ (tab) đang mở
         build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh,
                         set_id=int(bo) if bo.isdigit() else None)

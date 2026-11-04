@@ -58,7 +58,7 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
                    "website tự loại trừ (noindex, chuyển hướng, trang thay thế có chính tắc), thường không cần sửa."):
         with ui.row().classes("items-center gap-3 w-full"):
             kind = ui.toggle({"fix": f"Cần xem · {fmt(len(to_fix))}", "intent": f"Có chủ ý · {fmt(len(on_purpose))}"},
-                             value="fix").props("no-caps unelevated toggle-color=dark dense")
+                             value="fix").props("unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
             reason = ui.select({}, label="Lý do", clearable=True).props("outlined dense options-dense").classes(
                 "w-72")
         miss_table = ui.table(columns=[

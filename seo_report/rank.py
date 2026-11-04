@@ -713,7 +713,17 @@ def sync_kpi_set(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
 
 
 PERIODS = {"check": "Lần check", "week": "Tuần", "month": "Tháng"}
-BANDS = (("top3", 1, 3), ("top5", 4, 5), ("top10", 6, 10), ("top30", 11, 30))  # nhóm Top: (khóa, từ hạng, đến hạng)
+BANDS = (("top3", 1, 3), ("top5", 4, 5), ("top10", 6, 10))  # nhóm Top: (khóa, từ hạng, đến hạng); hạng 11+ là "top30"
+
+
+def band_labels(h: dict | None) -> tuple[str, str]:
+    """Tên hai nhóm cuối theo độ sâu thật của lần check: (thấy ở hạng 11 trở đi, không thấy trong độ sâu). Cùng một độ
+    sâu D thì "Hạng 11–D" / "Ngoài top D"; độ sâu khác nhau thì không ghi số giả."""
+    deps = (h or {}).get("depths") or []
+    miss = (h or {}).get("out_depths") or []
+    deep = f"Hạng 11–{deps[0]}" if len(deps) == 1 and deps[0] > 10 else "Hạng 11 trở đi"
+    out = f"Ngoài top {miss[0]}" if len(miss) == 1 else "Không thấy trong độ sâu check"
+    return deep, out
 
 
 def _periods(first: date, last: date, period: str) -> list[tuple[date, date, str]]:
@@ -746,29 +756,32 @@ def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30
     if not tops:
         return []
     marks = ",".join("?" * len(tops))
-    checks = con.execute(f"SELECT keyword_id, check_date, rank FROM rank_checks WHERE keyword_id IN ({marks}) "
+    checks = con.execute(f"SELECT keyword_id, check_date, rank, depth FROM rank_checks WHERE keyword_id IN ({marks}) "
                          "ORDER BY check_date", list(tops)).fetchall()
     by_day: dict[str, list] = {}
-    for kid, d, r in checks:
+    depth_of: dict[tuple, int] = {}
+    for kid, d, r, dep in checks:
         by_day.setdefault(d, []).append((kid, r))
-    snaps, state = [], {}  # (ngày check, trạng thái sau ngày đó)
+        depth_of[(kid, d)] = dep
+    snaps, state, seen = [], {}, {}  # (ngày check, trạng thái sau ngày đó, độ sâu lần check đó của từng từ khóa)
     for d in sorted(by_day):
         for kid, r in by_day[d]:
             state[kid] = r
-        snaps.append((d, dict(state)))
+            seen[kid] = depth_of[(kid, d)]
+        snaps.append((d, dict(state), dict(seen)))
     if not snaps:
         return []
     if period == "check":
-        points = [(d, d, _vn_short(d), st) for d, st in snaps]
+        points = [(d, d, _vn_short(d), st, dep) for d, st, dep in snaps]
     else:
         first, last = date.fromisoformat(snaps[0][0]), max(date.fromisoformat(snaps[-1][0]), today or date.today())
         points = []
         for s0, e0, label in _periods(first, last, period):
-            st = next((st for d, st in reversed(snaps) if d <= e0.isoformat()), None)
-            if st is not None:
-                points.append((s0.isoformat(), e0.isoformat(), label, st))
+            snap = next(((st, dep) for d, st, dep in reversed(snaps) if d <= e0.isoformat()), None)
+            if snap is not None:
+                points.append((s0.isoformat(), e0.isoformat(), label, *snap))
     out, before = [], {}
-    for d, e, label, st in points:
+    for d, e, label, st, dep in points:
         ranks = list(st.values())
         ranked = [r for r in ranks if r is not None]
         up = down = same = 0
@@ -778,13 +791,19 @@ def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30
             a, b = (before[kid] if before[kid] is not None else 999), (r if r is not None else 999)
             up, down, same = up + (b < a), down + (b > a), same + (b == a)
         with_target = [(st[k], t) for k, t in tops.items() if t and k in st]
-        row = {"date": d, "end": e, "label": label, "checked": len(st),
-               "out": sum(1 for r in ranks if r is None or r > 30),
+        # Nhóm loại trừ nhau, cộng lại = số từ khóa đã check: Top 3 / 4–5 / 6–10 / thấy ở hạng 11 trở đi ("top30",
+        # tên khóa giữ cho file xuất cũ) / không thấy trong độ sâu đã check ("out": chỉ biết là ngoài top <độ sâu>,
+        # không phải ngoài top 30 nếu chỉ check top 10 / 20). Từ khóa chưa check lần nào: "unchecked".
+        miss = sorted({dep[k] for k, r in st.items() if r is None})
+        row = {"date": d, "end": e, "label": label, "checked": len(st), "unchecked": len(tops) - len(st),
+               "out": sum(1 for r in ranks if r is None), "out_depths": miss,
+               "depths": sorted(set(dep[k] for k in st)),
                "avg": round(sum(ranked) / len(ranked), 1) if ranked else None,
                "up": up, "down": down, "same": same, "target_total": len(with_target),
                "target_hit": sum(1 for r, t in with_target if r is not None and r <= t)}
         for key, lo, hi in BANDS:
             row[key] = sum(1 for r in ranked if lo <= r <= hi)
+        row["top30"] = sum(1 for r in ranked if r > 10)
         out.append(row)
         before = st
     return out[-limit:]

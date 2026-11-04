@@ -135,11 +135,14 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 ui.button("Lưu", on_click=save).props("unelevated no-caps")
         dlg.open()
 
-    with ui.dropdown_button("" if icon_only else label, icon="ios_share", auto_close=True).props(
-            "unelevated no-caps" + (" dense" if icon_only else "")) as btn:
-        if icon_only:
-            btn.tooltip(label)
-            btn.props["aria-label"] = label
+    if icon_only:  # nút tròn chỉ có icon, bấm mở menu (không có mũi tên xổ xuống)
+        btn = ui.button(icon="ios_share").props("unelevated round dense").tooltip(label)
+        btn.props["aria-label"] = label
+        with btn:
+            holder = ui.menu().props("auto-close anchor='bottom right' self='top right'")
+    else:
+        btn = holder = ui.dropdown_button(label, icon="ios_share", auto_close=True).props("unelevated no-caps")
+    with holder:
         with ui.list().props("dense").style("min-width: 240px"):
             def item(icon, text, handler, caption=""):
                 with ui.item(on_click=handler):

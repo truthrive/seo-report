@@ -322,21 +322,21 @@ PAGE = """<!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow"><title>SEO Report · __HOST__</title>
 <link rel="icon" href="app-icon.svg"><link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="__ECHARTS__"></script>
 <style>
 :root{--bg:#F4F4EF;--card:#fff;--ink:#1F221E;--muted:#6B6A5E;--line:#E7E5DC;--green:#1E7C31;--red:#C2410C;--amber:#B7791F}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 Inter,system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 'Be Vietnam Pro',system-ui,sans-serif}
 .num{font-variant-numeric:tabular-nums}.muted{color:var(--muted)}h1{font:700 26px/1.2 'Be Vietnam Pro',sans-serif;margin:4px 0}
 header{position:sticky;top:0;z-index:5;background:rgba(244,244,239,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .hd{max-width:1200px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .hd img{height:34px}.stamp{font-size:12px;color:var(--muted)}
 .right{margin-left:auto;display:flex;align-items:center;gap:10px}
 nav{display:flex;gap:2px;background:#EEECE4;border-radius:999px;padding:3px;overflow-x:auto;max-width:100%}
-nav button{border:0;background:transparent;border-radius:999px;padding:5px 14px;font:500 13px Inter;color:#4a4a42;cursor:pointer;white-space:nowrap}
+nav button{border:0;background:transparent;border-radius:999px;padding:5px 14px;font:500 13px 'Be Vietnam Pro';color:#4a4a42;cursor:pointer;white-space:nowrap}
 nav button.on{background:#fff;color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(31,34,30,.12)}
 main{max-width:1200px;margin:0 auto;padding:16px}.pane{display:none}.pane.on{display:block}
-.ph{margin:8px 0 16px}.eb{font:500 11px 'JetBrains Mono',monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--green)}
+.ph{margin:8px 0 16px}.eb{font:500 11px 'Be Vietnam Pro',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--green)}
 .sub{color:var(--muted);font-size:13px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px;min-width:0}
 .st{font:600 15px 'Be Vietnam Pro',sans-serif}.ss{font-size:12px;color:var(--muted);margin-bottom:10px}.st2{font-weight:600;margin:14px 0 6px}
 .grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px}
@@ -348,28 +348,28 @@ main{max-width:1200px;margin:0 auto;padding:16px}.pane{display:none}.pane.on{dis
 .delta{font-size:12px;font-weight:600;border-radius:6px;padding:1px 6px}.delta.up{color:var(--green);background:#E7F3EA}
 .delta.down{color:var(--red);background:#FCEDE6}.delta.muted{background:#F1F0EA}
 .notes{margin:4px 0 0;padding-left:18px;font-size:13px}.notes .up{color:var(--green)}.notes .down{color:var(--red)}.notes .warn{color:var(--amber)}
-.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}th{font:500 11px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}th{font:500 11px 'Be Vietnam Pro',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:7px 8px;border-bottom:1px solid #F0EEE6}.r{text-align:right}.warn{color:var(--amber);font-size:12px}
 .empty{color:var(--muted);font-size:13px;padding:8px 0}.chip{display:inline-block;font-size:12px;border-radius:999px;padding:3px 10px;margin-bottom:12px}
 .chip.amber{background:#FBF1DE;color:var(--amber)}.pre{white-space:pre-line;margin:4px 0}
-.row{display:flex;justify-content:space-between;align-items:center}.tag{font:600 11px Inter;background:#F1F0EA;border-radius:999px;padding:1px 8px}
+.row{display:flex;justify-content:space-between;align-items:center}.tag{font:600 11px 'Be Vietnam Pro';background:#F1F0EA;border-radius:999px;padding:1px 8px}
 .ot{font-weight:500;margin:6px 0 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.9em}
 .bar{height:6px;background:#EEECE4;border-radius:3px;margin-top:8px;overflow:hidden}.bar span{display:block;height:100%;background:var(--green)}
 .list{list-style:none;margin:6px 0 0;padding:0;font-size:13px}.list li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.list .dot{margin-right:6px}
 #lock{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 #lock form{background:#fff;border:1px solid var(--line);border-radius:16px;padding:28px;width:100%;max-width:360px;text-align:center}
 #lock img{height:44px;margin-bottom:12px}.pwbox{position:relative;margin:14px 0 10px}
-#lock input{width:100%;padding:10px 44px 10px 12px;border:1px solid var(--line);border-radius:10px;font:14px Inter}
-#go{width:100%;padding:10px;border:0;border-radius:999px;background:var(--ink);color:#fff;font:600 14px Inter;cursor:pointer}
+#lock input{width:100%;padding:10px 44px 10px 12px;border:1px solid var(--line);border-radius:10px;font:14px 'Be Vietnam Pro'}
+#go{width:100%;padding:10px;border:0;border-radius:999px;background:var(--ink);color:#fff;font:600 14px 'Be Vietnam Pro';cursor:pointer}
 #peek{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;border-radius:8px;
 padding:4px 6px;font-size:15px;cursor:pointer;opacity:.7}#peek:hover{opacity:1;background:#F4F4EF}
 #tease{margin-top:12px;border:1px dashed var(--line);background:#fff;color:var(--muted);border-radius:999px;padding:5px 12px;
-font:500 12px Inter;cursor:pointer;white-space:nowrap;z-index:20}
+font:500 12px 'Be Vietnam Pro';cursor:pointer;white-space:nowrap;z-index:20}
 #tease.run{position:fixed;transition:left .25s cubic-bezier(.2,.8,.2,1.2),top .25s cubic-bezier(.2,.8,.2,1.2);
 box-shadow:0 6px 18px rgba(31,34,30,.18);color:var(--ink)}
 #joke{font-size:13px;color:var(--green);min-height:0;margin-top:8px}
 #err{color:var(--red);font-size:13px;min-height:20px;margin-top:8px}#app{display:none}
-#out{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:500 12px Inter;color:var(--muted);cursor:pointer}
+#out{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;font:500 12px 'Be Vietnam Pro';color:var(--muted);cursor:pointer}
 </style></head><body>
 <div id="lock"><form autocomplete="off"><img src="__LOGO__" alt=""><div style="font:600 17px 'Be Vietnam Pro'">Báo cáo SEO &amp; GEO</div>
 <div class="muted" style="font-size:13px">Bản xem chỉ đọc · nhập mật khẩu để mở</div>
@@ -417,6 +417,7 @@ function show(d) {
     const o = c.option, lab = o.xAxis && o.xAxis.axisLabel && o.xAxis.axisLabel.labels;
     if (lab) o.xAxis.axisLabel.formatter = v => lab[v] || '';
     if (o.tooltip && o.tooltip.trigger === 'item') o.tooltip.formatter = p => p.name;
+    o.textStyle = Object.assign({fontFamily: "'Be Vietnam Pro', sans-serif"}, o.textStyle || {});
     inst[c.id] = echarts.init(el); inst[c.id].setOption(o);
   });
   const pick = k => {

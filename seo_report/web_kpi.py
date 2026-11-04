@@ -423,7 +423,7 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
                     with ui.column().classes("gap-1"):
                         ui.label("Thời gian triển khai").classes("text-xs muted")
                         months_pick = ui.toggle({3: "3 tháng", 6: "6 tháng", 9: "9 tháng", 12: "12 tháng", 0: "Khác"},
-                                                value=6).props("no-caps unelevated")
+                                                value=6).props("unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
                     months_other = ui.number("Số tháng", value=6, min=1, max=36, step=1).props(
                         "outlined dense").classes("w-32")
                     months_other.bind_visibility_from(months_pick, "value", backward=lambda v: v == 0)

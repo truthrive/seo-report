@@ -114,6 +114,24 @@ class SetsTest(unittest.TestCase):
         self.assertEqual([x["label"] for x in m], ["T10/2026", "T11/2026"])
         self.assertEqual((m[0]["top3"], m[0]["end"]), (1, "2026-10-31"))
 
+    def test_growth_buckets_follow_check_depth(self):
+        """Nhóm loại trừ nhau theo độ sâu thật: không thấy ở top 20 là "ngoài top 20", không phải ngoài top 30; hạng
+        45 (check top 50) là thấy ở hạng 11 trở đi; từ khóa chưa check đếm riêng."""
+        sid = R.create_set(self.con, SITE, "Sâu", "t")
+        R.add_keywords(self.con, SITE, self.s, END, [("a", None), ("b", None), ("c", None), ("d", None)], "t",
+                       set_id=sid)
+        ids = {k["keyword"]: k["id"] for k in R.keywords(self.con, SITE, END, sid)}
+        for kw, dep, r in (("a", 20, None), ("b", 50, 45), ("c", 10, 2)):
+            self.con.execute("INSERT INTO rank_checks VALUES (?, '2026-10-06', ?, ?, NULL, NULL, 0, '')",
+                             (ids[kw], dep, r))
+        h = R.set_history(self.con, SITE, sid)[-1]
+        self.assertEqual((h["top3"], h["top5"], h["top10"], h["top30"], h["out"], h["unchecked"]), (1, 0, 0, 1, 1, 1))
+        self.assertEqual(h["top3"] + h["top5"] + h["top10"] + h["top30"] + h["out"] + h["unchecked"], 4)
+        self.assertEqual(R.band_labels(h), ("Hạng 11 trở đi", "Ngoài top 20"))
+        self.assertEqual(R.band_labels({"depths": [20], "out_depths": [20]}), ("Hạng 11–20", "Ngoài top 20"))
+        self.assertEqual(R.band_labels({"depths": [10, 30], "out_depths": [10, 30]})[1],
+                         "Không thấy trong độ sâu check")
+
     def test_budget_counts_each_set_schedule(self):
         a = R.create_set(self.con, SITE, "Tuần", "t", schedule={"depth": 10})
         b = R.create_set(self.con, SITE, "Tháng", "t", schedule={"type": "monthly", "depth": 10})
