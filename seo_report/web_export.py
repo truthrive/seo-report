@@ -7,9 +7,9 @@ from typing import Callable
 
 
 def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Callable,
-                make_pptx: Callable | None = None, label: str = "Xuất", user=None) -> None:
+                make_pptx: Callable | None = None, label: str = "Xuất", user=None, icon_only: bool = False) -> None:
     """name: tên file (không đuôi). make_xlsx / make_pptx: hàm (có thể async) trả về bytes. Người chỉ xem (user) chỉ
-    tải file về máy, không lưu vào Drive của chủ tool."""
+    tải file về máy, không lưu vào Drive của chủ tool. icon_only: nút chỉ có icon (tên hiện khi rê chuột)."""
     import inspect
 
     from nicegui import run
@@ -135,8 +135,11 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 ui.button("Lưu", on_click=save).props("unelevated no-caps")
         dlg.open()
 
-    with ui.dropdown_button(label, icon="ios_share", auto_close=True).props(
-            "unelevated no-caps") as btn:
+    with ui.dropdown_button("" if icon_only else label, icon="ios_share", auto_close=True).props(
+            "unelevated no-caps" + (" dense" if icon_only else "")) as btn:
+        if icon_only:
+            btn.tooltip(label)
+            btn.props["aria-label"] = label
         with ui.list().props("dense").style("min-width: 240px"):
             def item(icon, text, handler, caption=""):
                 with ui.item(on_click=handler):

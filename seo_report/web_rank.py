@@ -59,6 +59,17 @@ FILTERS = {
     "note": ("Có ghi chú", lambda k: bool(k["note"])),
 }
 
+def icon_btn(ui, icon: str, tip: str, on_click=None, kind: str = "flat", color: str = "", badge=None):
+    """Nút tròn chỉ có icon; tip hiện khi rê chuột và là tên đọc cho trình đọc màn hình. badge: số nhỏ ở góc."""
+    b = ui.button(icon=icon, on_click=on_click).props(
+        f"{kind} round dense" + (f" color={color}" if color else "")).tooltip(tip)
+    b.props["aria-label"] = tip
+    if badge:
+        with b:
+            ui.badge(str(badge)).props("floating rounded color=grey-7")
+    return b
+
+
 RANK_TONES = [(3, ("#E7F3EA", "#1E7C31")), (10, ("#F2F7DC", "#5E7414")), (30, ("#FBF1DE", "#B7791F"))]
 
 
@@ -100,12 +111,13 @@ def coverage_card(ui, kws: list[dict]) -> None:
     last = max((k["date"] for k in checked), default=None)
     with ui.element("div").classes("sr-card q-pa-md"):
         with ui.row().classes("items-center gap-1 no-wrap"):
-            ui.label("Độ phủ bộ từ khóa").classes("sr-section-title")
+            ui.label("Độ phủ bộ từ khóa" + (f" · {_vn(last)[:5]}" if last else "")).classes("sr-section-title")
             T.info_icon(ui, "Độ phủ bộ từ khóa", (
                 "Bao nhiêu từ khóa của bộ đang ở mỗi nhóm Top, theo lần check gần nhất của từng từ khóa.",
                 "Phần xanh càng lớn thì bộ từ khóa càng phủ trang đầu Google.",
                 "Ngoài độ sâu: không thấy website trong số kết quả đã check (ví dụ chỉ check top 20)."))
-        ui.label(f"Lần check mới nhất {_vn(last)}" if last else "Chưa có lần check nào").classes("text-xs muted")
+        if not last:
+            ui.label("Chưa có lần check nào").classes("text-sm muted")
         if checked:
             T.donut(ui, list(counts.items()), [c for _, _, c in BANDS_UI], "từ khóa", 190)
 
@@ -132,9 +144,8 @@ def growth_charts(ui, load, evs: list[dict] | None = None, on_events=None, state
                       on_change=lambda e: (state.update(period=e.value), charts.refresh())).props(
                 "no-caps dense unelevated toggle-color=primary size=sm")
             if on_events:
-                ui.button(f"Mốc sự kiện · {len(evs)}" if evs else "Mốc sự kiện", icon="flag",
-                          on_click=on_events).props("flat dense no-caps color=deep-purple-7").tooltip(
-                    "Đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ")
+                icon_btn(ui, "flag", "Mốc sự kiện: đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ",
+                         on_events, color="deep-purple-7", badge=len(evs) if evs else None)
 
         @ui.refreshable
         def charts():
@@ -147,7 +158,7 @@ def growth_charts(ui, load, evs: list[dict] | None = None, on_events=None, state
             marks = event_marks(hist, evs or [])
             bar = {"barMaxWidth": 22, "barCategoryGap": "45%"}
             gap = {"borderColor": "#FFFFFF", "borderWidth": 1}  # khe giữa các đoạn cột
-            base = {"animation": False, "grid": {"left": 34, "right": 12, "top": 30, "bottom": 24},
+            base = {"animation": False, "grid": {"left": 34, "right": 12, "top": 46, "bottom": 24},
                     "legend": {"top": 0, "left": 0, "itemWidth": 10, "itemHeight": 10, "icon": "roundRect",
                                "textStyle": {"fontSize": 11, "color": "#6B6A5E"}},
                     "tooltip": {"trigger": "axis", "confine": True,
@@ -160,13 +171,11 @@ def growth_charts(ui, load, evs: list[dict] | None = None, on_events=None, state
             with ui.element("div").classes("w-full").style(
                     "display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px"):
                 with ui.column().classes("gap-0"):
-                    ui.label("Số từ khóa theo nhóm Top").classes("text-xs muted")
                     ui.echart({**base, "series": [
                         {"type": "bar", "stack": "top", "name": n, "data": [h[k] for h in hist], **bar,
                          "itemStyle": {"color": c, **gap}, **(marks if i == 0 else {})}
                         for i, (n, k, c) in enumerate(BANDS_UI)]}).classes("w-full").style("height: 250px")
                 with ui.column().classes("gap-0"):
-                    ui.label("Lên / xuống hạng so với cột trước").classes("text-xs muted")
                     ui.echart({**base, "tooltip": {**base["tooltip"], ":valueFormatter": "v => Math.abs(v)"},
                                "series": [{"type": "bar", "stack": "move", "name": "Lên hạng",
                                            "data": [h["up"] for h in hist], **bar,
@@ -204,10 +213,9 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         if cfg.rank.paused:
             T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
         if ed:
-            ui.button("Thêm keyword", icon="add", on_click=lambda: add_dialog.open()).props("outline no-caps")
-            check_btn = ui.button("Check ngay", icon="play_arrow", on_click=lambda: check_now()).props(
-                "unelevated no-caps").tooltip("Check các keyword đã tích chọn trong bộ này, hoặc cả bộ nếu không "
-                                              "chọn gì. Đổi trang vẫn check tiếp, xong sẽ báo")
+            icon_btn(ui, "add", "Thêm keyword vào bộ này", lambda: add_dialog.open(), kind="outline")
+            check_btn = icon_btn(ui, "play_arrow", "Check ngay: các keyword đã chọn, hoặc cả bộ (đổi trang vẫn check "
+                                 "tiếp, xong sẽ báo)", lambda: check_now(), kind="unelevated", color="primary")
             if site in _RUNNING:
                 check_btn.props("loading")
             if cfg.rank.paused:  # tạm ngưng: không gửi yêu cầu DataForSEO nào; quản trị bật lại ở màn Ngân sách
@@ -215,7 +223,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                 check_btn.tooltip("Website đang tạm ngưng check rank. Quản trị bật lại ở màn Ngân sách check rank")
         from .web_export import export_menu
         export_menu(ui, cfg, connect, f"check-rank_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
-                    user=user)
+                    label="Xuất file", user=user, icon_only=True)
 
     # ---- Tab: mỗi bộ một tab ----
     with ui.row().classes("w-full items-end no-wrap gap-2"):
@@ -225,7 +233,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                 ui.tab(x["id"], label=f"{x['name']} · {x['count']}",
                        icon="pause_circle" if x["paused"] else "verified" if x["kind"] == "kpi" else None)
         if ed:
-            ui.button("Bộ mới", icon="add", on_click=lambda: set_dialog(None)).props("flat dense no-caps")
+            icon_btn(ui, "add", "Tạo bộ từ khóa mới", lambda: set_dialog(None))
 
     # ---- Bộ đang mở: nơi check, lịch, số từ khóa, chi phí ----
     with ui.element("div").classes("sr-card q-px-md q-py-sm w-full"):
@@ -237,13 +245,13 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                     "text-sm font-medium ellipsis")
                 schedule_label = ui.label().classes("text-xs muted ellipsis")
             if is_kpi:
-                with ui.element("span").tooltip("Bộ này khớp tab Từ khóa cam kết của sheet dự án; thêm / sửa / bỏ "
-                                                "ở đây thì tool ghi lên sheet"):
-                    T.status_chip(ui, "Theo sheet cam kết", "green", "sync")
+                ui.icon("sync", size="18px").style(f"color:{T.GREEN}").tooltip(
+                    "Theo sheet cam kết: thêm / sửa / bỏ ở đây thì tool ghi lên tab Từ khóa cam kết")
             if cur["paused"]:
-                T.status_chip(ui, "Bộ đang tạm dừng: không check, không tính tiền", "amber", "pause_circle")
+                ui.icon("pause_circle", size="20px").style(f"color:{T.AMBER}").tooltip(
+                    "Bộ đang tạm dừng: không check, không tính tiền")
             if ed:
-                ui.button("Cài đặt bộ", icon="tune", on_click=lambda: set_dialog(cur)).props("flat no-caps")
+                icon_btn(ui, "tune", "Cài đặt bộ: tên, nơi check, lịch, tạm dừng", lambda: set_dialog(cur))
                 if not is_kpi:
                     ui.button(icon="delete_outline", on_click=lambda: confirm_delete.open()).props(
                         "flat round dense color=negative").tooltip("Xóa bộ này")
@@ -381,8 +389,6 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
 
     def draw_kpis(kws, hist, vols):
         kpi_box.clear()
-        checked = [k for k in kws if k["date"]]
-        vol_all = sum((vols.get(k["id"]) or {}).get("volume") or 0 for k in kws)
         last, prev = (hist[-1] if hist else None), (hist[-2] if len(hist) > 1 else None)
         labels = [h["label"] for h in hist]
 
@@ -393,19 +399,17 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
             if not d:
                 return "giữ nguyên", None
             text = (f"{d:+.{digits}f}" if digits else f"{d:+d}").replace("-", "−").replace(".", ",")
-            return text + " so với lần trước", (d < 0) if better_low else (d > 0)
+            return text, (d < 0) if better_low else (d > 0)
 
         def pct(h):
             return h["target_hit"] / h["target_total"] if h["target_total"] else None
         top5 = [h["top3"] + h["top5"] for h in hist]
         top10 = [h["top3"] + h["top5"] + h["top10"] for h in hist]
         with kpi_box, T.kpi_row(ui):
-            T.kpi(ui, "format_list_numbered", "Từ khóa theo dõi", str(len(kws)), hint=(
-                f"{len(checked)} đã check" + (f" · {vol_all:,} lượt tìm/tháng".replace(",", ".") if vol_all else "")),
-                  tone="grey", spark=[])
+            T.kpi(ui, "format_list_numbered", "Từ khóa theo dõi", str(len(kws)), tone="grey", spark=[])
             t3, g3 = diff("top3")
             T.kpi(ui, "emoji_events", "Top 3", str(last["top3"]) if last else "–", t3, g3,
-                  f"trên {last['checked']} từ khóa đã check" if last else "chưa check", spark=[h["top3"] for h in hist],
+                  "", spark=[h["top3"] for h in hist],
                   spark_labels=labels, spark_kind="line", tone="green")
             if last:
                 last["t5"], last["t10"] = top5[-1], top10[-1]
@@ -413,27 +417,26 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                     prev["t5"], prev["t10"] = top5[-2], top10[-2]
             t5, g5 = diff("t5")
             T.kpi(ui, "workspace_premium", "Trong top 5", str(top5[-1]) if hist else "–", t5, g5,
-                  f"trên {last['checked']} từ khóa đã check" if last else "chưa check", spark=top5,
+                  "", spark=top5,
                   spark_labels=labels, spark_kind="line", tone="green")
             t10, g10 = diff("t10")
             T.kpi(ui, "military_tech", "Trong top 10", str(top10[-1]) if hist else "–", t10, g10,
-                  f"trên {last['checked']} từ khóa đã check" if last else "chưa check", spark=top10,
+                  "", spark=top10,
                   spark_labels=labels, spark_kind="line", tone="lime")
             ta, ga = diff("avg", better_low=True, digits=1)
             T.kpi(ui, "trending_up", "Vị trí trung bình",
                   f"{last['avg']:.1f}".replace(".", ",") if last and last["avg"] is not None else "–", ta, ga,
-                  "số nhỏ hơn là tốt hơn", spark=[h["avg"] for h in hist], spark_labels=labels, spark_kind="line",
+                  "", spark=[h["avg"] for h in hist], spark_labels=labels, spark_kind="line",
                   tone="blue")
             hits = [pct(h) for h in hist]
             if last and prev and hits[-1] is not None and hits[-2] is not None:
                 d = round((hits[-1] - hits[-2]) * 100)
-                tt, gt = ((f"{d:+d} điểm % so với lần trước".replace("-", "−"), d > 0) if d else ("giữ nguyên", None))
+                tt, gt = ((f"{d:+d} điểm %".replace("-", "−"), d > 0) if d else ("giữ nguyên", None))
             else:
                 tt, gt = "", None
             T.kpi(ui, "flag", "Đạt Top mục tiêu",
                   f"{last['target_hit']}/{last['target_total']}" if last and last["target_total"] else "–", tt, gt,
-                  (f"{hits[-1] * 100:.0f}% từ khóa có Top mục tiêu" if hist and hits[-1] is not None
-                   else "chưa đặt Top mục tiêu"), spark=[h for h in hits], spark_labels=labels, spark_kind="line",
+                  "" if hist and hits[-1] is not None else "chưa đặt Top mục tiêu", spark=[h for h in hits], spark_labels=labels, spark_kind="line",
                   spark_fmt="pct", tone="amber")
 
     # ---- Bảng: tìm, lọc, thùng rác; chọn nhiều thì hiện thanh thao tác hàng loạt ----
@@ -445,15 +448,14 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         search.props["prepend-icon"] = "search"
         filt = ui.select({k: v[0] for k, v in FILTERS.items()}, value="all", label="Lọc",
                          on_change=lambda: refresh()).props("dense outlined options-dense").classes("w-56")
-        trash_btn = ui.button("Thùng rác", icon="delete_sweep", on_click=lambda: trash_dialog()).props(
-            "flat dense no-caps color=grey-8")
+        trash_slot = ui.row()  # nút thùng rác (có số), vẽ lại khi làm mới
     wrong_box = ui.row().classes("w-full")
     selection_bar = ui.row().classes("w-full items-center gap-2 sr-bulk-bar")
     with selection_bar:
         selected_label = ui.label().classes("text-sm font-medium")
         if ed:
-            ui.button("Check", icon="play_arrow", on_click=lambda: check_now()).props("flat dense no-caps")
-            with ui.button("Sửa hàng loạt", icon="edit_note").props("flat dense no-caps"):
+            icon_btn(ui, "play_arrow", "Check các keyword đã chọn", lambda: check_now())
+            with icon_btn(ui, "edit_note", "Sửa hàng loạt: Top, URL, ghi chú, tạm dừng, chuyển / chép bộ"):
                 with ui.menu():
                     for label, icon, fn in (("Đặt Top mục tiêu…", "flag", lambda: bulk_top()),
                                             ("Gán URL mục tiêu…", "link", lambda: bulk_url()),
@@ -465,11 +467,11 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                         with ui.menu_item(on_click=fn).classes("items-center gap-3"):
                             ui.icon(icon, size="18px").classes("muted")
                             ui.label(label).classes("text-sm")
-            ui.button("Bỏ theo dõi", icon="delete_outline", on_click=lambda: remove()).props(
-                "flat dense no-caps color=negative")
+            icon_btn(ui, "delete_outline", "Bỏ theo dõi (vào thùng rác, khôi phục được)", lambda: remove(),
+                     color="negative")
         ui.space()
-        ui.button("Bỏ chọn", on_click=lambda: (table.selected.clear(), table.update(), on_select())).props(
-            "flat dense no-caps color=grey-8")
+        icon_btn(ui, "close", "Bỏ chọn", lambda: (table.selected.clear(), table.update(), on_select()),
+                 color="grey-8")
     selection_bar.set_visibility(False)
     cols = [
         {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
@@ -725,7 +727,10 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
             hist = R.set_history(c, site, sid)
             evs = R.events(c, site, sid)
             n_trash = len(R.keywords(c, site, end, sid, removed=True))
-        trash_btn.text = f"Thùng rác · {n_trash}" if n_trash else "Thùng rác"
+        trash_slot.clear()
+        with trash_slot:
+            icon_btn(ui, "delete_sweep", "Thùng rác: từ khóa đã bỏ theo dõi, khôi phục được kèm lịch sử",
+                     lambda: trash_dialog(), color="grey-8", badge=n_trash or None)
         keep = FILTERS.get(filt.value, FILTERS["all"])[1]
         rows = []
         for k in kws:
@@ -769,7 +774,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         wrong_box.clear()
         if wrong and filt.value != "wrong":
             with wrong_box:
-                ui.button(f"{wrong} từ khóa Google đang xếp hạng URL khác URL mục tiêu: xem", icon="warning",
+                ui.button(f"{wrong} sai URL mục tiêu", icon="warning",
                           on_click=lambda: filt.set_value("wrong")).props(
                     "flat dense no-caps color=orange-9 size=sm")
         with connect() as c:
