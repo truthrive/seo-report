@@ -198,19 +198,6 @@ class ProgressTest(unittest.TestCase):
         self.assertEqual((m2["checks"]["level:ai"]["actual"], m2["checks"]["level:ai"]["ok"]), (93, True))
         self.assertIsNone(m1["checks"]["level:ai"]["ok"])  # tháng 1 AI không cam kết
 
-    def test_rank_kpi_now_month_and_quarter(self):
-        self.save(NEW_ROWS)
-        self.check("a", "2027-01-15", 2)
-        self.check("c", "2027-01-15", 8)
-        k = KP.rank_kpi_now(self.con, SITE, TODAY)
-        self.assertEqual((k["state"], k["month"], k["quarter"], k["q_months"]), ("running", 3, 1, (1, 3)))
-        rows = {r["top"]: r for r in k["rows"]}
-        t10 = rows[10]
-        self.assertEqual((t10["count"], t10["total"], t10["month"]["need"], t10["month"]["gap"]), (2, 4, 3, 1))
-        self.assertAlmostEqual(t10["month"]["done"], 2 / 3)
-        self.assertEqual(t10["quarter"]["need"], t10["month"]["need"])  # tháng 3 là tháng cuối quý 1
-        self.assertEqual((rows[3]["total"], rows[3]["count"], rows[3]["month"]["need"]), (2, 1, 2))
-
     def test_cumulative_counts_months_below_baseline(self):
         self.save(NEW_ROWS)
         p = KP.progress(self.con, SITE, TODAY, daily({"organic": 20, "ai": 0}))  # 600/tháng < baseline 1.000

@@ -388,107 +388,56 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
     growth_box = ui.column().classes("w-full gap-2")
 
     def draw_kpis(kws, hist, vols):
-        """Dải số liền (lần check mới nhất, so với lần trước) + ở bộ Cam kết: bảng so với KPI cam kết tháng / quý."""
         kpi_box.clear()
         last, prev = (hist[-1] if hist else None), (hist[-2] if len(hist) > 1 else None)
-        total = len(kws)
+        labels = [h["label"] for h in hist]
 
-        def tops(h):
-            return {3: h["top3"], 5: h["top3"] + h["top5"], 10: h["top3"] + h["top5"] + h["top10"]} if h else {}
-        now_t, prev_t = tops(last), tops(prev)
-
-        def delta(now, before, better_low=False, digits=0):
-            if now is None or before is None:
+        def diff(key, better_low=False, digits=0):
+            if not last or not prev or last.get(key) is None or prev.get(key) is None:
                 return "", None
-            d = round(now - before, digits)
+            d = round(last[key] - prev[key], digits)
             if not d:
-                return "", None
+                return "giữ nguyên", None
             text = (f"{d:+.{digits}f}" if digits else f"{d:+d}").replace("-", "−").replace(".", ",")
             return text, (d < 0) if better_low else (d > 0)
 
-        def cell(label, value, sub="", change=("", None)):
-            with ui.element("div").classes("sr-stat"):
-                with ui.row().classes("items-center gap-1 no-wrap"):
-                    ui.label(label).classes("sr-stat-label")
-                    T.info_icon(ui, label)
-                with ui.row().classes("items-baseline gap-2 no-wrap"):
-                    ui.label(value).classes("sr-stat-value")
-                    if sub:
-                        ui.label(sub).classes("sr-stat-sub")
-                    if change[0]:
-                        T.delta_badge(ui, change[0], change[1])
-
-        with kpi_box:
-            with ui.element("div").classes("sr-card sr-stat-strip w-full"):
-                cell("Từ khóa theo dõi", str(total))
-                for n in (3, 5, 10):
-                    c = now_t.get(n)
-                    cell("Top 3" if n == 3 else f"Trong top {n}", f"{c}/{total}" if c is not None else "–",
-                         f"{c / total * 100:.0f}%" if c is not None and total else "", delta(c, prev_t.get(n)))
-                cell("Vị trí trung bình",
-                     f"{last['avg']:.1f}".replace(".", ",") if last and last["avg"] is not None else "–", "",
-                     delta(last and last["avg"], prev and prev["avg"], better_low=True, digits=1))
-                if last and last["target_total"]:
-                    cell("Đạt Top mục tiêu", f"{last['target_hit']}/{last['target_total']}",
-                         f"{last['target_hit'] / last['target_total'] * 100:.0f}%",
-                         delta(last["target_hit"], prev and prev["target_hit"] if prev and prev["target_total"]
-                               else None))
-            if is_kpi:
-                kpi_grid()
-
-    def kpi_grid():
-        """Bảng so với KPI cam kết (dòng Top N của sheet): mục tiêu tháng dự án hiện tại và quý dự án, % đã đạt."""
-        with connect() as c:
-            k = KP.rank_kpi_now(c, site, date.today())
-        if not k:
-            return
-
-        def target_text(g, unit):
-            if g["target"] is None:
-                return "không cam kết"
-            pct = f"{g['target_pct'] * 100:.0f}% · " if unit != "count" and g["target_pct"] is not None else ""
-            return f"{pct}{g['need']} từ"
-
-        def bar(g):
-            if g["done"] is None:
-                ui.label("–").classes("muted")
-                return
-            ok = g["done"] >= 1
-            with ui.row().classes("items-center gap-2 no-wrap w-full"):
-                ui.linear_progress(value=g["done"], show_value=False, size="8px",
-                                   color="positive" if ok else "warning").props("rounded").classes("col")
-                ui.label(f"{g['done'] * 100:.0f}%").classes("text-sm font-semibold num").style(
-                    f"color:{T.GREEN if ok else T.AMBER_TEXT}; min-width: 40px; text-align: right")
-                if g["gap"]:
-                    ui.label(f"thiếu {g['gap']}").classes("text-xs muted").style("white-space: nowrap")
-
-        q0, q1 = k["q_months"]
-        with ui.element("div").classes("sr-card q-pa-md w-full q-mt-sm"):
-            with ui.row().classes("w-full items-center gap-2"):
-                ui.label("So với KPI cam kết").classes("sr-section-title")
-                T.info_icon(ui, "So với KPI cam kết", (
-                    "Các dòng cam kết Top N trong sheet: mục tiêu của tháng dự án hiện tại và của quý dự án (3 "
-                    "tháng), hiện có bao nhiêu từ khóa đạt, đã đạt bao nhiêu % mục tiêu.",
-                    "Thanh xanh là đã đạt; vàng là còn thiếu, số bên cạnh là số từ khóa còn thiếu.",
-                    "Tính như màn KPI cam kết: lần check cuối trong tháng. Mục tiêu quý = mục tiêu tháng cuối quý."))
-                ui.space()
-                period = (f"Tháng {k['month']} ({_vn(k['from'])[:5]} – {_vn(k['to'])[:5]})" if k.get("from")
-                          else f"Tháng {k['month']}")
-                ui.label(f"{period} · Quý {k['quarter']} (tháng {q0}–{q1})").classes("text-xs muted")
-            if k["state"] == "before":
-                ui.label("Dự án chưa bắt đầu: đang so vị trí hiện tại với mục tiêu tháng 1.").classes("text-xs muted")
-            with ui.element("div").classes("sr-kpi-grid w-full"):
-                for h in ("Cam kết", "Hiện có", f"Mục tiêu tháng {k['month']}", "Đạt (tháng)",
-                          f"Mục tiêu quý {k['quarter']}", "Đạt (quý)"):
-                    ui.label(h).classes("sr-kpi-grid-head")
-                for r in k["rows"]:
-                    ui.label(r["label"]).classes("text-sm font-medium")
-                    ui.label(f"{r['count']}/{r['total']}" + (f" ({r['count'] / r['total'] * 100:.0f}%)" if r["total"]
-                                                            else "")).classes("text-sm num")
-                    ui.label(target_text(r["month"], r["unit"])).classes("text-sm")
-                    bar(r["month"])
-                    ui.label(target_text(r["quarter"], r["unit"])).classes("text-sm")
-                    bar(r["quarter"])
+        def pct(h):
+            return h["target_hit"] / h["target_total"] if h["target_total"] else None
+        top5 = [h["top3"] + h["top5"] for h in hist]
+        top10 = [h["top3"] + h["top5"] + h["top10"] for h in hist]
+        with kpi_box, T.kpi_row(ui):
+            T.kpi(ui, "format_list_numbered", "Từ khóa theo dõi", str(len(kws)), tone="grey", spark=[])
+            t3, g3 = diff("top3")
+            T.kpi(ui, "emoji_events", "Top 3", str(last["top3"]) if last else "–", t3, g3,
+                  "", spark=[h["top3"] for h in hist],
+                  spark_labels=labels, spark_kind="line", tone="green")
+            if last:
+                last["t5"], last["t10"] = top5[-1], top10[-1]
+                if prev:
+                    prev["t5"], prev["t10"] = top5[-2], top10[-2]
+            t5, g5 = diff("t5")
+            T.kpi(ui, "workspace_premium", "Trong top 5", str(top5[-1]) if hist else "–", t5, g5,
+                  "", spark=top5,
+                  spark_labels=labels, spark_kind="line", tone="green")
+            t10, g10 = diff("t10")
+            T.kpi(ui, "military_tech", "Trong top 10", str(top10[-1]) if hist else "–", t10, g10,
+                  "", spark=top10,
+                  spark_labels=labels, spark_kind="line", tone="lime")
+            ta, ga = diff("avg", better_low=True, digits=1)
+            T.kpi(ui, "trending_up", "Vị trí trung bình",
+                  f"{last['avg']:.1f}".replace(".", ",") if last and last["avg"] is not None else "–", ta, ga,
+                  "", spark=[h["avg"] for h in hist], spark_labels=labels, spark_kind="line",
+                  tone="blue")
+            hits = [pct(h) for h in hist]
+            if last and prev and hits[-1] is not None and hits[-2] is not None:
+                d = round((hits[-1] - hits[-2]) * 100)
+                tt, gt = ((f"{d:+d} điểm %".replace("-", "−"), d > 0) if d else ("giữ nguyên", None))
+            else:
+                tt, gt = "", None
+            T.kpi(ui, "flag", "Đạt Top mục tiêu",
+                  f"{last['target_hit']}/{last['target_total']}" if last and last["target_total"] else "–", tt, gt,
+                  "" if hist and hits[-1] is not None else "chưa đặt Top mục tiêu", spark=[h for h in hits], spark_labels=labels, spark_kind="line",
+                  spark_fmt="pct", tone="amber")
 
     # ---- Bảng: tìm, lọc, thùng rác; chọn nhiều thì hiện thanh thao tác hàng loạt ----
     with ui.row().classes("w-full items-center gap-2 q-mt-sm"):

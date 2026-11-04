@@ -500,47 +500,6 @@ def progress(con, site: str, today: date, sessions=None) -> dict | None:
     return out
 
 
-def rank_kpi_now(con, site: str, today: date) -> dict | None:
-    """Tiến độ các dòng cam kết Top N của tháng dự án hiện tại và quý dự án (3 tháng: 1–3, 4–6…) cho màn Từ khóa &
-    rank. Số hiện có = cách chấm của màn KPI cam kết (lần check cuối trong tháng); mục tiêu quý = mục tiêu tháng cuối
-    quý. Trước khi dự án bắt đầu: so vị trí mới nhất với mục tiêu tháng 1. None khi chưa có sheet KPI / dòng Top N."""
-    p = progress(con, site, today)
-    if not p or not p["months"]:
-        return None
-    rank_lines = [ln for ln in p["lines"] if ln["kind"] == "rank"]
-    if not rank_lines:
-        return None
-    months = {m["n"]: m for m in p["months"]}
-    if p["state"] == "running":
-        n = p["current"]
-    elif p["state"] == "after":
-        n = max(months)
-    else:
-        n = min(months)
-    row = months[n]
-    items = (row.get("rank") or (p.get("pre") or {}).get("rank") or {"items": []})["items"]
-    q = math.ceil(n / 3)
-    q_last = min(q * 3, max(months))
-    q_targets = months[q_last].get("targets") or {}
-    out = {"state": p["state"], "month": n, "from": row.get("from"), "to": row.get("to"), "quarter": q,
-           "q_months": (q * 3 - 2, q_last), "q_to": months[q_last].get("to"), "rows": []}
-    for ln in rank_lines:
-        lid = line_id(ln)
-        pool = items if ln.get("mode") != "per_tier" else [x for x in items if x["target"] == ln["top"]]
-        total = len(pool)
-        count = sum(1 for x in pool if x["rank"] is not None and x["rank"] <= ln["top"])
-
-        def goal(t):
-            need, pct = rank_need(ln, t, total)
-            return {"target": t, "need": need, "target_pct": pct,
-                    "done": (min(count / need, 1.0) if need else (1.0 if need == 0 else None)),
-                    "gap": None if need is None else max(0, need - count)}
-        out["rows"].append({"label": line_label(ln), "top": ln["top"], "unit": ln.get("unit"), "total": total,
-                            "count": count, "month": goal((row.get("targets") or {}).get(lid)),
-                            "quarter": goal(q_targets.get(lid))})
-    return out
-
-
 def ga4_sessions(cfg, con):
     """Hàm lấy phiên GA4 theo ngày của một nguồn (organic = kênh Organic Search, ai = kênh AI Assistant), có cache.
     None nếu chưa kết nối GA4."""
