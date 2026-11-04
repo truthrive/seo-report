@@ -68,39 +68,76 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         with app_connect() as c:
             U.log_change(c, str(user), "tool", action, None, detail)
 
-    # ---- Một thẻ tích hợp: trạng thái, ô nhập, Kiểm tra, Lưu ----
-    def integration_card(it):
-        with ui.element("div").classes("sr-card q-pa-md"):
-            with ui.row().classes("items-center gap-2 no-wrap w-full"):
-                ui.icon(it.icon, size="20px").style(f"color:{T.GREEN}")
-                ui.label(it.name).classes("sr-section-title col")
-                chip_box = ui.row()
-            ui.label(it.about).classes("text-sm muted")
-            cur = I.view(base, it.key)
-            inputs, saved_labels = {}, {}
-            for f in it.fields:
-                if f.options:
-                    inputs[f.key] = ui.select(f.options, value=cur.get(f.key) or next(iter(f.options)),
-                                              label=f.label).props("outlined dense").classes("w-full")
-                else:
-                    inp = ui.input(f.label, value="" if f.secret else cur.get(f.key, ""),
-                                   placeholder="nhập mã mới để thay" if f.secret and cur.get(f.key) else f.placeholder,
-                                   password=f.secret, password_toggle_button=f.secret).props(
-                        "outlined dense autocomplete=off").classes("w-full")
-                    inputs[f.key] = inp
-                notes = ([f"Đã lưu: {cur[f.key]} (để trống = giữ mã này)"] if f.secret and cur.get(f.key) else [])                     + ([f.hint] if f.hint else [])
-                if notes:
-                    saved_labels[f.key] = ui.label(" · ".join(notes)).classes("text-xs muted q-mb-xs")
-            result = ui.label().classes("text-sm")
+    # ---- Một dòng cài đặt: biểu tượng · tên · tóm tắt · trạng thái · nút; bấm Sửa mới mở phần nhập ----
+    def setting_row(icon: str, tone: str, title: str):
+        """Trả (ô tóm tắt, chỗ trạng thái, chỗ nút, phần sửa ẩn sẵn)."""
+        with ui.element("div").classes("sr-card sr-set-row w-full"):
+            with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                with ui.element("div").classes("sr-icon-bubble").style(f"background:{T.TONES[tone][0]}"):
+                    ui.icon(icon, size="18px").style(f"color:{T.TONES[tone][1]}")
+                with ui.column().classes("gap-0 col").style("min-width:0"):
+                    ui.label(title).classes("text-sm font-semibold")
+                    summary = ui.label().classes("text-xs muted ellipsis")
+                status = ui.row().classes("items-center no-wrap")
+                actions = ui.row().classes("items-center gap-1 no-wrap")
+            editor = ui.column().classes("w-full gap-2 sr-set-editor")
+            editor.set_visibility(False)
+        return summary, status, actions, editor
 
-            def chip():
-                chip_box.clear()
-                with chip_box:
-                    if I.configured(base, it.key):
-                        T.status_chip(ui, "Đã cấu hình", "green", "check_circle")
-                    else:
-                        T.status_chip(ui, "Chưa cấu hình", "grey", "radio_button_unchecked")
-            chip()
+    def chip(box, ok: bool, text_ok: str, text_no: str, tone_no: str = "grey"):
+        box.clear()
+        with box:
+            T.status_chip(ui, text_ok if ok else text_no, "green" if ok else tone_no,
+                          "check_circle" if ok else "radio_button_unchecked")
+
+    def toggle(editor, btn):
+        editor.set_visibility(not editor.visible)
+        btn.text = "Đóng" if editor.visible else "Sửa"
+
+    def summary_of(it) -> str:
+        v = I.view(base, it.key)
+        if it.key == "dataforseo":
+            return f"{v.get('login') or 'chưa có login'} · password {v.get('password') or 'chưa có'}"
+        if it.key == "google_ads":
+            return (f"MCC {v.get('login_customer_id') or '–'} · Customer ID {v.get('customer_id') or '–'} · "
+                    f"token {v.get('developer_token') or 'chưa có'}")
+        if it.key == "ai":
+            return (I.AI_MODELS.get(v.get("model") or "", v.get("model") or "") + f" · khóa {v['api_key']}"
+                    if v.get("api_key") else "Chuẩn bị cho tính năng AI sau này")
+        return ""
+
+    def integration_card(it):
+        summary, status, actions, editor = setting_row(it.icon, "green" if it.key != "ai" else "purple", it.name)
+
+        def paint():
+            summary.text = summary_of(it)
+            on = I.configured(base, it.key)
+            chip(status, on, "Đã cấu hình", "Chưa dùng" if it.key == "ai" else "Chưa cấu hình",
+                 "grey" if it.key == "ai" else "amber")
+        paint()
+        with actions:
+            edit_btn = ui.button("Sửa", icon="edit", on_click=lambda: toggle(editor, edit_btn)).props(
+                "flat dense no-caps")
+        with editor:
+            ui.label(it.about).classes("text-xs muted")
+            cur = I.view(base, it.key)
+            inputs = {}
+            with ui.element("div").classes("w-full").style(
+                    "display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px"):
+                for f in it.fields:
+                    if f.options:
+                        inputs[f.key] = ui.select(f.options, value=cur.get(f.key) or next(iter(f.options)),
+                                                  label=f.label).props("outlined dense").classes("w-full")
+                        continue
+                    ph = (f"Đã lưu {cur[f.key]} · để trống giữ nguyên" if f.secret and cur.get(f.key)
+                          else f.placeholder)
+                    inp = ui.input(f.label, value="" if f.secret else cur.get(f.key, ""), placeholder=ph,
+                                   password=f.secret, password_toggle_button=f.secret).props(
+                        "outlined dense stack-label autocomplete=off hide-hint").classes("w-full")
+                    if f.hint:
+                        inp.props["hint"] = f.hint  # hiện khi đang gõ vào ô
+                    inputs[f.key] = inp
+            result = ui.label().classes("text-sm")
 
             async def check(save_after: bool):
                 result.text = ""
@@ -110,13 +147,12 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                     result.text = str(e)
                     result.style(f"color:{T.RED}")
                     return
-                btns = (test_btn, save_btn)
-                for b in btns:
+                for b in (test_btn, save_btn):
                     b.props("loading")
                 try:
                     ok, msg = await run.io_bound(I.test, base, it.key, values)
                 finally:
-                    for b in btns:
+                    for b in (test_btn, save_btn):
                         b.props(remove="loading")
                 result.text = msg
                 result.style(f"color:{T.GREEN if ok else T.RED}")
@@ -135,40 +171,18 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                 for f in it.fields:  # không giữ mã trên trang sau khi lưu
                     if f.secret:
                         inputs[f.key].value = ""
-                        if f.key in saved_labels:
-                            saved_labels[f.key].text = (f"Đã lưu: {I.mask(values[f.key])} (để trống = giữ mã này)"
-                                                        + (f" · {f.hint}" if f.hint else ""))
-                result.text = msg + ". Đã lưu."
-                chip()
-                ui.notify(f"Đã lưu cấu hình {it.name}", type="positive")
+                        inputs[f.key].props["placeholder"] = f"Đã lưu {I.mask(values[f.key])} · để trống giữ nguyên"
+                        inputs[f.key].update()
+                paint()
+                toggle(editor, edit_btn)
+                ui.notify(f"Đã lưu {it.name}. {msg}", type="positive", multi_line=True)
 
-            with ui.row().classes("w-full justify-end gap-2"):
-                test_btn = ui.button("Kiểm tra kết nối", icon="wifi_tethering",
-                                     on_click=lambda: check(False)).props("flat no-caps")
-                save_btn = ui.button("Kiểm tra & lưu", icon="save", on_click=lambda: check(True)).props(
-                    "unelevated no-caps")
-
-    # ---- Trạng thái Google + nút Kết nối / Đổi tài khoản ----
-    def google_status():
-        from . import auth
-        st = auth.granted_status(base)
-        with ui.row().classes("items-center gap-2 w-full"):
-            if not st["connected"]:
-                T.status_chip(ui, "Chưa kết nối Google", "red", "link_off")
-            elif st["missing"]:
-                T.status_chip(ui, "Thiếu quyền: " + ", ".join(st["missing"]), "amber", "warning")
-            else:
-                T.status_chip(ui, "Đủ quyền Google", "green", "verified")
-            ui.space()
-            connect_btn = ui.button("Kết nối Google" if not st["connected"] or st["missing"] else "Cấp lại quyền",
-                                    icon="login", on_click=lambda: go_google(False)).props("outline dense no-caps")
-            switch_btn = ui.button("Đổi tài khoản", icon="switch_account",
-                                   on_click=lambda: switch_dialog.open()).props("flat dense no-caps")
-            if not google_origin:
-                for b in (connect_btn, switch_btn):
-                    b.disable()
-                    b.tooltip("Mở tool trên máy chạy tool (http://localhost:8080) để kết nối Google: ứng dụng "
-                              "Google của tool chỉ cho quay về địa chỉ localhost")
+            with ui.row().classes("w-full items-center justify-end gap-2"):
+                test_btn = ui.button("Kiểm tra", on_click=lambda: check(False)).props(
+                    "flat dense no-caps color=grey-8").tooltip("Thử kết nối, chưa lưu")
+                ui.button("Hủy", on_click=lambda: toggle(editor, edit_btn)).props("flat no-caps")
+                save_btn = ui.button("Lưu", icon="check", on_click=lambda: check(True)).props(
+                    "unelevated no-caps").tooltip("Tool thử kết nối trước; không chạy thì không lưu")
 
     def go_google(switch: bool):
         from . import auth
@@ -191,66 +205,87 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
             ui.button("Chọn tài khoản khác", icon="switch_account",
                       on_click=lambda: (switch_dialog.close(), go_google(True))).props("unelevated no-caps")
 
-    # ---- Dựng màn: Google, Drive, rồi từng tích hợp ----
-    grid = ui.element("div").classes("w-full").style(
-        "display:grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; align-items: start")
+    # ---- Dựng màn: nhóm Tài khoản Google (Google, Drive), nhóm Mã API dịch vụ ----
+    page = ui.column().classes("w-full gap-2").style("max-width: 920px")
+    with page:
+        ui.label("Tài khoản Google").classes("sr-nav-group q-mt-sm")
+        g_summary, g_status, g_actions, _ = setting_row("account_circle", "blue", "Tài khoản Google")
+        g_summary.text = "đang đọc email…"
+        from . import auth
+        st = auth.granted_status(base)
+        g_status.clear()
+        with g_status:
+            if not st["connected"]:
+                T.status_chip(ui, "Chưa kết nối", "red", "link_off")
+            elif st["missing"]:
+                T.status_chip(ui, "Thiếu quyền: " + ", ".join(st["missing"]), "amber", "warning")
+            else:
+                T.status_chip(ui, "Đủ quyền", "green", "verified")
+        with g_actions:
+            connect_btn = ui.button("Kết nối" if not st["connected"] or st["missing"] else "Cấp lại quyền",
+                                    on_click=lambda: go_google(False)).props("flat dense no-caps")
+            switch_btn = ui.button("Đổi tài khoản", on_click=lambda: switch_dialog.open()).props(
+                "flat dense no-caps color=grey-8")
+            if not google_origin:
+                for b in (connect_btn, switch_btn):
+                    b.disable()
+                    b.tooltip("Mở tool trên máy chạy tool (http://localhost:8080) để kết nối Google: ứng dụng "
+                              "Google của tool chỉ cho quay về địa chỉ localhost")
 
-    # ---- Tài khoản Google + Drive ----
-    with grid:
-        with ui.element("div").classes("sr-card q-pa-md"):
-            with ui.row().classes("items-center gap-2 no-wrap"):
-                ui.icon("account_circle", size="20px").style(f"color:{T.BLUE}")
-                ui.label("Tài khoản Google").classes("sr-section-title")
-            ui.label("Một tài khoản Google đọc Search Console, Analytics, Sheets, Drive và Google Ads cho mọi website. "
-                     "Khách thêm email này vào GSC / GA4 với quyền đọc.").classes("text-sm muted")
-            email_lab = ui.label("đang đọc email…").classes("text-sm").style("font-family: var(--mono)")
-            google_status()
+        d_summary, d_status, d_actions, d_editor = setting_row("folder", "amber", "Google Drive")
+        with app_connect() as c:
+            master_now = PJ.master_sheet(c)
 
-        with ui.element("div").classes("sr-card q-pa-md"):
-            with ui.row().classes("items-center gap-2 no-wrap"):
-                ui.icon("folder", size="20px").style(f"color:{T.AMBER}")
-                ui.label("Google Drive").classes("sr-section-title")
-            ui.label("Thư mục chứa mọi file tool tạo (báo cáo xuất lên Drive, sheet dự án). Trống = My Drive.").classes(
-                "text-sm muted")
-            folder = ui.input("Link hoặc ID thư mục", value=(f"https://drive.google.com/drive/folders/"
-                                                             f"{base.drive_parent}" if base.drive_parent else "")).props(
-                "outlined dense clearable").classes("w-full")
+        def d_paint():
+            with app_connect() as c:
+                m = PJ.master_sheet(c)
+            d_summary.text = (f"Thư mục: {'…' + base.drive_parent[-8:] if base.drive_parent else 'My Drive'} · "
+                              f"Sheet mẫu gốc: {'đã gắn' if m else 'chưa gắn'}")
+            chip(d_status, bool(base.drive_parent), "Đã chọn thư mục", "Đang dùng My Drive")
+        d_paint()
+        with d_actions:
+            d_btn = ui.button("Sửa", icon="edit", on_click=lambda: toggle(d_editor, d_btn)).props("flat dense no-caps")
+        with d_editor:
+            ui.label("Mọi file tool tạo (báo cáo xuất lên Drive, sheet dự án) nằm trong thư mục này. Sheet mẫu gốc: "
+                     "wizard ở màn KPI cam kết copy file này thành sheet của dự án mới.").classes("text-xs muted")
+            folder = ui.input("Thư mục Google Drive (link hoặc ID)", value=(
+                f"https://drive.google.com/drive/folders/{base.drive_parent}" if base.drive_parent else ""),
+                placeholder="để trống = My Drive").props("outlined dense stack-label clearable").classes("w-full")
+            master_in = ui.input("Sheet mẫu gốc cho dự án mới", value=(
+                f"https://docs.google.com/spreadsheets/d/{master_now}/edit" if master_now else ""),
+                placeholder="link Google Sheet mẫu (OKRs, Weekly Task, Chi phí…)").props(
+                "outlined dense stack-label clearable").classes("w-full")
 
-            def save_folder():
+            def save_drive():
                 from .config import _folder_id
                 fid = _folder_id(folder.value or "")
                 if (folder.value or "").strip() and not fid:
                     ui.notify("Link thư mục Drive chưa đúng", type="warning")
                     return
-                I.set_drive_folder(config_path, fid)
-                base.drive_parent = fid  # trang mở sau dùng ngay; lịch hằng ngày đọc config.toml
-                log("Đổi thư mục Google Drive", fid or "My Drive")
-                ui.notify("Đã lưu thư mục Drive", type="positive")
-            with ui.row().classes("w-full justify-end"):
-                ui.button("Lưu thư mục", on_click=save_folder).props("outline no-caps")
-            ui.separator().classes("q-my-sm")
-            with app_connect() as c:
-                master_now = PJ.master_sheet(c)
-            master_in = ui.input("Sheet mẫu gốc cho dự án mới", value=(
-                f"https://docs.google.com/spreadsheets/d/{master_now}/edit" if master_now else ""),
-                placeholder="Link Google Sheet mẫu (OKRs, Weekly Task, Chi phí…)").props(
-                "outlined dense clearable").classes("w-full")
-            ui.label("Wizard ở màn KPI cam kết copy file này thành sheet của dự án mới.").classes("text-xs muted")
-
-            def save_master():
                 try:
                     with app_connect() as c:
                         sid = PJ.set_master_sheet(c, master_in.value or "")
                 except ValueError as e:
                     ui.notify(str(e), type="warning")
                     return
-                log("Đổi sheet mẫu gốc", sid or "(bỏ)")
-                ui.notify("Đã lưu sheet mẫu gốc" if sid else "Đã bỏ sheet mẫu gốc", type="positive")
-            with ui.row().classes("w-full justify-end"):
-                ui.button("Lưu sheet mẫu", on_click=save_master).props("outline no-caps")
+                if fid != base.drive_parent:
+                    I.set_drive_folder(config_path, fid)
+                    base.drive_parent = fid  # trang mở sau dùng ngay; lịch hằng ngày đọc config.toml
+                    log("Đổi thư mục Google Drive", fid or "My Drive")
+                if sid != master_now:
+                    log("Đổi sheet mẫu gốc", sid or "(bỏ)")
+                d_paint()
+                toggle(d_editor, d_btn)
+                ui.notify("Đã lưu cài đặt Google Drive", type="positive")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Hủy", on_click=lambda: toggle(d_editor, d_btn)).props("flat no-caps")
+                ui.button("Lưu", icon="check", on_click=save_drive).props("unelevated no-caps")
 
+        ui.label("Mã API dịch vụ").classes("sr-nav-group q-mt-md")
         for it in I.INTEGRATIONS:
             integration_card(it)
+        ui.label("Mã lưu trong thư mục secrets/ của máy chạy tool, không đưa lên git; trang chỉ hiện 4 ký tự cuối. "
+                 "Mỗi lần đổi đều ghi nhật ký.").classes("text-xs muted q-mt-sm")
 
     if google_notice in GOOGLE_NOTICES:
         kind, text = GOOGLE_NOTICES[google_notice]
@@ -259,7 +294,8 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
     async def load_email():
         from . import auth
         found = await run.io_bound(auth.account_email, base)
-        email_lab.text = found or "chưa đọc được email (kiểm tra kết nối Google)"
+        g_summary.text = (f"{found} · khách thêm email này vào Search Console / GA4 với quyền đọc" if found
+                          else "chưa đọc được email (kiểm tra kết nối Google)")
         if found:
             with app_connect() as c:
                 c.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")

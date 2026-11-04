@@ -84,62 +84,61 @@ def event_marks(hist: list[dict], evs: list[dict]) -> dict:
                          "data": [{"xAxis": x, "label": {"formatter": " · ".join(t)}} for x, t in labels.items()]}}
 
 
-def growth_charts(ui, hist: list[dict], evs: list[dict] | None = None) -> None:
-    """Tăng trưởng của bộ qua các lần check (như SERPRobot): trái: số từ khóa theo nhóm Top (cột chồng) + vị trí
-    trung bình (đường, trục đảo: lên là tốt); phải: số từ khóa lên / xuống so với lần trước + tỷ lệ đạt Top mục tiêu.
-    evs: mốc sự kiện (vạch tím)."""
+def growth_charts(ui, hist: list[dict], evs: list[dict] | None = None, on_events=None) -> None:
+    """Tăng trưởng của bộ qua các lần check (như SERPRobot), mỗi biểu đồ một trục: trái: số từ khóa theo nhóm Top
+    (cột chồng); phải: số từ khóa lên / xuống hạng so với lần check trước. Vị trí trung bình và % đạt mục tiêu nằm ở
+    hàng ô số phía trên (không ghép trục thứ hai: hai thang đo canh tùy ý dễ đọc nhầm). evs: mốc sự kiện (vạch tím)."""
     from . import ui_theme as T
     x = [_vn(h["date"])[:5] for h in hist]
     marks = event_marks(hist, evs or [])
-    bars = [("Top 3", "top3", "#1E7C31"), ("Top 4–10", "top10", "#9BB823"), ("Top 11–30", "top30", "#B7791F"),
-            ("Ngoài top 30 / chưa thấy", "out", "#C9C7BC")]
-    base = {"animation": False, "grid": {"left": 40, "right": 44, "top": 34, "bottom": 26},
-            "legend": {"top": 0, "itemWidth": 12, "itemHeight": 8, "textStyle": {"fontSize": 11, "color": "#6B6A5E"}},
-            "tooltip": {"trigger": "axis", "confine": True},
+    bar = {"barMaxWidth": 22, "barCategoryGap": "45%"}
+    gap = {"borderColor": "#FFFFFF", "borderWidth": 1}  # khe giữa các đoạn cột
+    base = {"animation": False, "grid": {"left": 34, "right": 12, "top": 30, "bottom": 24},
+            "legend": {"top": 0, "left": 0, "itemWidth": 10, "itemHeight": 10, "icon": "roundRect",
+                       "textStyle": {"fontSize": 11, "color": "#6B6A5E"}},
+            "tooltip": {"trigger": "axis", "confine": True, "axisPointer": {"type": "shadow",
+                                                                          "shadowStyle": {"color": "rgba(0,0,0,.03)"}}},
             "xAxis": {"type": "category", "data": x, "axisTick": {"show": False},
                       "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5},
-                      "axisLine": {"lineStyle": {"color": "#E7E5DC"}}}}
-    axis = {"type": "value", "splitLine": {"lineStyle": {"color": "#EEECE4"}},
-            "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5}}
-    with ui.element("div").classes("w-full").style(
-            "display:grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px"):
-        with ui.element("div").classes("sr-card q-pa-md"):
-            with ui.row().classes("items-center gap-1 no-wrap"):
-                ui.label("Phân bố Top & vị trí trung bình").classes("sr-section-title")
-                T.info_icon(ui, "Phân bố Top theo lần check", (
-                    "Mỗi cột là một ngày check: bao nhiêu từ khóa trong bộ đang ở Top 3, 4–10, 11–30, ngoài top 30.",
-                    "Cột xanh đậm cao dần là bộ từ khóa đang lên. Đường vị trí trung bình đi lên là tốt hơn.",
-                    "Mỗi ngày lấy lần check gần nhất của từng từ khóa. Vị trí trung bình chỉ tính từ khóa có hạng."))
-            ui.echart({**base, "yAxis": [{**axis},
-                                         {**axis, "inverse": True, "min": 1, "splitLine": {"show": False}}],
-                       "series": [{"type": "bar", "stack": "top", "name": n, "data": [h[k] for h in hist],
-                                   "itemStyle": {"color": c}, "barMaxWidth": 28, **(marks if i == 0 else {})}
-                                  for i, (n, k, c) in enumerate(bars)]
-                       + [{"type": "line", "name": "Vị trí trung bình", "yAxisIndex": 1, "smooth": 0.2,
-                           "data": [h["avg"] for h in hist], "symbol": "circle", "symbolSize": 6,
-                           "itemStyle": {"color": "#2563EB"}, "lineStyle": {"width": 2.5}}]}).classes(
-                "w-full").style("height: 260px")
-        with ui.element("div").classes("sr-card q-pa-md"):
-            with ui.row().classes("items-center gap-1 no-wrap"):
-                ui.label("Lên / xuống & đạt mục tiêu").classes("sr-section-title")
-                T.info_icon(ui, "Lên xuống theo lần check", (
-                    "Cột xanh: số từ khóa lên hạng, cột đỏ: số từ khóa xuống hạng so với lần check trước.",
-                    "Đường cam: phần trăm từ khóa đã đạt Top mục tiêu của chính nó (ví dụ Top 3 mà đang hạng 2).",
-                    "Chỉ tính từ khóa có Top mục tiêu; từ khóa giữ nguyên hạng không vẽ."))
-            ui.echart({**base, "tooltip": {**base["tooltip"], ":valueFormatter": "v => v == null ? 'chưa có' : "
-                                                                                "Math.abs(v)"},
-                       "yAxis": [{**axis},
-                                         {**axis, "min": 0, "max": 100, "splitLine": {"show": False},
-                                          "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5, "formatter": "{value}%"}}],
-                       "series": [{"type": "bar", "name": "Lên hạng", "data": [h["up"] for h in hist],
-                                   "itemStyle": {"color": "#1E7C31"}, "barMaxWidth": 18, **marks},
-                                  {"type": "bar", "name": "Xuống hạng", "data": [-h["down"] for h in hist],
-                                   "itemStyle": {"color": "#C2410C"}, "barMaxWidth": 18, "barGap": "-100%"},
-                                  {"type": "line", "name": "% đạt Top mục tiêu", "yAxisIndex": 1, "smooth": 0.2,
-                                   "data": [round(h["target_hit"] / h["target_total"] * 100) if h["target_total"]
-                                            else None for h in hist],
-                                   "symbol": "circle", "symbolSize": 6, "itemStyle": {"color": "#B7791F"},
-                                   "lineStyle": {"width": 2.5}}]}).classes("w-full").style("height: 260px")
+                      "axisLine": {"lineStyle": {"color": "#E7E5DC"}}},
+            "yAxis": {"type": "value", "minInterval": 1, "splitLine": {"lineStyle": {"color": "#F0EEE6"}},
+                      "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5}}}
+    bands = [("Top 3", "top3", "#1E7C31"), ("Top 4–10", "top10", "#9BB823"), ("Top 11–30", "top30", "#D9A441"),
+             ("Ngoài top 30", "out", "#D6D4CA")]
+    with ui.element("div").classes("sr-card q-pa-md w-full"):
+        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+            ui.label("Tăng trưởng của bộ").classes("sr-section-title")
+            T.info_icon(ui, "Tăng trưởng của bộ", (
+                "Mỗi cột là một ngày check của bộ này.",
+                "Trái: cột xanh đậm (Top 3) cao dần là bộ đang lên. Phải: số từ khóa lên hạng (xanh) và xuống hạng "
+                "(đỏ) so với lần check trước.",
+                "Mỗi ngày lấy lần check gần nhất của từng từ khóa. Vạch tím là mốc sự kiện."))
+            ui.space()
+            if on_events:
+                ui.button(f"Mốc sự kiện · {len(evs)}" if evs else "Mốc sự kiện", icon="flag",
+                          on_click=on_events).props("flat dense no-caps color=deep-purple-7").tooltip(
+                    "Đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ")
+        if len(hist) < 2:
+            ui.label("Biểu đồ hiện khi bộ có từ 2 ngày check trở lên.").classes("text-sm muted q-py-md")
+            return
+        with ui.element("div").classes("w-full").style(
+                "display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px"):
+            with ui.column().classes("gap-0"):
+                ui.label("Số từ khóa theo nhóm Top").classes("text-xs muted")
+                ui.echart({**base, "series": [
+                    {"type": "bar", "stack": "top", "name": n, "data": [h[k] for h in hist], **bar,
+                     "itemStyle": {"color": c, **gap}, **(marks if i == 0 else {})}
+                    for i, (n, k, c) in enumerate(bands)]}).classes("w-full").style("height: 240px")
+            with ui.column().classes("gap-0"):
+                ui.label("Lên / xuống hạng so với lần check trước").classes("text-xs muted")
+                ui.echart({**base, "tooltip": {**base["tooltip"], ":valueFormatter": "v => Math.abs(v)"},
+                           "series": [{"type": "bar", "stack": "move", "name": "Lên hạng",
+                                       "data": [h["up"] for h in hist], **bar,
+                                       "itemStyle": {"color": "#1E7C31", "borderRadius": [3, 3, 0, 0]}, **marks},
+                                      {"type": "bar", "stack": "move", "name": "Xuống hạng",
+                                       "data": [-h["down"] for h in hist], **bar,
+                                       "itemStyle": {"color": "#C2410C", "borderRadius": [0, 0, 3, 3]}}]}).classes(
+                    "w-full").style("height: 240px")
 
 
 def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: int | None = None) -> None:
@@ -163,9 +162,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
     sched = cur["schedule"]
     where = R.settings_for(cfg.rank, cur)
 
-    right = T.page_header(ui, "leaderboard", "Từ khóa & rank",
-                          f"Mỗi tab một bộ từ khóa, check qua DataForSEO theo nơi check riêng của bộ. Ngân sách "
-                          f"{cfg.rank.monthly_budget_usd:g} USD/tháng cho cả website.")
+    right = T.page_header(ui, "leaderboard", "Từ khóa & rank", "Vị trí thật trên Google của từng bộ từ khóa.")
     with right:
         if cfg.rank.paused:
             T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
@@ -199,11 +196,13 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
             with ui.element("div").classes("sr-icon-bubble").style(f"background:{T.TONES['green'][0]}"):
                 ui.icon("verified" if is_kpi else "folder_open", size="18px").style(f"color:{T.GREEN}")
             with ui.column().classes("gap-0 col").style("min-width:0"):
-                ui.label(("Bộ Cam kết: khớp tab Từ khóa cam kết của sheet dự án; sửa ở đây thì tool ghi lên sheet"
-                          if is_kpi else f"Bộ {cur['name']}")).classes("text-xs muted")
                 ui.label(R.describe_target(where) + (" (theo dự án)" if not cur["settings"] else "")).classes(
-                    "text-sm font-medium")
-                schedule_label = ui.label().classes("text-xs muted")
+                    "text-sm font-medium ellipsis")
+                schedule_label = ui.label().classes("text-xs muted ellipsis")
+            if is_kpi:
+                with ui.element("span").tooltip("Bộ này khớp tab Từ khóa cam kết của sheet dự án; thêm / sửa / bỏ "
+                                                "ở đây thì tool ghi lên sheet"):
+                    T.status_chip(ui, "Theo sheet cam kết", "green", "sync")
             if cur["paused"]:
                 T.status_chip(ui, "Bộ đang tạm dừng: không check, không tính tiền", "amber", "pause_circle")
             if ed:
@@ -338,67 +337,61 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         add_btn.disable()
         add_btn.tooltip("Dự án chưa gắn sheet: tạo / gắn sheet ở màn KPI cam kết")
 
-    # ---- Tăng trưởng của bộ ----
+    # ---- Hàng ô số (lần check mới nhất, so với lần trước) rồi biểu đồ tăng trưởng ----
+    kpi_box = ui.element("div").classes("w-full")
     growth_box = ui.column().classes("w-full gap-2")
 
-    # ---- Phân bố vị trí (donut) + số chính bên cạnh ----
-    dist_box = ui.element("div").classes("w-full").style(
-        "display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px")
-
-    def draw_dist(kws):
-        from . import volume as V
-        dist_box.clear()
-        # Không thấy trong độ sâu đã check (ví dụ check top 10) thì chưa biết hạng thật: nhóm riêng, không gọi là
-        # "ngoài top 30".
-        counts = {"Top 3": 0, "Top 4–10": 0, "Top 11–30": 0, "Hạng > 30": 0, "Ngoài độ sâu check": 0}
-        for k in kws:
-            if not k["date"]:
-                continue
-            r = k["rank"]
-            key = ("Ngoài độ sâu check" if r is None else "Top 3" if r <= 3 else "Top 4–10" if r <= 10
-                   else "Top 11–30" if r <= 30 else "Hạng > 30")
-            counts[key] += 1
-        with connect() as c:
-            vols = V.latest(c)
+    def draw_kpis(kws, hist, vols):
+        kpi_box.clear()
         checked = [k for k in kws if k["date"]]
-        top10 = sum(1 for k in checked if k["rank"] is not None and k["rank"] <= 10)
-        vol_top10 = sum((vols.get(k["id"]) or {}).get("volume") or 0 for k in checked
-                        if k["rank"] is not None and k["rank"] <= 10)
         vol_all = sum((vols.get(k["id"]) or {}).get("volume") or 0 for k in kws)
-        wrong = sum(1 for k in kws if k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"])
-        with_top = [k for k in checked if k.get("top_target")]
-        hit = sum(1 for k in with_top if k["rank"] is not None and k["rank"] <= k["top_target"])
-        with dist_box:
-            with ui.element("div").classes("sr-card q-pa-md"):
-                ui.label("Phân bố vị trí · lần check mới nhất").classes("sr-section-title")
-                if not any(counts.values()):
-                    ui.label("Chưa có lần check nào.").classes("text-sm muted")
-                else:
-                    T.donut(ui, list(counts.items()), ["#1E7C31", "#9BB823", "#B7791F", "#DB2777", "#B8B6A8"],
-                            "keyword", 200)
-                    ui.label("Ngoài độ sâu check: không thấy trong số kết quả đã check (ví dụ top 10), chưa biết "
-                             "hạng thật.").classes("text-xs muted")
-            with ui.element("div").classes("sr-bento").style("grid-template-columns: repeat(2, minmax(0, 1fr))"):
-                for label, value, hint, tone in [
-                    ("Keyword theo dõi", str(len(kws)), f"{len(checked)} đã check", "grey"),
-                    ("Trong top 10", f"{top10}/{len(checked)}" if checked else "–",
-                     f"{vol_top10:,} lượt tìm/tháng".replace(",", ".") if vol_top10 else "", "green"),
-                    ("Đạt Top mục tiêu", f"{hit}/{len(with_top)}" if with_top else "–",
-                     f"{hit / len(with_top) * 100:.0f}% từ khóa có Top mục tiêu" if with_top
-                     else "chưa đặt Top mục tiêu", "blue"),
-                    ("Tổng volume theo dõi", f"{vol_all:,}".replace(",", ".") if vol_all else "–",
-                     "lượt tìm/tháng (Google Ads)", "blue"),
-                    ("Sai URL mục tiêu", str(wrong), "Google xếp hạng URL khác" if wrong else "tất cả đúng URL",
-                     "amber" if wrong else "green"),
-                ]:
-                    with ui.element("div").classes("sr-bento-tile"):
-                        with ui.row().classes("items-center gap-1 no-wrap"):
-                            ui.element("span").classes("sr-dot").style(f"background:{T.TONES[tone][1]}")
-                            ui.label(label).classes("text-xs muted")
-                            T.info_icon(ui, label)
-                        ui.label(value).classes("sr-metric-value num")
-                        if hint:
-                            ui.label(hint).classes("text-xs muted")
+        last, prev = (hist[-1] if hist else None), (hist[-2] if len(hist) > 1 else None)
+        labels = [_vn(h["date"])[:5] for h in hist]
+
+        def diff(key, better_low=False, digits=0):
+            if not last or not prev or last.get(key) is None or prev.get(key) is None:
+                return "", None
+            d = round(last[key] - prev[key], digits)
+            if not d:
+                return "giữ nguyên", None
+            text = (f"{d:+.{digits}f}" if digits else f"{d:+d}").replace("-", "−").replace(".", ",")
+            return text + " so với lần trước", (d < 0) if better_low else (d > 0)
+
+        def pct(h):
+            return h["target_hit"] / h["target_total"] if h["target_total"] else None
+        top10 = [h["top3"] + h["top10"] for h in hist]
+        with kpi_box, T.kpi_row(ui):
+            T.kpi(ui, "format_list_numbered", "Từ khóa theo dõi", str(len(kws)), hint=(
+                f"{len(checked)} đã check" + (f" · {vol_all:,} lượt tìm/tháng".replace(",", ".") if vol_all else "")),
+                  tone="grey", spark=[])
+            t3, g3 = diff("top3")
+            T.kpi(ui, "emoji_events", "Top 3", str(last["top3"]) if last else "–", t3, g3,
+                  f"trên {last['checked']} từ khóa đã check" if last else "chưa check", spark=[h["top3"] for h in hist],
+                  spark_labels=labels, spark_kind="line", tone="green")
+            if last:
+                last["t10"] = top10[-1]
+                if prev:
+                    prev["t10"] = top10[-2]
+            t10, g10 = diff("t10")
+            T.kpi(ui, "military_tech", "Trong top 10", str(top10[-1]) if hist else "–", t10, g10,
+                  f"trên {last['checked']} từ khóa đã check" if last else "chưa check", spark=top10,
+                  spark_labels=labels, spark_kind="line", tone="lime")
+            ta, ga = diff("avg", better_low=True, digits=1)
+            T.kpi(ui, "trending_up", "Vị trí trung bình",
+                  f"{last['avg']:.1f}".replace(".", ",") if last and last["avg"] is not None else "–", ta, ga,
+                  "số nhỏ hơn là tốt hơn", spark=[h["avg"] for h in hist], spark_labels=labels, spark_kind="line",
+                  tone="blue")
+            hits = [pct(h) for h in hist]
+            if last and prev and hits[-1] is not None and hits[-2] is not None:
+                d = round((hits[-1] - hits[-2]) * 100)
+                tt, gt = ((f"{d:+d} điểm % so với lần trước".replace("-", "−"), d > 0) if d else ("giữ nguyên", None))
+            else:
+                tt, gt = "", None
+            T.kpi(ui, "flag", "Đạt Top mục tiêu",
+                  f"{last['target_hit']}/{last['target_total']}" if last and last["target_total"] else "–", tt, gt,
+                  (f"{hits[-1] * 100:.0f}% từ khóa có Top mục tiêu" if hist and hits[-1] is not None
+                   else "chưa đặt Top mục tiêu"), spark=[h for h in hits], spark_labels=labels, spark_kind="line",
+                  spark_fmt="pct", tone="amber")
 
     # ---- Bảng: tìm, lọc, thùng rác; chọn nhiều thì hiện thanh thao tác hàng loạt ----
     with ui.row().classes("w-full items-center gap-2 q-mt-sm"):
@@ -411,6 +404,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                          on_change=lambda: refresh()).props("dense outlined options-dense").classes("w-56")
         trash_btn = ui.button("Thùng rác", icon="delete_sweep", on_click=lambda: trash_dialog()).props(
             "flat dense no-caps color=grey-8")
+    wrong_box = ui.row().classes("w-full")
     selection_bar = ui.row().classes("w-full items-center gap-2 sr-bulk-bar")
     with selection_bar:
         selected_label = ui.label().classes("text-sm font-medium")
@@ -444,10 +438,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
          ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos"},
         {"name": "change", "label": "Thay đổi", "field": "change", "align": "center", "sortable": True,
          ":sort": "(a, b, rowA, rowB) => rowA.move - rowB.move"},
-        {"name": "best", "label": "Tốt nhất", "field": "best", "align": "center", "sortable": True},
         {"name": "link", "label": "URL đang xếp hạng", "field": "link", "align": "left"},
-        {"name": "target", "label": "URL mục tiêu", "field": "target", "align": "left"},
-        {"name": "date", "label": "Check lúc", "field": "date", "align": "center", "sortable": True},
         {"name": "chart", "label": "", "field": "id", "align": "center"},
     ]
     if not is_kpi:
@@ -483,22 +474,19 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         </q-td>""")
     table.add_slot("body-cell-link", """
         <q-td :props="props">
-          <div class="row no-wrap items-center" style="gap: 4px; max-width: 280px">
+          <div class="row no-wrap items-center" style="gap: 6px; max-width: 360px">
+            <q-icon v-if="props.row.wrong" name="warning" color="orange-8" size="16px">
+              <q-tooltip>Google đang xếp hạng URL khác URL mục tiêu<br/>Mục tiêu: {{ props.row.target_full }}
+                (vị trí {{ props.row.target_pos }})</q-tooltip></q-icon>
+            <q-icon v-else-if="props.row.target_full && props.row.link_full" name="check_circle" color="green-8"
+                    size="16px"><q-tooltip>Đúng URL mục tiêu</q-tooltip></q-icon>
             <a v-if="props.row.link_full" :href="props.row.link_full" target="_blank" rel="noopener"
                :title="props.row.link_full" class="ellipsis" style="color: inherit; text-decoration: none; min-width: 0">
-              {{ props.value }} <q-icon name="open_in_new" size="12px" color="grey-6" /></a>
-            <q-icon v-if="props.row.wrong" name="warning" color="orange-8" size="16px">
-              <q-tooltip>Khác URL mục tiêu (URL mục tiêu đang ở vị trí {{ props.row.target_pos }})</q-tooltip>
-            </q-icon>
+              {{ props.value }}</a>
+            <span v-else-if="props.row.target_full" class="muted ellipsis" :title="props.row.target_full">
+              mục tiêu: {{ props.row.target }}</span>
+            <span v-else class="muted">–</span>
           </div>
-        </q-td>""")
-    table.add_slot("body-cell-target", """
-        <q-td :props="props">
-          <a v-if="props.row.target_full" :href="props.row.target_full" target="_blank" rel="noopener"
-             :title="props.row.target_full" class="ellipsis block"
-             style="color: inherit; text-decoration: none; max-width: 240px">
-            {{ props.value }} <q-icon name="open_in_new" size="12px" color="grey-6" /></a>
-          <span v-else class="muted">chưa gán</span>
         </q-td>""")
     table.add_slot("body-cell-chart", """
         <q-td :props="props">
@@ -724,18 +712,17 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         table.rows = rows
         table.selected = []
         on_select()
+        draw_kpis(kws, hist, vols)
         growth_box.clear()
         with growth_box:
-            with ui.row().classes("w-full items-center gap-2"):
-                if len(hist) < 2 and kws:
-                    ui.label("Biểu đồ tăng trưởng hiện khi bộ có từ 2 ngày check trở lên.").classes("text-sm muted")
-                ui.space()
-                ui.button(f"Mốc sự kiện · {len(evs)}" if evs else "Mốc sự kiện", icon="flag",
-                          on_click=lambda: events_dialog()).props("flat dense no-caps color=deep-purple-7").tooltip(
-                    "Đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ")
-            if len(hist) >= 2:
-                growth_charts(ui, hist, evs)
-        draw_dist(kws)
+            growth_charts(ui, hist, evs, on_events=lambda: events_dialog())
+        wrong = sum(1 for k in kws if k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"])
+        wrong_box.clear()
+        if wrong and filt.value != "wrong":
+            with wrong_box:
+                ui.button(f"{wrong} từ khóa Google đang xếp hạng URL khác URL mục tiêu: xem", icon="warning",
+                          on_click=lambda: filt.set_value("wrong")).props(
+                    "flat dense no-caps color=orange-9 size=sm")
         with connect() as c:
             est = R.estimate(c, cfg.rank, sched, [k["depth"] for k in kws])
         schedule_label.text = (f"{R.describe_schedule(sched)} · {len(kws)} keyword · ước tính {R.usd(est)} "
