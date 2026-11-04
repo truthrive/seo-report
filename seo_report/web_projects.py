@@ -17,18 +17,7 @@ def _vn_date(iso: str | None) -> str:
     return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else "–"
 
 
-GOOGLE_NOTICES = {"ok": ("positive", "Đã kết nối Google với đủ quyền"),
-                  "missing": ("warning", "Đã kết nối Google nhưng còn thiếu quyền: bấm Kết nối Google lại và tích đủ "
-                                         "các ô"),
-                  "cancel": ("warning", "Đã hủy kết nối Google"),
-                  "expired": ("warning", "Phiên kết nối Google đã hết hạn: bấm Kết nối Google lại"),
-                  "fail": ("negative", "Kết nối Google không thành công: thử lại sau ít phút")}
-
-
-def build_projects_page(ui, base, app_connect, user, google_origin: str | None = None,
-                        google_notice: str | None = None) -> None:
-    """google_origin: địa chỉ localhost đang mở (chỉ khi mở trên máy chạy tool) để Google quay về sau khi đăng nhập;
-    None thì nút Kết nối Google bị khóa."""
+def build_projects_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
     right = T.page_header(ui, "domain", "Dự án", "Mỗi dự án là một website: số liệu, từ khóa, KPI và báo cáo tách "
@@ -388,78 +377,12 @@ def build_projects_page(ui, base, app_connect, user, google_origin: str | None =
                             ui.label("đang đọc…").classes("text-sm muted")
                         else:
                             ui.label("chưa đọc được (kiểm tra đăng nhập Google của tool)").classes("text-sm muted")
-                    google_box()
-                    with app_connect() as c:
-                        master_now = PJ.master_sheet(c)
-                    with ui.row().classes("items-center gap-2 w-full no-wrap"):
-                        ui.label("Sheet mẫu gốc cho dự án mới:").classes("text-sm font-semibold").style(
-                            "white-space:nowrap")
-                        master_in = ui.input(placeholder="Dán link Google Sheet mẫu (OKRs, Weekly Task, Chi phí…)",
-                                             value=f"https://docs.google.com/spreadsheets/d/{master_now}/edit"
-                                             if master_now else "").props("outlined dense").classes("col")
-
-                        def save_master():
-                            try:
-                                with app_connect() as c:
-                                    sid = PJ.set_master_sheet(c, master_in.value)
-                            except ValueError as e:
-                                ui.notify(str(e), type="warning")
-                                return
-                            ui.notify("Đã lưu sheet mẫu gốc" if sid else "Đã bỏ sheet mẫu gốc", type="positive")
-                            body.refresh()
-
-                        ui.button("Lưu", on_click=save_master).props("outline no-caps")
-                    ui.label("Wizard ở màn KPI cam kết copy file này thành sheet của dự án mới (giữ nguyên công thức), "
-                             "rồi ghi 2 tab KPI. Tool cần quyền Google Drive đầy đủ: nếu báo thiếu quyền, bấm Kết nối "
-                             "Google ở trên.").classes("text-xs muted")
-
-    def google_box():
-        """Trạng thái kết nối Google của tool + nút Kết nối / Đổi tài khoản (đăng nhập ngay trong tool)."""
-        from . import auth
-        st = auth.granted_status(base)
-        with ui.row().classes("items-center gap-2 w-full"):
-            if not st["connected"]:
-                T.status_chip(ui, "Chưa kết nối Google", "red", "link_off")
-            elif st["missing"]:
-                T.status_chip(ui, "Thiếu quyền: " + ", ".join(st["missing"]), "amber", "warning")
-            else:
-                T.status_chip(ui, "Đủ quyền Google", "green", "verified")
-            ui.space()
-            connect_btn = ui.button("Kết nối Google" if not st["connected"] or st["missing"] else "Cấp lại quyền",
-                                    icon="login", on_click=lambda: go_google(False)).props("outline dense no-caps")
-            switch_btn = ui.button("Đổi tài khoản Google", icon="switch_account",
-                                   on_click=lambda: switch_dialog.open()).props("flat dense no-caps")
-            if not google_origin:
-                for b in (connect_btn, switch_btn):
-                    b.disable()
-                    b.tooltip("Mở tool trên máy chạy tool (http://localhost:8080) để kết nối Google: ứng dụng "
-                              "Google của tool chỉ cho quay về địa chỉ localhost")
-
-    def go_google(switch: bool):
-        from . import auth
-        if not google_origin or not (A.is_admin(user) or user.role == A.LOCAL):
-            return
-        try:
-            url = auth.web_login_url(base, f"{google_origin}/oauth/google", switch_account=switch)
-        except ValueError as e:
-            ui.notify(str(e), type="negative")
-            return
-        ui.navigate.to(url)
-
-    with ui.dialog() as switch_dialog, ui.card().style("max-width: 480px; border-radius: 14px"):
-        ui.label("Đổi tài khoản Google của tool?").classes("text-lg font-semibold")
-        ui.label("Mọi dự án dùng chung một tài khoản Google để đọc Search Console, Analytics, Sheets, Drive và Google "
-                 "Ads. Tài khoản mới phải có quyền vào property GSC / GA4 và sheet của các website, nếu không lịch lấy "
-                 "số sẽ báo lỗi.").classes("text-sm")
-        with ui.row().classes("w-full justify-end gap-2"):
-            ui.button("Hủy", on_click=switch_dialog.close).props("flat no-caps")
-            ui.button("Chọn tài khoản khác", icon="switch_account",
-                      on_click=lambda: (switch_dialog.close(), go_google(True))).props("unelevated no-caps")
+                    with ui.row().classes("items-center gap-1"):
+                        ui.icon("settings", size="16px").classes("muted")
+                        ui.link("Kết nối Google, thư mục Drive, sheet mẫu gốc, mã API: màn Cài đặt tích hợp",
+                                "/cai-dat").classes("text-sm")
 
     body()
-    if google_notice in GOOGLE_NOTICES:
-        kind, text = GOOGLE_NOTICES[google_notice]
-        ui.notify(text, type=kind, multi_line=True)
 
     async def load_email():
         from . import auth

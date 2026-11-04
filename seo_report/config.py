@@ -47,6 +47,7 @@ class Config:
     access: AccessSettings = field(default_factory=AccessSettings)  # ai được vào / sửa khi mở qua Cloudflare
     logo: str = ""  # logo của website (data URI) cho báo cáo Excel / slide / bản tĩnh; đặt theo dự án
     backup_dir: Path = Path("backups")  # nơi lưu bản sao lưu hằng ngày ([backup] dir)
+    config_path: Path = Path("config.toml")  # file cấu hình đã đọc (màn Cài đặt tích hợp ghi lại [drive])
     drive_parent: str = ""  # ID folder Drive của bạn chứa mọi folder / file tool tạo ([drive] parent_folder); trống = My Drive
     backup_keep: int = 7  # số bản sao lưu giữ lại ([backup] keep)
 
@@ -78,6 +79,7 @@ def load_config(path: str | Path = "config.toml") -> Config:
         backup_dir=base / raw.get("backup", {}).get("dir", "backups"),
         backup_keep=max(1, int(raw.get("backup", {}).get("keep", 7))),
         drive_parent=_folder_id(raw.get("drive", {}).get("parent_folder", "")),
+        config_path=p.resolve(),
     )
 
 

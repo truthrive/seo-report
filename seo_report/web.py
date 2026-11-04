@@ -24,7 +24,7 @@ from .web_access import build_access_page
 from .web_url import build_url_page
 
 PRIMARY = T.GREEN
-ADMIN_PAGES = ("/projects", "/access", "/budget")  # chỉ quản trị thấy trong menu
+ADMIN_PAGES = ("/projects", "/access", "/budget", "/cai-dat")  # chỉ quản trị thấy trong menu
 NUMBER = "val => val.toLocaleString('vi-VN')"
 # Menu chia nhóm: (tên nhóm hoặc None, [(nhãn, đường dẫn, icon)])
 NAV = [
@@ -35,7 +35,8 @@ NAV = [
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"),
                   ("Chất lượng dữ liệu", "/ai?tab=chat-luong", "verified")]),
     ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách check rank", "/budget", "account_balance_wallet"),
-                  ("Phân quyền", "/access", "admin_panel_settings")]),  # chỉ Chủ tool
+                  ("Phân quyền", "/access", "admin_panel_settings"),
+                  ("Cài đặt tích hợp", "/cai-dat", "settings")]),  # chỉ Chủ tool
 ]
 EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")  # màn làm việc cần quyền sửa: người chỉ xem không thấy trên menu
 
@@ -318,7 +319,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     ui.separator()
                     for label, to, icon in (("Phân quyền", "/access", "admin_panel_settings"),
                                             ("Dự án", "/projects", "domain"),
-                                            ("Ngân sách check rank", "/budget", "account_balance_wallet")):
+                                            ("Ngân sách check rank", "/budget", "account_balance_wallet"),
+                                            ("Cài đặt tích hợp", "/cai-dat", "settings")):
                         with ui.menu_item(on_click=lambda _, t=to: ui.navigate.to(t)).classes("items-center gap-3"):
                             ui.icon(icon, size="18px").classes("muted")
                             ui.label(label).classes("text-sm")
@@ -641,8 +643,17 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Dự án", user, P, page_ctx(P), period=False, group=False)
+        build_projects_page(ui, base, app_connect, user)
+
+    @ui.page("/cai-dat")
+    def settings_page(request: Request):
+        from .web_settings import build_settings_page
+        if not (opened := open_page(request, admin=True)):
+            return
+        user, P = opened
+        shell("Cài đặt tích hợp", user, P, page_ctx(P), period=False, group=False)
         local = A.is_local(request.client.host if request.client else None, request.headers)
-        build_projects_page(ui, base, app_connect, user,
+        build_settings_page(ui, base, app_connect, user, base.config_path, local,
                             google_origin=f"http://{request.headers.get('host')}" if local else None,
                             google_notice=request.query_params.get("google"))
 
@@ -654,7 +665,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
 
         from . import auth
         if not A.is_local(request.client.host if request.client else None, request.headers):
-            return RedirectResponse("/projects", status_code=303)
+            return RedirectResponse("/cai-dat", status_code=303)
         q = request.query_params
         if q.get("error"):
             result = "cancel" if q["error"] == "access_denied" else "fail"
@@ -671,7 +682,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 print(f"Kết nối Google không thành công: {e}")
                 result = "expired" if isinstance(e, ValueError) else "fail"
         # chỉ mã ngắn, không đưa chữ từ đường dẫn lên trang
-        return RedirectResponse(f"/projects?google={result}", status_code=303)
+        return RedirectResponse(f"/cai-dat?google={result}", status_code=303)
 
     @ui.page("/index")
     def index_page(request: Request):
