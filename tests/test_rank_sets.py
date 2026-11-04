@@ -102,9 +102,17 @@ class SetsTest(unittest.TestCase):
             self.con.execute("INSERT INTO rank_checks VALUES (?, ?, 30, ?, NULL, NULL, 0, '')", (ids[kw], d, r))
         h = R.set_history(self.con, SITE, sid)
         self.assertEqual([x["date"] for x in h], ["2026-10-06", "2026-10-13"])
-        self.assertEqual((h[0]["top3"], h[0]["top10"], h[0]["top30"], h[0]["out"], h[0]["avg"]), (0, 1, 1, 1, 8.5))
+        self.assertEqual((h[0]["top3"], h[0]["top5"], h[0]["top10"], h[0]["top30"], h[0]["out"], h[0]["avg"]),
+                         (0, 1, 0, 1, 1, 8.5))
         self.assertEqual((h[1]["top3"], h[1]["up"], h[1]["down"], h[1]["same"]), (1, 1, 1, 1))  # c giữ lần trước
         self.assertEqual((h[1]["target_hit"], h[1]["target_total"]), (1, 2))
+        # theo tuần: tuần 06/10 và 13/10, tuần 20/10 không check vẫn có điểm (giữ số tuần trước)
+        w = R.set_history(self.con, SITE, sid, period="week", today=date(2026, 10, 21))
+        self.assertEqual([x["label"] for x in w], ["Tuần 05/10", "Tuần 12/10", "Tuần 19/10"])
+        self.assertEqual((w[2]["top3"], w[2]["up"], w[2]["down"]), (1, 0, 0))
+        m = R.set_history(self.con, SITE, sid, period="month", today=date(2026, 11, 2))
+        self.assertEqual([x["label"] for x in m], ["T10/2026", "T11/2026"])
+        self.assertEqual((m[0]["top3"], m[0]["end"]), (1, "2026-10-31"))
 
     def test_budget_counts_each_set_schedule(self):
         a = R.create_set(self.con, SITE, "Tuần", "t", schedule={"depth": 10})

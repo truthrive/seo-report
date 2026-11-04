@@ -712,10 +712,33 @@ def sync_kpi_set(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
     return res
 
 
-def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30) -> list[dict]:
-    """Tăng trưởng của một bộ theo từng ngày check: số từ khóa Top 3 / 4–10 / 11–30 / ngoài top 30 (hoặc chưa thấy),
-    vị trí trung bình (từ khóa có thứ hạng), số từ khóa lên / xuống / giữ nguyên so với lần check trước, tỷ lệ đạt Top
-    mục tiêu. Mỗi ngày lấy lần check gần nhất (≤ ngày đó) của từng từ khóa trong bộ."""
+PERIODS = {"check": "Lần check", "week": "Tuần", "month": "Tháng"}
+BANDS = (("top3", 1, 3), ("top5", 4, 5), ("top10", 6, 10), ("top30", 11, 30))  # nhóm Top: (khóa, từ hạng, đến hạng)
+
+
+def _periods(first: date, last: date, period: str) -> list[tuple[date, date, str]]:
+    """Các kỳ liền nhau từ kỳ chứa `first` tới kỳ chứa `last`: (đầu kỳ, cuối kỳ, nhãn trục)."""
+    out = []
+    if period == "week":
+        s = first - timedelta(days=first.weekday())
+        while s <= last:
+            out.append((s, s + timedelta(days=6), f"Tuần {s:%d/%m}"))
+            s += timedelta(days=7)
+    else:
+        y, m = first.year, first.month
+        while (y, m) <= (last.year, last.month):
+            out.append((date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1]), f"T{m}/{y}"))
+            y, m = (y, m + 1) if m < 12 else (y + 1, 1)
+    return out
+
+
+def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30, period: str = "check",
+                today: date | None = None) -> list[dict]:
+    """Tăng trưởng của một bộ theo lần check, tuần hoặc tháng: số từ khóa Top 3 / 4–5 / 6–10 / 11–30 / ngoài top 30
+    (hoặc chưa thấy), vị trí trung bình (từ khóa có thứ hạng), số từ khóa lên / xuống / giữ nguyên so với điểm trước,
+    tỷ lệ đạt Top mục tiêu. Mỗi điểm lấy lần check gần nhất (≤ cuối kỳ) của từng từ khóa; tuần / tháng không có lần
+    check nào vẫn có điểm (giữ số kỳ trước) để timeline liền mạch. Mỗi điểm có "label" (nhãn trục), "date" (đầu kỳ /
+    ngày check), "end" (cuối kỳ)."""
     ensure_tables(con)
     kws = con.execute("SELECT id, top_target FROM rank_keywords WHERE set_id = ? AND site = ? AND removed_at IS NULL",
                       (set_id, site)).fetchall()
@@ -723,35 +746,52 @@ def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30
     if not tops:
         return []
     marks = ",".join("?" * len(tops))
-    checks = con.execute(f"SELECT keyword_id, check_date, rank, depth FROM rank_checks WHERE keyword_id IN ({marks}) "
+    checks = con.execute(f"SELECT keyword_id, check_date, rank FROM rank_checks WHERE keyword_id IN ({marks}) "
                          "ORDER BY check_date", list(tops)).fetchall()
     by_day: dict[str, list] = {}
-    for kid, d, r, depth in checks:
-        by_day.setdefault(d, []).append((kid, r, depth))
-    state: dict[int, int | None] = {}
-    out = []
+    for kid, d, r in checks:
+        by_day.setdefault(d, []).append((kid, r))
+    snaps, state = [], {}  # (ngày check, trạng thái sau ngày đó)
     for d in sorted(by_day):
-        before = dict(state)
-        for kid, r, _ in by_day[d]:
+        for kid, r in by_day[d]:
             state[kid] = r
-        ranks = list(state.values())
+        snaps.append((d, dict(state)))
+    if not snaps:
+        return []
+    if period == "check":
+        points = [(d, d, _vn_short(d), st) for d, st in snaps]
+    else:
+        first, last = date.fromisoformat(snaps[0][0]), max(date.fromisoformat(snaps[-1][0]), today or date.today())
+        points = []
+        for s0, e0, label in _periods(first, last, period):
+            st = next((st for d, st in reversed(snaps) if d <= e0.isoformat()), None)
+            if st is not None:
+                points.append((s0.isoformat(), e0.isoformat(), label, st))
+    out, before = [], {}
+    for d, e, label, st in points:
+        ranks = list(st.values())
         ranked = [r for r in ranks if r is not None]
         up = down = same = 0
-        for kid, r in state.items():
+        for kid, r in st.items():
             if kid not in before:
                 continue
             a, b = (before[kid] if before[kid] is not None else 999), (r if r is not None else 999)
             up, down, same = up + (b < a), down + (b > a), same + (b == a)
-        with_target = [(state[k], t) for k, t in tops.items() if t and k in state]
-        out.append({
-            "date": d, "checked": len(state),
-            "top3": sum(1 for r in ranked if r <= 3), "top10": sum(1 for r in ranked if 3 < r <= 10),
-            "top30": sum(1 for r in ranked if 10 < r <= 30), "out": sum(1 for r in ranks if r is None or r > 30),
-            "avg": round(sum(ranked) / len(ranked), 1) if ranked else None,
-            "up": up, "down": down, "same": same,
-            "target_total": len(with_target),
-            "target_hit": sum(1 for r, t in with_target if r is not None and r <= t)})
+        with_target = [(st[k], t) for k, t in tops.items() if t and k in st]
+        row = {"date": d, "end": e, "label": label, "checked": len(st),
+               "out": sum(1 for r in ranks if r is None or r > 30),
+               "avg": round(sum(ranked) / len(ranked), 1) if ranked else None,
+               "up": up, "down": down, "same": same, "target_total": len(with_target),
+               "target_hit": sum(1 for r, t in with_target if r is not None and r <= t)}
+        for key, lo, hi in BANDS:
+            row[key] = sum(1 for r in ranked if lo <= r <= hi)
+        out.append(row)
+        before = st
     return out[-limit:]
+
+
+def _vn_short(iso: str) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}"
 
 
 def set_target_url(con: sqlite3.Connection, site: str, keyword_id: int, raw_url: str | None, user: str) -> str | None:
