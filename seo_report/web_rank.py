@@ -16,6 +16,16 @@ def _vn(iso: str | None) -> str:
     return f"{d}/{m}/{y}"
 
 
+def _local(iso_utc: str) -> str:
+    """Thời điểm lưu theo UTC → giờ Việt Nam "05/11/2026 14:30"."""
+    from datetime import datetime, timedelta
+    try:
+        t = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return iso_utc or ""
+    return (t.replace(tzinfo=None) + timedelta(hours=7) if t.tzinfo else t).strftime("%d/%m/%Y %H:%M")
+
+
 def _pos(rank, depth) -> str:
     if depth is None:
         return ""
@@ -30,6 +40,25 @@ _VIEWS: dict[str, dict[str, object]] = {}  # website → {client id: hàm làm m
 SOURCES = {"kpi": "Cam kết", "manual": "Nhập tay", "gsc": "Từ GSC (★)"}
 TOPS = [1, 3, 5, 10, 20, 30]
 
+# Bộ lọc bảng: (tên, điều kiện trên một dòng của rank.keywords)
+FILTERS = {
+    "all": ("Tất cả", lambda k: True),
+    "top3": ("Top 3", lambda k: k["rank"] is not None and k["rank"] <= 3),
+    "top10": ("Top 4–10", lambda k: k["rank"] is not None and 3 < k["rank"] <= 10),
+    "top30": ("Top 11–30", lambda k: k["rank"] is not None and 10 < k["rank"] <= 30),
+    "out": ("Ngoài top 30 / ngoài độ sâu", lambda k: k["date"] and (k["rank"] is None or k["rank"] > 30)),
+    "unchecked": ("Chưa check", lambda k: not k["date"]),
+    "miss": ("Chưa đạt Top mục tiêu", lambda k: k.get("top_target") and (k["rank"] is None
+                                                                          or k["rank"] > k["top_target"])),
+    "wrong": ("Sai URL mục tiêu", lambda k: k["target_url"] and k["ranking_url"]
+              and k["ranking_url"] != k["target_url"]),
+    "down": ("Rớt hạng lần vừa rồi", lambda k: change_text(k)[2] < 0),
+    "up": ("Lên hạng lần vừa rồi", lambda k: change_text(k)[2] > 0),
+    "notarget": ("Chưa có URL mục tiêu", lambda k: not k["target_url"]),
+    "paused": ("Đang tạm dừng", lambda k: k["paused"]),
+    "note": ("Có ghi chú", lambda k: bool(k["note"])),
+}
+
 RANK_TONES = [(3, ("#E7F3EA", "#1E7C31")), (10, ("#F2F7DC", "#5E7414")), (30, ("#FBF1DE", "#B7791F"))]
 
 
@@ -38,11 +67,30 @@ def change_text(k: dict) -> tuple[str, str, int]:
     return rank_change(k["date"], k["rank"], k["last_depth"], k["prev"], k["prev_depth"])
 
 
-def growth_charts(ui, hist: list[dict]) -> None:
+def event_marks(hist: list[dict], evs: list[dict]) -> dict:
+    """Mốc sự kiện thành vạch dọc trên biểu đồ tăng trưởng: đặt ở lần check đầu tiên từ ngày sự kiện trở đi (trục là
+    các ngày check). Mốc sau lần check cuối thì chưa vẽ."""
+    labels: dict[str, list[str]] = {}
+    for e in evs:
+        h = next((h for h in hist if h["date"] >= e["day"]), None)
+        if h:
+            labels.setdefault(_vn(h["date"])[:5], []).append(f"{_vn(e['day'])[:5]} {e['text']}")
+    if not labels:
+        return {}
+    return {"markLine": {"symbol": "none", "silent": True, "animation": False,
+                         "lineStyle": {"color": "#7C3AED", "type": "dashed", "width": 1},
+                         "label": {"position": "insideEndTop", "color": "#5B21B6", "fontSize": 10,
+                                   "overflow": "truncate", "width": 140},
+                         "data": [{"xAxis": x, "label": {"formatter": " · ".join(t)}} for x, t in labels.items()]}}
+
+
+def growth_charts(ui, hist: list[dict], evs: list[dict] | None = None) -> None:
     """Tăng trưởng của bộ qua các lần check (như SERPRobot): trái: số từ khóa theo nhóm Top (cột chồng) + vị trí
-    trung bình (đường, trục đảo: lên là tốt); phải: số từ khóa lên / xuống so với lần trước + tỷ lệ đạt Top mục tiêu."""
+    trung bình (đường, trục đảo: lên là tốt); phải: số từ khóa lên / xuống so với lần trước + tỷ lệ đạt Top mục tiêu.
+    evs: mốc sự kiện (vạch tím)."""
     from . import ui_theme as T
     x = [_vn(h["date"])[:5] for h in hist]
+    marks = event_marks(hist, evs or [])
     bars = [("Top 3", "top3", "#1E7C31"), ("Top 4–10", "top10", "#9BB823"), ("Top 11–30", "top30", "#B7791F"),
             ("Ngoài top 30 / chưa thấy", "out", "#C9C7BC")]
     base = {"animation": False, "grid": {"left": 40, "right": 44, "top": 34, "bottom": 26},
@@ -65,7 +113,8 @@ def growth_charts(ui, hist: list[dict]) -> None:
             ui.echart({**base, "yAxis": [{**axis},
                                          {**axis, "inverse": True, "min": 1, "splitLine": {"show": False}}],
                        "series": [{"type": "bar", "stack": "top", "name": n, "data": [h[k] for h in hist],
-                                   "itemStyle": {"color": c}, "barMaxWidth": 28} for n, k, c in bars]
+                                   "itemStyle": {"color": c}, "barMaxWidth": 28, **(marks if i == 0 else {})}
+                                  for i, (n, k, c) in enumerate(bars)]
                        + [{"type": "line", "name": "Vị trí trung bình", "yAxisIndex": 1, "smooth": 0.2,
                            "data": [h["avg"] for h in hist], "symbol": "circle", "symbolSize": 6,
                            "itemStyle": {"color": "#2563EB"}, "lineStyle": {"width": 2.5}}]}).classes(
@@ -83,7 +132,7 @@ def growth_charts(ui, hist: list[dict]) -> None:
                                          {**axis, "min": 0, "max": 100, "splitLine": {"show": False},
                                           "axisLabel": {"color": "#8C8A7E", "fontSize": 10.5, "formatter": "{value}%"}}],
                        "series": [{"type": "bar", "name": "Lên hạng", "data": [h["up"] for h in hist],
-                                   "itemStyle": {"color": "#1E7C31"}, "barMaxWidth": 18},
+                                   "itemStyle": {"color": "#1E7C31"}, "barMaxWidth": 18, **marks},
                                   {"type": "bar", "name": "Xuống hạng", "data": [-h["down"] for h in hist],
                                    "itemStyle": {"color": "#C2410C"}, "barMaxWidth": 18, "barGap": "-100%"},
                                   {"type": "line", "name": "% đạt Top mục tiêu", "yAxisIndex": 1, "smooth": 0.2,
@@ -95,11 +144,13 @@ def growth_charts(ui, hist: list[dict]) -> None:
 
 def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: int | None = None) -> None:
     """set_id: bộ (tab) đang mở; không có / không còn thì mở bộ đầu tiên."""
+    from . import access as A
     from .access import can_edit
     from . import kpi as KP
     from . import ui_theme as T
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không thêm/bỏ keyword, không check (tốn tiền), không sửa bộ
+    owner = A.is_admin(user) or getattr(user, "role", None) == A.LOCAL  # xóa lần check sai: chỉ Chủ tool
     with connect() as c:
         end = K.latest_date(c, site)
         all_sets = R.sets(c, site)
@@ -138,7 +189,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                 "sr-tabs col").props("align=left no-caps dense inline-label outside-arrows mobile-arrows"):
             for x in all_sets:
                 ui.tab(x["id"], label=f"{x['name']} · {x['count']}",
-                       icon="verified" if x["kind"] == "kpi" else None)
+                       icon="pause_circle" if x["paused"] else "verified" if x["kind"] == "kpi" else None)
         if ed:
             ui.button("Bộ mới", icon="add", on_click=lambda: set_dialog(None)).props("flat dense no-caps")
 
@@ -153,6 +204,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                 ui.label(R.describe_target(where) + (" (theo dự án)" if not cur["settings"] else "")).classes(
                     "text-sm font-medium")
                 schedule_label = ui.label().classes("text-xs muted")
+            if cur["paused"]:
+                T.status_chip(ui, "Bộ đang tạm dừng: không check, không tính tiền", "amber", "pause_circle")
             if ed:
                 ui.button("Cài đặt bộ", icon="tune", on_click=lambda: set_dialog(cur)).props("flat no-caps")
                 if not is_kpi:
@@ -221,6 +274,9 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                          "nơi tìm), không phải do website lên / xuống hạng.").classes("text-xs").style(
                     f"color:{T.AMBER_TEXT}")
 
+            pause_sw = ui.switch("Tạm dừng cả bộ (không check, không tính tiền; lịch sử vẫn giữ)",
+                                 value=bool((st or {}).get("paused"))).props("dense") if st else None
+
             def view():
                 days_box.set_visibility(kind.value == "weekdays")
                 month_day.set_visibility(kind.value == "monthly")
@@ -239,7 +295,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                     with connect() as c:
                         if st:
                             R.update_set(c, st["id"], str(user), name=name.value, settings=settings,
-                                         schedule=s_new)
+                                         schedule=s_new, paused=pause_sw.value)
                             new_id = st["id"]
                         else:
                             new_id = R.create_set(c, site, name.value, str(user), settings=settings,
@@ -344,18 +400,37 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                         if hint:
                             ui.label(hint).classes("text-xs muted")
 
-    # ---- Bảng ----
+    # ---- Bảng: tìm, lọc, thùng rác; chọn nhiều thì hiện thanh thao tác hàng loạt ----
     with ui.row().classes("w-full items-center gap-2 q-mt-sm"):
         ui.label(f"Danh sách keyword · {cur['name']}").classes("sr-section-title")
         ui.space()
-        selection_bar = ui.row().classes("items-center gap-2")
+        search = ui.input(placeholder="Tìm từ khóa, URL, ghi chú…").props("dense outlined clearable").classes(
+            "w-64")
+        search.props["prepend-icon"] = "search"
+        filt = ui.select({k: v[0] for k, v in FILTERS.items()}, value="all", label="Lọc",
+                         on_change=lambda: refresh()).props("dense outlined options-dense").classes("w-56")
+        trash_btn = ui.button("Thùng rác", icon="delete_sweep", on_click=lambda: trash_dialog()).props(
+            "flat dense no-caps color=grey-8")
+    selection_bar = ui.row().classes("w-full items-center gap-2 sr-bulk-bar")
     with selection_bar:
         selected_label = ui.label().classes("text-sm font-medium")
         if ed:
-            ui.button("Check các keyword này", icon="play_arrow", on_click=lambda: check_now()).props(
-                "flat dense no-caps")
+            ui.button("Check", icon="play_arrow", on_click=lambda: check_now()).props("flat dense no-caps")
+            with ui.button("Sửa hàng loạt", icon="edit_note").props("flat dense no-caps"):
+                with ui.menu():
+                    for label, icon, fn in (("Đặt Top mục tiêu…", "flag", lambda: bulk_top()),
+                                            ("Gán URL mục tiêu…", "link", lambda: bulk_url()),
+                                            ("Ghi chú…", "sticky_note_2", lambda: bulk_note()),
+                                            ("Tạm dừng check", "pause_circle", lambda: bulk_pause(True)),
+                                            ("Chạy lại", "play_circle", lambda: bulk_pause(False)),
+                                            ("Chuyển sang bộ khác…", "drive_file_move", lambda: bulk_set("move")),
+                                            ("Chép sang bộ khác…", "content_copy", lambda: bulk_set("copy"))):
+                        with ui.menu_item(on_click=fn).classes("items-center gap-3"):
+                            ui.icon(icon, size="18px").classes("muted")
+                            ui.label(label).classes("text-sm")
             ui.button("Bỏ theo dõi", icon="delete_outline", on_click=lambda: remove()).props(
                 "flat dense no-caps color=negative")
+        ui.space()
         ui.button("Bỏ chọn", on_click=lambda: (table.selected.clear(), table.update(), on_select())).props(
             "flat dense no-caps color=grey-8")
     selection_bar.set_visibility(False)
@@ -379,9 +454,20 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         cols.insert(1, {"name": "source", "label": "Nguồn", "field": "source", "align": "left", "sortable": True})
     table = ui.table(columns=cols, rows=[], row_key="id", selection="multiple" if ed else "none",
                      pagination=50).classes("w-full").props("flat bordered dense")
+    search.bind_value(table, "filter")
+    table.add_slot("body-cell-keyword", """
+        <q-td :props="props">
+          <div class="row no-wrap items-center" style="gap: 4px">
+            <span :style="{opacity: props.row.paused ? 0.55 : 1}">{{ props.value }}</span>
+            <q-icon v-if="props.row.note" name="sticky_note_2" size="15px" color="amber-8">
+              <q-tooltip max-width="320px">{{ props.row.note }}</q-tooltip></q-icon>
+          </div>
+        </q-td>""")
     table.add_slot("body-cell-pos", """
         <q-td :props="props" class="text-center">
-          <span v-if="props.row.checked" :style="{background: props.row.bg, color: props.row.fg, borderRadius: '6px',
+          <q-chip v-if="props.row.paused" dense square icon="pause" color="grey-3" text-color="grey-8"
+                  size="sm">tạm dừng</q-chip>
+          <span v-else-if="props.row.checked" :style="{background: props.row.bg, color: props.row.fg, borderRadius: '6px',
                 padding: '2px 8px', fontWeight: 700}">{{ props.value }}</span>
           <span v-else class="muted">chờ check</span>
         </q-td>""")
@@ -432,26 +518,82 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
 
     table.on_select(on_select)
 
-    with ui.dialog() as chart_dialog, ui.card().style("min-width: 640px; max-width: 94vw"):
-        chart_title = ui.label().classes("text-base font-semibold")
-        chart = ui.echart({"xAxis": {"type": "category", "data": []}, "yAxis": {"type": "value"}, "series": []}).classes(
-            "w-full").style("height: 300px")
-        ui.label("Trục vị trí đảo ngược: lên cao là tốt hơn. Điểm trống = ngoài độ sâu check.").classes("text-xs muted")
-
     def show_chart(e):
+        """Lịch sử một từ khóa: biểu đồ vị trí, danh sách các lần check (Chủ tool xóa được lần check sai), nhật ký."""
+        row = e.args
         with connect() as c:
-            hist = R.history(c, e.args["id"])
-        chart_title.text = f"Lịch sử vị trí: {e.args['keyword']}"
-        chart.options.update({
-            "tooltip": {"trigger": "axis"},
-            "grid": {"left": 40, "right": 16, "top": 16, "bottom": 32},
-            "xAxis": {"type": "category", "data": [_vn(d)[:5] for d, _, _ in hist]},
-            "yAxis": {"type": "value", "inverse": True, "min": 1, "name": "Vị trí"},
-            "series": [{"type": "line", "data": [r for _, r, _ in hist], "connectNulls": False,
-                        "itemStyle": {"color": "#1E7C31"}, "label": {"show": True, "position": "top"}}],
-        })
-        chart.update()
-        chart_dialog.open()
+            hist = R.history(c, row["id"])
+            log = R.keyword_log(c, site, row["keyword"])
+            evs = R.events(c, site, sid)
+        with ui.dialog() as d, ui.card().style("min-width: 680px; max-width: 94vw; border-radius: 14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label(f"Lịch sử: {row['keyword']}").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=d.close).props("flat round dense")
+            with ui.tabs().classes("w-full sr-tabs").props("align=left no-caps dense inline-label") as tabs:
+                t1 = ui.tab("Vị trí", icon="show_chart")
+                t2 = ui.tab(f"Các lần check · {len(hist)}", icon="event_note")
+                t3 = ui.tab(f"Nhật ký · {len(log)}", icon="history")
+            with ui.tab_panels(tabs, value=t1).classes("w-full").props("animated=false"):
+                with ui.tab_panel(t1).classes("q-px-none"):
+                    pts = [{"date": dd} for dd, _, _ in hist]
+                    ui.echart({"tooltip": {"trigger": "axis"}, "animation": False,
+                               "grid": {"left": 40, "right": 16, "top": 20, "bottom": 32},
+                               "xAxis": {"type": "category", "data": [_vn(dd)[:5] for dd, _, _ in hist]},
+                               "yAxis": {"type": "value", "inverse": True, "min": 1, "name": "Vị trí"},
+                               "series": [{"type": "line", "data": [r for _, r, _ in hist], "connectNulls": False,
+                                           "itemStyle": {"color": "#1E7C31"}, "label": {"show": True,
+                                                                                       "position": "top"},
+                                           **event_marks(pts, evs)}]}).classes("w-full").style("height: 300px")
+                    ui.label("Trục vị trí đảo ngược: lên cao là tốt hơn. Điểm trống = ngoài độ sâu check. Vạch tím là "
+                             "mốc sự kiện.").classes("text-xs muted")
+                with ui.tab_panel(t2).classes("q-px-none"):
+                    checks = ui.column().classes("w-full gap-0")
+
+                    def draw_checks():
+                        checks.clear()
+                        with connect() as c:
+                            h2 = R.history(c, row["id"])
+                        with checks:
+                            if not h2:
+                                ui.label("Chưa có lần check nào.").classes("text-sm muted")
+                            for dd, r, dep in reversed(h2):
+                                with ui.row().classes("w-full items-center no-wrap gap-3 q-py-xs"):
+                                    ui.label(_vn(dd)).classes("text-sm num").style("width: 96px")
+                                    ui.label(f"Vị trí {r}" if r is not None else f"Ngoài top {dep}").classes(
+                                        "text-sm col")
+                                    ui.label(f"độ sâu {dep}").classes("text-xs muted")
+                                    if owner:
+                                        ui.button(icon="delete_outline", on_click=lambda dd=dd: drop_check(dd)).props(
+                                            "flat round dense size=sm color=negative").tooltip(
+                                            "Xóa lần check này (chỉ khi kết quả sai)")
+                        if owner:
+                            with checks:
+                                ui.label("Chỉ xóa lần check có kết quả sai (ví dụ Google trả trang lạ). Việc xóa có "
+                                         "ghi nhật ký.").classes("text-xs muted q-mt-sm")
+
+                    def drop_check(dd: str):
+                        if not owner:
+                            return
+                        with connect() as c:
+                            R.delete_check(c, site, row["id"], dd, str(user))
+                        ui.notify(f"Đã xóa lần check {_vn(dd)}", type="positive")
+                        draw_checks()
+                        refresh()
+                    draw_checks()
+                with ui.tab_panel(t3).classes("q-px-none"):
+                    if not log:
+                        ui.label("Chưa có thay đổi nào được ghi lại.").classes("text-sm muted")
+                    for x in log:
+                        with ui.row().classes("w-full items-start no-wrap gap-3 q-py-xs"):
+                            ui.label(_local(x["at"])).classes("text-xs muted num").style("width: 120px")
+                            with ui.column().classes("gap-0 col"):
+                                ui.label(x["action"]).classes("text-sm")
+                                extra = x["detail"].split(": ", 1)[1] if ": " in (x["detail"] or "") else ""
+                                if extra or x["url"]:
+                                    ui.label(" · ".join(v for v in (extra, x["url"]) if v)).classes(
+                                        "text-xs muted ellipsis")
+                            ui.label(x["user"]).classes("text-xs muted")
+        d.open()
 
     table.on("chart", show_chart)
 
@@ -485,13 +627,23 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                         lab = ui.label(short(u)).classes("text-sm ellipsis col")
                         lab.props["title"] = u
                         ui.label(note).classes("text-xs muted")
+            note_in = ui.input("Ghi chú", value=row.get("note") or "",
+                               placeholder="ví dụ: đã viết lại bài 05/11, chờ index").props(
+                "outlined dense clearable maxlength=300").classes("w-full")
+            pause_sw = ui.switch("Tạm dừng check từ khóa này", value=bool(row.get("own_paused"))).props("dense")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
             async def save():
                 err.text = ""
                 t = int(top.value or 0) or None
                 try:
-                    await save_keyword(row, (url_in.value or "").strip(), t)
+                    if (url_in.value or "").strip() != row["target_full"] or t != row.get("top_n"):
+                        await save_keyword(row, (url_in.value or "").strip(), t)
+                    with connect() as c:
+                        if (note_in.value or "") != (row.get("note") or ""):
+                            R.set_note(c, site, [row["id"]], note_in.value or "", str(user))
+                        if bool(pause_sw.value) != bool(row.get("own_paused")):
+                            R.set_paused(c, site, [row["id"]], bool(pause_sw.value), str(user))
                 except Exception as ex:  # noqa: BLE001
                     err.text = str(ex)
                     return
@@ -505,8 +657,9 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
 
     table.on("edit", edit_dialog)
 
-    async def save_keyword(row: dict, url: str, top: int | None):
-        """Lưu Top / URL mục tiêu. Bộ Cam kết: ghi dòng đó lên sheet trước, rồi đọc lại sheet."""
+    async def save_keyword(row: dict, url: str, top: int | None, sync: bool = True):
+        """Lưu Top / URL mục tiêu. Bộ Cam kết: ghi dòng đó lên sheet trước, rồi đọc lại sheet (sync=False: người gọi
+        đọc lại một lần sau khi sửa nhiều dòng)."""
         from nicegui import run
         if url and domain(url) != domain(site):
             raise ValueError(f"URL phải thuộc {domain(site)}")
@@ -514,7 +667,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
             await run.io_bound(KP.sheet_keyword_op, cfg, sheet, "upsert", row["keyword"], url, top)
             with connect() as c:
                 R.set_target_url(c, site, row["id"], url, str(user))
-            await run.io_bound(_sync_sheet)
+            if sync:
+                await run.io_bound(_sync_sheet)
             return
         with connect() as c:
             R.set_target_url(c, site, row["id"], url, str(user))
@@ -538,8 +692,14 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
             kws = R.keywords(c, site, end, sid)
             vols = V.latest(c)
             hist = R.set_history(c, site, sid)
+            evs = R.events(c, site, sid)
+            n_trash = len(R.keywords(c, site, end, sid, removed=True))
+        trash_btn.text = f"Thùng rác · {n_trash}" if n_trash else "Thùng rác"
+        keep = FILTERS.get(filt.value, FILTERS["all"])[1]
         rows = []
         for k in kws:
+            if not keep(k):
+                continue
             cur_pos = k["rank"] if k["rank"] is not None else (k["last_depth"] or 0) + 1
             text, color, move = change_text(k)
             bg, fg = next((t for lim, t in RANK_TONES if k["rank"] is not None and k["rank"] <= lim),
@@ -559,16 +719,22 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                 "wrong": bool(k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"]),
                 "target_pos": _pos(k["target_rank"], k["last_depth"]),
                 "can_edit": ed and (not is_kpi or bool(sheet)),
+                "paused": k["paused"], "own_paused": k["own_paused"], "note": k["note"],
             })
         table.rows = rows
         table.selected = []
         on_select()
         growth_box.clear()
         with growth_box:
+            with ui.row().classes("w-full items-center gap-2"):
+                if len(hist) < 2 and kws:
+                    ui.label("Biểu đồ tăng trưởng hiện khi bộ có từ 2 ngày check trở lên.").classes("text-sm muted")
+                ui.space()
+                ui.button(f"Mốc sự kiện · {len(evs)}" if evs else "Mốc sự kiện", icon="flag",
+                          on_click=lambda: events_dialog()).props("flat dense no-caps color=deep-purple-7").tooltip(
+                    "Đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ")
             if len(hist) >= 2:
-                growth_charts(ui, hist)
-            elif kws:
-                ui.label("Biểu đồ tăng trưởng hiện khi bộ có từ 2 ngày check trở lên.").classes("text-sm muted")
+                growth_charts(ui, hist, evs)
         draw_dist(kws)
         with connect() as c:
             est = R.estimate(c, cfg.rank, sched, [k["depth"] for k in kws])
@@ -728,7 +894,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         if site in _RUNNING:
             ui.notify("Đang check rank cho website này, xong sẽ báo.", type="info")
             return
-        ids = [r_["id"] for r_ in table.selected] or [r_["id"] for r_ in table.rows]
+        ids = [r_["id"] for r_ in table.selected] or [r_["id"] for r_ in table.rows if not r_["paused"]]
         if not ids:
             return
         creds = R.load_credentials(cfg.dataforseo_secret)
@@ -740,6 +906,261 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         ui.notify(f"Đã bắt đầu check {len(ids)} keyword của bộ {cur['name']}. Có thể sang trang khác, xong tool sẽ "
                   "báo.", type="info")
         background_tasks.create(_check_job(cfg, connect, site, end, ids, creds, str(user)))
+
+    def picked() -> list[dict]:
+        if not table.selected:
+            ui.notify("Tích chọn từ khóa trước", type="warning")
+        return list(table.selected)
+
+    def small_dialog(title: str, build, on_ok, ok_label: str = "Lưu"):
+        """Hộp thoại nhỏ cho thao tác hàng loạt: build() dựng ô nhập, on_ok() (async) chạy khi bấm nút."""
+        with ui.dialog() as d, ui.card().style("min-width: 460px; max-width: 94vw; border-radius: 14px"):
+            ui.label(title).classes("text-lg font-semibold")
+            if is_kpi:
+                ui.label("Bộ Cam kết: tool ghi thay đổi lên tab Từ khóa cam kết của sheet.").classes("text-xs muted")
+            vals = build()
+            err = ui.label().classes("text-sm").style(f"color:{T.RED}")
+
+            async def ok():
+                err.text = ""
+                btn.props("loading")
+                try:
+                    msg = await on_ok(vals)
+                except Exception as ex:  # noqa: BLE001
+                    err.text = str(ex)
+                    return
+                finally:
+                    btn.props(remove="loading")
+                d.close()
+                ui.notify(msg, type="positive")
+                ui.navigate.to(f"/rank?bo={sid}")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                btn = ui.button(ok_label, icon="check", on_click=ok).props("unelevated no-caps")
+        d.open()
+
+    def bulk_top():
+        rows = picked()
+        if not rows or not ed:
+            return
+
+        async def go(v):
+            t = int(v.value or 0) or None
+            for r_ in rows:
+                await save_keyword(r_, r_["target_full"], t, sync=False)
+            if is_kpi:
+                from nicegui import run
+                await run.io_bound(_sync_sheet)
+            return f"Đã đặt {'Top ' + str(t) if t else 'không có Top mục tiêu'} cho {len(rows)} từ khóa"
+        small_dialog(f"Đặt Top mục tiêu cho {len(rows)} từ khóa", lambda: ui.select(
+            {0: "Không đặt"} | {t: f"Top {t}" for t in TOPS}, value=3, label="Top mục tiêu").props(
+            "outlined dense").classes("w-48"), go)
+
+    def bulk_url():
+        rows = picked()
+        if not rows or not ed:
+            return
+
+        async def go(v):
+            url = (v.value or "").strip()
+            for r_ in rows:
+                await save_keyword(r_, url, r_.get("top_n"), sync=False)
+            if is_kpi:
+                from nicegui import run
+                await run.io_bound(_sync_sheet)
+            return f"Đã {'gán URL mục tiêu' if url else 'bỏ URL mục tiêu'} cho {len(rows)} từ khóa"
+        small_dialog(f"Gán URL mục tiêu cho {len(rows)} từ khóa", lambda: ui.input(
+            "URL mục tiêu (để trống = bỏ URL mục tiêu)", placeholder=f"https://{domain(site)}/trang-muc-tieu/").props(
+            "outlined dense clearable").classes("w-full"), go)
+
+    def bulk_note():
+        rows = picked()
+        if not rows or not ed:
+            return
+
+        async def go(v):
+            with connect() as c:
+                R.set_note(c, site, [r_["id"] for r_ in rows], v.value or "", str(user))
+            return f"Đã {'ghi chú' if v.value else 'xóa ghi chú'} cho {len(rows)} từ khóa"
+        small_dialog(f"Ghi chú cho {len(rows)} từ khóa", lambda: ui.input(
+            "Ghi chú (để trống = xóa)", placeholder="ví dụ: đã viết lại bài 05/11").props(
+            "outlined dense clearable maxlength=300").classes("w-full"), go)
+
+    def bulk_pause(on: bool):
+        rows = picked()
+        if not rows or not ed:
+            return
+        with connect() as c:
+            n = R.set_paused(c, site, [r_["id"] for r_ in rows], on, str(user))
+        ui.notify(f"Đã {'tạm dừng' if on else 'chạy lại'} {n} từ khóa", type="positive")
+        refresh()
+
+    def bulk_set(mode: str):
+        rows = picked()
+        if not rows or not ed:
+            return
+        with connect() as c:
+            others = {x["id"]: x["name"] for x in R.sets(c, site) if x["id"] != sid}
+        if not others:
+            ui.notify("Chưa có bộ khác: tạo bộ mới trước", type="warning")
+            return
+
+        async def go(v):
+            from nicegui import run
+            dest = v.value
+            with connect() as c:
+                dest_set = R.get_set(c, dest)
+            to_kpi = dest_set["kind"] == "kpi"
+            if (is_kpi or to_kpi) and not sheet:
+                raise ValueError("Dự án chưa gắn sheet cam kết")
+            if mode == "move":
+                with connect() as c:
+                    res = R.move_keywords(c, site, [r_["id"] for r_ in rows], dest, str(user))
+                done = res["moved"]
+            else:
+                with connect() as c:
+                    res = R.copy_keywords(c, site, cfg.rank, end, [r_["id"] for r_ in rows], dest, str(user))
+                done = res["added"]
+            # Bộ Cam kết theo sheet: ra khỏi bộ thì xóa dòng trên sheet, vào bộ thì thêm dòng
+            by_kw = {r_["keyword"]: r_ for r_ in rows}
+            if is_kpi and mode == "move":
+                for kw in done:
+                    await run.io_bound(KP.sheet_keyword_op, cfg, sheet, "delete", kw)
+            if to_kpi:
+                for kw in done:
+                    r_ = by_kw.get(kw) or {}
+                    await run.io_bound(KP.sheet_keyword_op, cfg, sheet, "upsert", kw, r_.get("target_full"),
+                                       r_.get("top_n"))
+            if is_kpi or to_kpi:
+                await run.io_bound(_sync_sheet)
+            skipped = res.get("skipped", []) + res.get("exists", []) + res.get("over_budget", [])
+            return (f"Đã {'chuyển' if mode == 'move' else 'chép'} {len(done)} từ khóa sang bộ {others[dest]}"
+                    + (f"; bỏ qua {len(skipped)} (đã có ở bộ đó hoặc vượt ngân sách)" if skipped else ""))
+        small_dialog(f"{'Chuyển' if mode == 'move' else 'Chép'} {len(rows)} từ khóa sang bộ khác", lambda: (
+            ui.select(others, value=next(iter(others)), label="Bộ đích").props("outlined dense").classes("w-full"),
+            ui.label("Chuyển: giữ nguyên lịch sử rank, từ khóa rời bộ này." if mode == "move" else
+                     "Chép: bộ đích check riêng theo nơi check của nó (tốn thêm tiền), lịch sử bắt đầu từ lần check "
+                     "đầu ở bộ đó.").classes("text-xs muted"))[0], go,
+            "Chuyển" if mode == "move" else "Chép")
+
+    def trash_dialog():
+        """Từ khóa đã bỏ theo dõi của bộ này: khôi phục kèm lịch sử."""
+        with connect() as c:
+            gone = R.keywords(c, site, end, sid, removed=True)
+        with ui.dialog() as d, ui.card().style("min-width: 620px; max-width: 94vw; border-radius: 14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label(f"Thùng rác · {cur['name']}").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=d.close).props("flat round dense")
+            ui.label("Từ khóa đã bỏ theo dõi: thôi check, không tính tiền. Khôi phục thì lấy lại cả lịch sử rank"
+                     + (" và thêm lại vào sheet cam kết." if is_kpi else ".")).classes("text-sm muted")
+            t = ui.table(columns=[
+                {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
+                {"name": "rank", "label": "Vị trí cuối", "field": "rank", "align": "center"},
+                {"name": "at", "label": "Bỏ lúc", "field": "at", "align": "center", "sortable": True},
+                {"name": "by", "label": "Người bỏ", "field": "by", "align": "left"},
+            ], rows=[{"id": k["id"], "keyword": k["keyword"], "rank": _pos(k["rank"], k["last_depth"]) or "–",
+                      "at": _vn(k["removed_at"]), "by": k["removed_by"] or "", "target_full": k["target_url"] or "",
+                      "top_n": k.get("top_target")} for k in gone],
+                row_key="id", selection="multiple" if ed else "none", pagination=20).classes("w-full").props(
+                "flat bordered dense")
+            if not gone:
+                ui.label("Thùng rác trống.").classes("text-sm muted")
+
+            async def restore():
+                from nicegui import run
+                if not ed or not t.selected:
+                    ui.notify("Tích chọn từ khóa cần khôi phục", type="warning")
+                    return
+                rows = list(t.selected)
+                try:
+                    if is_kpi:
+                        if not sheet:
+                            raise ValueError("Dự án chưa gắn sheet cam kết")
+                        for r_ in rows:
+                            await run.io_bound(KP.sheet_keyword_op, cfg, sheet, "upsert", r_["keyword"],
+                                               r_["target_full"], r_["top_n"])
+                    with connect() as c:
+                        n = R.restore_keywords(c, site, [r_["id"] for r_ in rows], str(user))
+                    if is_kpi:
+                        await run.io_bound(_sync_sheet)
+                except Exception as ex:  # noqa: BLE001
+                    ui.notify(f"Không khôi phục được: {ex}", type="negative", multi_line=True)
+                    return
+                d.close()
+                ui.notify(f"Đã khôi phục {n} từ khóa", type="positive")
+                ui.navigate.to(f"/rank?bo={sid}")
+            if ed and gone:
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Khôi phục đã chọn", icon="restore_from_trash", on_click=restore).props(
+                        "unelevated no-caps")
+        d.open()
+
+    def events_dialog():
+        """Mốc sự kiện của bộ này + mốc chung: xem, thêm, xóa."""
+        with ui.dialog() as d, ui.card().style("min-width: 560px; max-width: 94vw; border-radius: 14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label("Mốc sự kiện").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=d.close).props("flat round dense")
+            ui.label("Hiện thành vạch tím trên biểu đồ tăng trưởng và biểu đồ từng từ khóa, để biết rank lên / xuống "
+                     "sau việc gì.").classes("text-sm muted")
+            box = ui.column().classes("w-full gap-0")
+
+            def draw():
+                box.clear()
+                with connect() as c:
+                    evs = R.events(c, site, sid)
+                with box:
+                    if not evs:
+                        ui.label("Chưa có mốc nào.").classes("text-sm muted")
+                    for e in reversed(evs):
+                        with ui.row().classes("w-full items-center no-wrap gap-3 q-py-xs"):
+                            ui.label(_vn(e["day"])).classes("text-sm num").style("width: 96px")
+                            ui.label(e["text"]).classes("text-sm col")
+                            ui.label("mọi bộ" if e["set_id"] is None else "bộ này").classes("text-xs muted")
+                            if ed:
+                                ui.button(icon="delete_outline", on_click=lambda i=e["id"]: drop(i)).props(
+                                    "flat round dense size=sm color=negative").tooltip("Xóa mốc")
+
+            def drop(i: int):
+                with connect() as c:
+                    R.delete_event(c, site, i, str(user))
+                draw()
+                refresh()
+            draw()
+            if ed:
+                ui.separator()
+                with ui.row().classes("w-full items-end gap-2"):
+                    day_in = ui.input("Ngày", value=f"{date.today():%d/%m/%Y}").props("outlined dense").classes(
+                        "w-36")
+                    with day_in.add_slot("append"):
+                        ui.icon("event").classes("cursor-pointer")
+                        with ui.menu():
+                            ui.date(mask="DD/MM/YYYY").bind_value(day_in)
+                    text_in = ui.input("Nội dung", placeholder="ví dụ: Google core update, đẩy 20 backlink").props(
+                        "outlined dense maxlength=120").classes("col")
+                scope = ui.toggle({"set": "Chỉ bộ này", "all": "Mọi bộ của website"}, value="set").props(
+                    "no-caps dense unelevated toggle-color=primary")
+
+                def add_ev():
+                    try:
+                        dd, mm, yy = (day_in.value or "").strip().split("/")
+                        day = date(int(yy), int(mm), int(dd))
+                    except ValueError:
+                        ui.notify("Ngày dạng dd/mm/yyyy", type="warning")
+                        return
+                    try:
+                        with connect() as c:
+                            R.add_event(c, site, day, text_in.value or "", str(user),
+                                        None if scope.value == "all" else sid)
+                    except ValueError as ex:
+                        ui.notify(str(ex), type="warning")
+                        return
+                    text_in.value = ""
+                    draw()
+                    refresh()
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Thêm mốc", icon="add", on_click=add_ev).props("unelevated no-caps")
+        d.open()
 
     def export() -> bytes:
         from openpyxl import Workbook

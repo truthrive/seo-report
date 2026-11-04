@@ -134,3 +134,58 @@ class SheetRowPlanTest(unittest.TestCase):
         rows = [["Từ khóa", "URL mục tiêu"], ["a", ""]]
         self.assertEqual(KP.keyword_row_plan(rows, "upsert", "a", "", 3),
                          {"action": "header", "col": 2, "header_row": 0})
+
+
+class CrudTest(unittest.TestCase):
+    def setUp(self):
+        self.con = db.connect(":memory:")
+        self.s = RankSettings(monthly_budget_usd=20)
+        self.a = R.create_set(self.con, SITE, "A", "t")
+        self.b = R.create_set(self.con, SITE, "B", "t", settings={"device": "desktop"})
+        R.add_keywords(self.con, SITE, self.s, END, [("x", None, 3), ("y", None)], "t", set_id=self.a)
+        self.ids = {k["keyword"]: k["id"] for k in R.keywords(self.con, SITE, END, self.a)}
+
+    def test_trash_and_restore_keep_history(self):
+        self.con.execute("INSERT INTO rank_checks VALUES (?, '2026-10-06', 30, 4, NULL, NULL, 0, '')", (self.ids["x"],))
+        R.remove_keywords(self.con, SITE, [self.ids["x"]], "t")
+        self.assertEqual([k["keyword"] for k in R.keywords(self.con, SITE, END, self.a)], ["y"])
+        self.assertEqual([k["keyword"] for k in R.keywords(self.con, SITE, END, self.a, removed=True)], ["x"])
+        self.assertEqual(R.sets(self.con, SITE)[0]["count"], 1)
+        R.add_keywords(self.con, SITE, self.s, END, [("x", None)], "t", set_id=self.a)  # thêm lại = khôi phục
+        back = {k["keyword"]: k for k in R.keywords(self.con, SITE, END, self.a)}
+        self.assertEqual((back["x"]["id"], back["x"]["rank"], back["x"]["top_target"]), (self.ids["x"], 4, 3))
+        R.remove_keywords(self.con, SITE, [self.ids["y"]], "t")
+        self.assertEqual(R.restore_keywords(self.con, SITE, [self.ids["y"]], "t"), 1)
+
+    def test_pause_keyword_and_set(self):
+        R.set_paused(self.con, SITE, [self.ids["x"]], True, "t")
+        self.assertEqual([k["keyword"] for k in R.due(self.con, SITE, END, TUE)], ["y"])
+        R.update_set(self.con, self.a, "t", paused=True)
+        self.assertEqual(R.due(self.con, SITE, END, TUE), [])
+        self.assertEqual(R.budget_status(self.con, SITE, self.s, END)["estimate"], 0)
+        self.assertTrue(all(k["paused"] for k in R.keywords(self.con, SITE, END, self.a)))
+
+    def test_move_copy_note_and_log(self):
+        R.set_note(self.con, SITE, [self.ids["x"]], "viết lại bài", "t")
+        c = R.copy_keywords(self.con, SITE, self.s, END, [self.ids["x"]], self.b, "t")
+        self.assertEqual(c["added"], ["x"])
+        copied = R.keywords(self.con, SITE, END, self.b)[0]
+        self.assertEqual((copied["top_target"], copied["note"]), (3, "viết lại bài"))
+        m = R.move_keywords(self.con, SITE, [self.ids["x"], self.ids["y"]], self.b, "t")
+        self.assertEqual((m["moved"], m["skipped"]), (["y"], ["x"]))  # x đã có ở B
+        in_b = {k["keyword"]: k["id"] for k in R.keywords(self.con, SITE, END, self.b)}
+        self.assertEqual(in_b["y"], self.ids["y"])  # cùng dòng, giữ lịch sử
+        actions = [x["action"] for x in R.keyword_log(self.con, SITE, "x")]
+        self.assertIn("Ghi chú keyword", actions)
+        self.assertNotIn("Chuyển keyword sang bộ B", actions)
+
+    def test_events_and_delete_check(self):
+        R.add_event(self.con, SITE, date(2026, 10, 10), "Google core update", "t")
+        R.add_event(self.con, SITE, date(2026, 10, 12), "Đẩy backlink", "t", set_id=self.b)
+        self.assertEqual([e["text"] for e in R.events(self.con, SITE, self.a)], ["Google core update"])
+        self.assertEqual(len(R.events(self.con, SITE, self.b)), 2)
+        R.delete_event(self.con, SITE, R.events(self.con, SITE, self.b)[1]["id"], "t")
+        self.assertEqual(len(R.events(self.con, SITE, self.b)), 1)
+        self.con.execute("INSERT INTO rank_checks VALUES (?, '2026-10-06', 30, 4, NULL, NULL, 0, '')", (self.ids["x"],))
+        self.assertTrue(R.delete_check(self.con, SITE, self.ids["x"], "2026-10-06", "t"))
+        self.assertEqual(R.history(self.con, self.ids["x"]), [])

@@ -91,7 +91,21 @@ CREATE TABLE IF NOT EXISTS rank_keywords (
     added_at TEXT NOT NULL,
     set_id INTEGER NOT NULL,
     top_target INTEGER,          -- Top mục tiêu (3, 5, 10…); bộ Cam kết lấy theo sheet
+    paused INTEGER NOT NULL DEFAULT 0,  -- tạm dừng: không check, không tính tiền
+    note TEXT,                   -- ghi chú của team ("đã viết lại bài 05/11")
+    removed_at TEXT,             -- đã bỏ theo dõi (thùng rác, khôi phục được kèm lịch sử)
+    removed_by TEXT,
     UNIQUE (set_id, keyword)
+);
+-- Mốc sự kiện trên biểu đồ tăng trưởng (Google update, đẩy backlink…); set_id NULL = mọi bộ của website
+CREATE TABLE IF NOT EXISTS rank_events (
+    id INTEGER PRIMARY KEY,
+    site TEXT NOT NULL,
+    set_id INTEGER,
+    day TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rank_tasks (
     task_id TEXT PRIMARY KEY,
@@ -134,6 +148,19 @@ def ensure_tables(con: sqlite3.Connection) -> None:
     _migrate_stars(con)
     con.executescript(SCHEMA)
     _migrate_sets(con)
+    _add_columns(con)
+
+
+def _add_columns(con: sqlite3.Connection) -> None:
+    """Cột thêm sau: tạm dừng, ghi chú, thùng rác (từ khóa); tạm dừng (bộ)."""
+    have = {c[1] for c in con.execute("PRAGMA table_info(rank_keywords)")}
+    for col, typ in (("paused", "INTEGER NOT NULL DEFAULT 0"), ("note", "TEXT"), ("removed_at", "TEXT"),
+                     ("removed_by", "TEXT")):
+        if col not in have:
+            con.execute(f"ALTER TABLE rank_keywords ADD COLUMN {col} {typ}")
+    if "paused" not in {c[1] for c in con.execute("PRAGMA table_info(rank_sets)")}:
+        con.execute("ALTER TABLE rank_sets ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
+    con.commit()
 
 
 def _committed_texts(con: sqlite3.Connection) -> dict[str, int | None] | None:
@@ -187,24 +214,25 @@ KPI_SET_NAME, DROPPED_SET_NAME, DEFAULT_SET_NAME = "Cam kết", "Ngoài cam kế
 
 
 def _set_row(r) -> dict:
-    sid, site, name, kind, settings, schedule, pos = r
+    sid, site, name, kind, settings, schedule, pos, paused = r
     return {"id": sid, "site": site, "name": name, "kind": kind,
             "settings": json.loads(settings) if settings else None,
-            "schedule": {**DEFAULT_SCHEDULE, **json.loads(schedule)}, "position": pos}
+            "schedule": {**DEFAULT_SCHEDULE, **json.loads(schedule)}, "position": pos, "paused": bool(paused)}
 
 
 def sets(con: sqlite3.Connection, site: str) -> list[dict]:
     """Các bộ của website: bộ Cam kết trước, rồi theo thứ tự tạo. Kèm số từ khóa ("count")."""
     ensure_tables(con)
-    rows = con.execute("SELECT id, site, name, kind, settings, schedule, position FROM rank_sets WHERE site = ? "
-                       "ORDER BY kind != 'kpi', position, id", (site,)).fetchall()
-    counts = dict(con.execute("SELECT set_id, COUNT(*) FROM rank_keywords WHERE site = ? GROUP BY set_id", (site,)))
+    rows = con.execute("SELECT id, site, name, kind, settings, schedule, position, paused FROM rank_sets "
+                       "WHERE site = ? ORDER BY kind != 'kpi', position, id", (site,)).fetchall()
+    counts = dict(con.execute("SELECT set_id, COUNT(*) FROM rank_keywords WHERE site = ? AND removed_at IS NULL "
+                              "GROUP BY set_id", (site,)))
     return [{**_set_row(r), "count": counts.get(r[0], 0)} for r in rows]
 
 
 def get_set(con: sqlite3.Connection, set_id: int) -> dict | None:
     ensure_tables(con)
-    r = con.execute("SELECT id, site, name, kind, settings, schedule, position FROM rank_sets WHERE id = ?",
+    r = con.execute("SELECT id, site, name, kind, settings, schedule, position, paused FROM rank_sets WHERE id = ?",
                     (set_id,)).fetchone()
     return _set_row(r) if r else None
 
@@ -246,8 +274,10 @@ def create_set(con: sqlite3.Connection, site: str, name: str, user: str, kind: s
 
 
 def update_set(con: sqlite3.Connection, set_id: int, user: str, name: str | None = None,
-               settings: dict | None | bool = False, schedule: dict | None = None) -> None:
-    """Đổi tên (bộ Cam kết giữ tên), nơi check (settings=None: theo dự án; False: không đổi), lịch."""
+               settings: dict | None | bool = False, schedule: dict | None = None,
+               paused: bool | None = None) -> None:
+    """Đổi tên (bộ Cam kết giữ tên), nơi check (settings=None: theo dự án; False: không đổi), lịch, tạm dừng cả bộ
+    (không check, không tính tiền; lịch sử vẫn giữ)."""
     st = get_set(con, set_id)
     if not st:
         raise ValueError("Không có bộ từ khóa này")
@@ -265,6 +295,10 @@ def update_set(con: sqlite3.Connection, set_id: int, user: str, name: str | None
         if schedule is not None:
             con.execute("UPDATE rank_sets SET schedule = ? WHERE id = ?",
                         (json.dumps({**DEFAULT_SCHEDULE, **schedule}), set_id))
+        if paused is not None and bool(paused) != st["paused"]:
+            con.execute("UPDATE rank_sets SET paused = ? WHERE id = ?", (int(bool(paused)), set_id))
+            U.log_change(con, user, st["site"], "Tạm dừng bộ từ khóa" if paused else "Chạy lại bộ từ khóa", None,
+                         st["name"])
         U.log_change(con, user, st["site"], "Sửa bộ từ khóa", None, name or st["name"])
 
 
@@ -413,18 +447,22 @@ def depth_for(setting, last_rank: int | None, last_depth: int | None) -> int:
 
 # ---- Danh sách keyword ----
 
-def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None = None) -> list[dict]:
-    """Từ khóa theo dõi (mọi bộ, hoặc một bộ) kèm bộ, lần check gần nhất, lần trước, vị trí tốt nhất, độ sâu dự kiến.
-    Một từ khóa ở hai bộ là hai dòng (mỗi bộ check riêng)."""
+def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None = None,
+             removed: bool = False) -> list[dict]:
+    """Từ khóa theo dõi (mọi bộ, hoặc một bộ) kèm bộ, lần check gần nhất, lần trước, vị trí tốt nhất, độ sâu dự kiến,
+    tạm dừng (của từ khóa hoặc cả bộ), ghi chú. Một từ khóa ở hai bộ là hai dòng (mỗi bộ check riêng).
+    removed: chỉ lấy từ khóa trong thùng rác (đã bỏ theo dõi)."""
     ensure_tables(con)
     by_set = {x["id"]: x for x in sets(con, site)}
     rows = con.execute(
-        """SELECT k.id, k.keyword, k.url_id, u.url, k.source, k.added_by, k.added_at, k.set_id, k.top_target
+        f"""SELECT k.id, k.keyword, k.url_id, u.url, k.source, k.added_by, k.added_at, k.set_id, k.top_target,
+                  k.paused, k.note, k.removed_at, k.removed_by
            FROM rank_keywords k LEFT JOIN urls u ON u.id = k.url_id
-           WHERE k.site = ? AND (? IS NULL OR k.set_id = ?) ORDER BY k.id""",
+           WHERE k.site = ? AND (? IS NULL OR k.set_id = ?) AND k.removed_at IS {"NOT " if removed else ""}NULL
+           ORDER BY k.id""",
         (site, set_id, set_id)).fetchall()
     out = []
-    for kid, kw, url_id, url, source, by, at, sid, top in rows:
+    for kid, kw, url_id, url, source, by, at, sid, top, kpaused, note, rm_at, rm_by in rows:
         st = by_set.get(sid) or {"id": sid, "name": "", "kind": "custom", "settings": None,
                                  "schedule": DEFAULT_SCHEDULE}
         sched = st["schedule"]
@@ -437,7 +475,9 @@ def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None =
         out.append({
             "id": kid, "keyword": kw, "url_id": url_id, "target_url": url, "source": source, "added_by": by,
             "added_at": at, "best": best, "set_id": sid, "set_name": st["name"], "set_kind": st["kind"],
-            "set": st, "top_target": top,
+            "set": st, "top_target": top, "own_paused": bool(kpaused),
+            "paused": bool(kpaused) or bool(st.get("paused")), "note": note or "", "removed_at": rm_at,
+            "removed_by": rm_by,
             "date": last[0] if last else None, "rank": last[1] if last else None,
             "ranking_url": last[2] if last else None, "target_rank": last[3] if last else None,
             "last_depth": last[4] if last else None, "prev": prev[1] if prev else None,
@@ -515,7 +555,8 @@ def estimate_all(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
     """Tiền dự kiến mỗi tháng của mọi bộ (mỗi bộ theo lịch của nó); extra: {bộ: [độ sâu của từ khóa sắp thêm]}."""
     depths: dict[int, list[int]] = {}
     for k in keywords(con, site, end):
-        depths.setdefault(k["set_id"], []).append(k["depth"])
+        if not k["paused"]:  # tạm dừng: không check, không tính tiền
+            depths.setdefault(k["set_id"], []).append(k["depth"])
     for sid, ds in (extra or {}).items():
         depths.setdefault(sid, []).extend(ds)
     return sum(estimate(con, s, get_schedule(con, sid), ds) for sid, ds in depths.items())
@@ -591,9 +632,15 @@ def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
             if total + per_kw > s.monthly_budget_usd:
                 res["over_budget"].append(kw)
                 continue
-            con.execute("INSERT INTO rank_keywords (site, keyword, url_id, source, added_by, added_at, set_id, "
-                        "top_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (site, kw, url_id, source, user, _now(), st["id"], top))
+            gone = con.execute("SELECT id, url_id, top_target FROM rank_keywords WHERE set_id = ? AND "
+                               "lower(keyword) = lower(?) AND removed_at IS NOT NULL", (st["id"], kw)).fetchone()
+            if gone:  # đã bỏ theo dõi trước đây: lấy lại cùng lịch sử
+                con.execute("UPDATE rank_keywords SET removed_at = NULL, removed_by = NULL, url_id = ?, "
+                            "top_target = ? WHERE id = ?", (url_id or gone[1], top or gone[2], gone[0]))
+            else:
+                con.execute("INSERT INTO rank_keywords (site, keyword, url_id, source, added_by, added_at, set_id, "
+                            "top_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            (site, kw, url_id, source, user, _now(), st["id"], top))
             U.log_change(con, user, site, f"Thêm keyword check rank ({st['name']})", raw_url, kw)
             total += per_kw
             existing[kw.lower()] = {"id": None, "url_id": url_id, "top_target": top}
@@ -653,7 +700,7 @@ def sync_kpi_set(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
                     con.execute("UPDATE rank_keywords SET top_target = ? WHERE id = ?", (sk.get("target"), k["id"]))
                 continue
             elsewhere = con.execute("SELECT 1 FROM rank_keywords WHERE site = ? AND lower(keyword) = lower(?) AND "
-                                    "set_id != ?", (site, k["keyword"], st["id"])).fetchone()
+                                    "set_id != ? AND removed_at IS NULL", (site, k["keyword"], st["id"])).fetchone()
             if elsewhere:
                 con.execute("DELETE FROM rank_keywords WHERE id = ?", (k["id"],))
             else:
@@ -670,7 +717,7 @@ def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30
     vị trí trung bình (từ khóa có thứ hạng), số từ khóa lên / xuống / giữ nguyên so với lần check trước, tỷ lệ đạt Top
     mục tiêu. Mỗi ngày lấy lần check gần nhất (≤ ngày đó) của từng từ khóa trong bộ."""
     ensure_tables(con)
-    kws = con.execute("SELECT id, top_target FROM rank_keywords WHERE set_id = ? AND site = ?",
+    kws = con.execute("SELECT id, top_target FROM rank_keywords WHERE set_id = ? AND site = ? AND removed_at IS NULL",
                       (set_id, site)).fetchall()
     tops = dict(kws)
     if not tops:
@@ -740,12 +787,147 @@ def url_suggestions(con: sqlite3.Connection, site: str, keyword: str, end: date,
 
 
 def remove_keywords(con: sqlite3.Connection, site: str, ids: list[int], user: str) -> None:
-    """Bỏ theo dõi; lịch sử rank vẫn giữ trong rank_checks."""
+    """Bỏ theo dõi: từ khóa vào thùng rác (thôi check, không tính tiền), khôi phục được kèm lịch sử."""
     with con:
         for kid in ids:
-            kw = con.execute("SELECT keyword FROM rank_keywords WHERE id = ?", (kid,)).fetchone()
-            con.execute("DELETE FROM rank_keywords WHERE id = ?", (kid,))
-            U.log_change(con, user, site, "Bỏ keyword check rank", None, kw[0] if kw else "")
+            kw = con.execute("SELECT keyword FROM rank_keywords WHERE id = ? AND site = ?", (kid, site)).fetchone()
+            if not kw:
+                continue
+            con.execute("UPDATE rank_keywords SET removed_at = ?, removed_by = ? WHERE id = ?", (_now(), user, kid))
+            U.log_change(con, user, site, "Bỏ keyword check rank", None, kw[0])
+
+
+def restore_keywords(con: sqlite3.Connection, site: str, ids: list[int], user: str) -> int:
+    """Lấy từ khóa ra khỏi thùng rác (cùng lịch sử rank). Trả số từ khóa đã khôi phục."""
+    n = 0
+    with con:
+        for kid in ids:
+            kw = con.execute("SELECT keyword FROM rank_keywords WHERE id = ? AND site = ? AND removed_at IS NOT NULL",
+                             (kid, site)).fetchone()
+            if kw:
+                con.execute("UPDATE rank_keywords SET removed_at = NULL, removed_by = NULL WHERE id = ?", (kid,))
+                U.log_change(con, user, site, "Khôi phục keyword check rank", None, kw[0])
+                n += 1
+    return n
+
+
+def _keyword_rows(con, site: str, ids: list[int]) -> list[tuple]:
+    if not ids:
+        return []
+    return con.execute(f"SELECT id, keyword, set_id, url_id, top_target, note, source FROM rank_keywords WHERE site = ? "
+                       f"AND removed_at IS NULL AND id IN ({','.join('?' * len(ids))})", (site, *ids)).fetchall()
+
+
+def set_paused(con: sqlite3.Connection, site: str, ids: list[int], paused: bool, user: str) -> int:
+    """Tạm dừng / chạy lại từng từ khóa: tạm dừng thì giữ trong bộ nhưng không check, không tính tiền."""
+    rows = _keyword_rows(con, site, ids)
+    with con:
+        for kid, kw, *_ in rows:
+            con.execute("UPDATE rank_keywords SET paused = ? WHERE id = ?", (int(paused), kid))
+            U.log_change(con, user, site, "Tạm dừng keyword" if paused else "Chạy lại keyword", None, kw)
+    return len(rows)
+
+
+def set_note(con: sqlite3.Connection, site: str, ids: list[int], note: str, user: str) -> int:
+    """Ghi chú cho một hay nhiều từ khóa (trống = xóa ghi chú)."""
+    note = " ".join((note or "").split())[:300]
+    rows = _keyword_rows(con, site, ids)
+    with con:
+        for kid, kw, *_ in rows:
+            con.execute("UPDATE rank_keywords SET note = ? WHERE id = ?", (note or None, kid))
+            U.log_change(con, user, site, "Ghi chú keyword", None, f"{kw}: {note or '(xóa)'}")
+    return len(rows)
+
+
+def move_keywords(con: sqlite3.Connection, site: str, ids: list[int], to_set: int, user: str) -> dict:
+    """Chuyển từ khóa sang bộ khác, giữ nguyên lịch sử (cùng dòng). Bộ đích đã có từ khóa đó thì bỏ qua."""
+    dest = get_set(con, to_set)
+    if not dest or dest["site"] != site:
+        raise ValueError("Không có bộ từ khóa này")
+    res = {"moved": [], "skipped": []}
+    with con:
+        for kid, kw, sid, *_ in _keyword_rows(con, site, ids):
+            if sid == to_set:
+                continue
+            if con.execute("SELECT 1 FROM rank_keywords WHERE set_id = ? AND lower(keyword) = lower(?)",
+                           (to_set, kw)).fetchone():
+                res["skipped"].append(kw)
+                continue
+            con.execute("UPDATE rank_keywords SET set_id = ?, source = CASE WHEN source = 'kpi' AND ? != 'kpi' THEN "
+                        "'manual' ELSE source END WHERE id = ?", (to_set, dest["kind"], kid))
+            U.log_change(con, user, site, f"Chuyển keyword sang bộ {dest['name']}", None, kw)
+            res["moved"].append(kw)
+    return res
+
+
+def copy_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date, ids: list[int], to_set: int,
+                  user: str) -> dict:
+    """Chép từ khóa (kèm URL / Top mục tiêu, ghi chú) sang bộ khác: bộ đích check riêng theo nơi check của nó, lịch sử
+    bắt đầu từ lần check đầu ở bộ đó."""
+    rows = _keyword_rows(con, site, ids)
+    urls = dict(con.execute("SELECT id, url FROM urls WHERE id IN (%s)" % ",".join("?" * len(rows)),
+                            [r[3] for r in rows]).fetchall()) if rows else {}
+    res = add_keywords(con, site, s, end, [(kw, urls.get(url_id), top) for _, kw, _, url_id, top, _, _ in rows],
+                       user, source="manual", set_id=to_set)
+    notes = {kw.lower(): note for _, kw, _, _, _, note, _ in rows if note}
+    if notes:
+        with con:
+            for kw, note in notes.items():
+                con.execute("UPDATE rank_keywords SET note = COALESCE(note, ?) WHERE set_id = ? AND lower(keyword) = ?",
+                            (note, to_set, kw))
+    return res
+
+
+def keyword_log(con: sqlite3.Connection, site: str, keyword: str, limit: int = 50) -> list[dict]:
+    """Nhật ký của một từ khóa: ai thêm, đổi URL / Top, ghi chú, tạm dừng, chuyển bộ… (mới nhất trước)."""
+    rows = con.execute("SELECT at, user, action, url, detail FROM change_log WHERE site = ? AND "
+                       "(lower(detail) = lower(?) OR lower(detail) LIKE lower(?) || ':%') ORDER BY at DESC LIMIT ?",
+                       (site, keyword, keyword, limit)).fetchall()
+    return [{"at": a, "user": u, "action": ac, "url": url, "detail": d} for a, u, ac, url, d in rows]
+
+
+def delete_check(con: sqlite3.Connection, site: str, keyword_id: int, check_date: str, user: str) -> bool:
+    """Xóa một lần check sai (ví dụ Google trả kết quả lạ). Chỉ Chủ tool: web kiểm tra quyền. Có ghi nhật ký."""
+    row = con.execute("SELECT k.keyword, c.rank FROM rank_checks c JOIN rank_keywords k ON k.id = c.keyword_id "
+                      "WHERE c.keyword_id = ? AND c.check_date = ? AND k.site = ?",
+                      (keyword_id, check_date, site)).fetchone()
+    if not row:
+        return False
+    with con:
+        con.execute("DELETE FROM rank_checks WHERE keyword_id = ? AND check_date = ?", (keyword_id, check_date))
+        U.log_change(con, user, site, "Xóa một lần check rank", None,
+                     f"{row[0]}: {check_date} (vị trí {row[1] if row[1] is not None else 'ngoài độ sâu'})")
+    return True
+
+
+# ---- Mốc sự kiện trên biểu đồ tăng trưởng ----
+
+def events(con: sqlite3.Connection, site: str, set_id: int | None = None) -> list[dict]:
+    """Mốc của một bộ và mốc chung (mọi bộ), cũ trước."""
+    ensure_tables(con)
+    return [{"id": i, "set_id": sid, "day": d, "text": t, "by": by} for i, sid, d, t, by in con.execute(
+        "SELECT id, set_id, day, text, created_by FROM rank_events WHERE site = ? AND (set_id IS NULL OR set_id = ?) "
+        "ORDER BY day, id", (site, set_id))]
+
+
+def add_event(con: sqlite3.Connection, site: str, day: date, text: str, user: str, set_id: int | None = None) -> int:
+    ensure_tables(con)
+    text = " ".join((text or "").split())[:120]
+    if not text:
+        raise ValueError("Chưa nhập nội dung mốc")
+    with con:
+        cur = con.execute("INSERT INTO rank_events (site, set_id, day, text, created_by, created_at) VALUES "
+                          "(?, ?, ?, ?, ?, ?)", (site, set_id, day.isoformat(), text, user, _now()))
+        U.log_change(con, user, site, "Thêm mốc sự kiện", None, f"{day:%d/%m/%Y}: {text}")
+    return cur.lastrowid
+
+
+def delete_event(con: sqlite3.Connection, site: str, event_id: int, user: str) -> None:
+    row = con.execute("SELECT day, text FROM rank_events WHERE id = ? AND site = ?", (event_id, site)).fetchone()
+    if row:
+        with con:
+            con.execute("DELETE FROM rank_events WHERE id = ?", (event_id,))
+            U.log_change(con, user, site, "Xóa mốc sự kiện", None, f"{row[0]}: {row[1]}")
 
 
 def toggle_star(con: sqlite3.Connection, site: str, s: RankSettings, end: date, url_id: int, query: str,
@@ -754,7 +936,8 @@ def toggle_star(con: sqlite3.Connection, site: str, s: RankSettings, end: date, 
     hoặc lấy từ sheet cam kết), hoặc bỏ khỏi các bộ team tạo nếu đã theo dõi. Từ khóa cam kết bỏ ở sheet."""
     ensure_tables(con)
     rows = con.execute("SELECT k.id, s.kind FROM rank_keywords k JOIN rank_sets s ON s.id = k.set_id "
-                       "WHERE k.site = ? AND lower(k.keyword) = lower(?)", (site, query)).fetchall()
+                       "WHERE k.site = ? AND lower(k.keyword) = lower(?) AND k.removed_at IS NULL",
+                       (site, query)).fetchall()
     custom = [kid for kid, kind in rows if kind != "kpi"]
     if custom:
         remove_keywords(con, site, custom, user)
@@ -773,7 +956,8 @@ def toggle_star(con: sqlite3.Connection, site: str, s: RankSettings, end: date, 
 
 def tracked_queries(con: sqlite3.Connection, site: str) -> set[str]:
     ensure_tables(con)
-    return {r[0].strip().lower() for r in con.execute("SELECT keyword FROM rank_keywords WHERE site = ?", (site,))}
+    return {r[0].strip().lower() for r in con.execute("SELECT keyword FROM rank_keywords WHERE site = ? AND "
+                                                      "removed_at IS NULL", (site,))}
 
 
 def latest_by_keyword(con: sqlite3.Connection, site: str) -> dict[str, dict]:
@@ -832,6 +1016,8 @@ def due(con: sqlite3.Connection, site: str, end: date, today: date) -> list[dict
     """Keyword cần check theo lịch của bộ chứa nó: chưa có lần check (hoặc task đang chờ) từ ngày theo lịch gần nhất."""
     out = []
     for k in keywords(con, site, end):
+        if k["paused"]:
+            continue
         sched_day = last_scheduled_day(k["set"]["schedule"], today)
         if sched_day is None:
             continue
