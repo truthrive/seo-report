@@ -281,7 +281,7 @@ def render(data: dict) -> dict:
             ("month", "Báo cáo tháng", _report(data["month"], data["site"], charts))]
     if data["okr"]:
         tabs.append(("okr", "Công việc & OKR", _okr(data["okr"], data["today"], charts)))
-    tabs.append(("rank", "Từ khóa & rank", _rank(data)))
+    tabs.append(("rank", "Từ khóa & Thứ hạng", _rank(data)))
     nav = "".join(f'<button data-tab="{k}">{e(t)}</button>' for k, t, _ in tabs)
     panes = "".join(f'<div class="pane" data-pane="{k}">{body}</div>' for k, _, body in tabs)
     return {"nav": nav, "html": panes, "charts": charts.items,

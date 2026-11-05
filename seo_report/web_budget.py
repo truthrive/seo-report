@@ -1,6 +1,6 @@
 """Màn Ngân sách check rank (Quản trị): chi phí DataForSEO của mọi website trong một màn.
 
-Mỗi website có ngân sách riêng (USD/tháng); chi phí gồm check rank và lấy volume keyword, tính theo tháng dương lịch.
+Mỗi website có ngân sách riêng (USD/tháng); chi phí gồm check rank, lấy volume keyword và số backlink, tính theo tháng dương lịch.
 Tài khoản DataForSEO dùng chung: tổng ngân sách các website nên nằm trong số dư tài khoản.
 """
 import calendar
@@ -61,7 +61,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
     T.page_header(ui, "account_balance_wallet", "Ngân sách check rank",
-                  "Chi phí DataForSEO (check rank và volume keyword) của từng website, tính theo tháng dương lịch.",
+                  "Chi phí DataForSEO (check rank, volume keyword, backlink) của từng website, tính theo tháng dương lịch.",
                   eyebrow="Quản trị", tone="grey")
     today = date.today()
     months = R.last_months(today, 6)
@@ -169,7 +169,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                             "Bật: check rank và lấy volume theo lịch. Tắt: tạm ngưng mọi chi phí DataForSEO của "
                             "website này (dữ liệu cũ vẫn giữ). Có hiệu lực ngay, không cần bấm Lưu")
                         ui.button(icon="leaderboard", on_click=open_rank).props(
-                            "flat round dense color=grey-8").tooltip("Mở Từ khóa & rank của website này")
+                            "flat round dense color=grey-8").tooltip("Mở Từ khóa & Thứ hạng của website này")
 
         # ---- Chi phí 6 tháng ----
         labels = [f"{m[5:]}/{m[2:4]}" for m in months]
@@ -178,7 +178,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                    "data": [round(r["history"][m]["total"], 4) for m in months]} for i, r in enumerate(rows)]
         totals = [sum(r["history"][m]["total"] for r in rows) for m in months]
         with T.section(ui, "Chi phí 6 tháng gần nhất", "bar_chart",
-                       f"Tổng 6 tháng {_usd(sum(totals))} USD · gồm check rank và volume keyword"):
+                       f"Tổng 6 tháng {_usd(sum(totals))} USD · gồm check rank, volume keyword và backlink"):
             ui.echart({
                 "animation": False, "legend": {"bottom": 0, "icon": "roundRect", "itemWidth": 12, "itemHeight": 10,
                                                "textStyle": {"fontSize": 12, "color": "#4A4A40"}},

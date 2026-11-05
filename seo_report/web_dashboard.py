@@ -42,14 +42,19 @@ def gsc_daily(con, site: str, lo: date, hi: date) -> dict[date, tuple[int, int]]
 
 
 def rank_snapshot(con, site: str, end: date) -> dict:
+    """Ô Thứ hạng ở Tổng quan, tính giống màn Thứ hạng: Top 3 / 5 / 10 trên tổng số từ khóa (mỗi từ khóa một lần,
+    ưu tiên bộ Cam kết); lên / rớt hạng so với lần check trước của chính từ khóa đó, kể cả khi một phía nằm ngoài độ
+    sâu check (vào top N / rớt khỏi top N). Không có "Top 30": từ khóa chỉ check top 10 mà không thấy thì không biết
+    có trong top 30 hay không."""
+    from .report import rank_change
     kws = R.primary_keywords(con, site, end)
     checked = [k for k in kws if k["date"]]
-    ranked = [k for k in checked if k["rank"]]
-    moved = [k for k in checked if k["rank"] is not None and k["prev"] is not None]
+    ranked = [k["rank"] for k in checked if k["rank"] is not None]
+    moves = [rank_change(k["date"], k["rank"], k["last_depth"], k["prev"], k["prev_depth"])[2] for k in checked]
     return {"total": len(kws), "checked": len(checked), "last": max((k["date"] for k in checked), default=None),
-            "top3": sum(k["rank"] <= 3 for k in ranked), "top10": sum(k["rank"] <= 10 for k in ranked),
-            "top30": sum(k["rank"] <= 30 for k in ranked),
-            "up": sum(k["rank"] < k["prev"] for k in moved), "down": sum(k["rank"] > k["prev"] for k in moved)}
+            "top3": sum(r <= 3 for r in ranked), "top5": sum(r <= 5 for r in ranked),
+            "top10": sum(r <= 10 for r in ranked),
+            "up": sum(m > 0 for m in moves), "down": sum(m < 0 for m in moves)}
 
 
 def index_snapshot(con, site: str) -> dict:
@@ -91,10 +96,14 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
 
     T.page_header(ui, "space_dashboard", "Tổng quan",
                   f"{days} ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}) so với {days} ngày trước đó "
-                  f"({prev[0]:%d/%m} – {prev[1]:%d/%m}) · {domain(site)}. Biểu đồ trong ô: nét liền là kỳ này, "
-                  "nét đứt là kỳ so sánh")
+                  f"({prev[0]:%d/%m} – {prev[1]:%d/%m})")
     if ed:
         health_strip(ui, cfg, connect, None)
+        # Việc cần làm lên đầu: thấy ngay trước khi đọc số
+        from .report import build
+        with connect() as c:
+            rep = build(c, cfg, ctx["group"], 0, with_ai=False)
+        todo_section(ui, cfg, connect, rep, ctx, site)
 
     def total(s, e, i):
         return sum(v[i] for d, v in daily.items() if s <= d <= e)
@@ -105,6 +114,10 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     prev_label = f"{days} ngày trước đó"  # dòng so sánh trong ô: "28 ngày trước đó: 20.558 · −594"
 
     # ---- Nhịp số liệu: GSC + GA4 + GEO ----
+    with ui.element("div").classes("sr-spark-key").props('aria-hidden="true"'):  # chú thích chung cho đường nhỏ
+        ui.html("<span><i></i>Kỳ này</span>")
+        ui.html(f"<span><i class='dash'></i>{days} ngày trước đó</span>")
+
     @ui.refreshable
     def pulse():
         g = state["ga4"] or {}
@@ -112,24 +125,24 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
 
         def ga4_tile(icon, label, key, tone, hint):
             if loading:
-                return T.kpi(ui, icon, label, "…", hint="Đang lấy số GA4", spark=[], tone=tone)
+                return T.kpi(ui, icon, label, "…", hint="Đang lấy số GA4", spark=[], tone=tone, source=hint)
             if g.get("error") or key not in g:
                 return T.kpi(ui, icon, label, "chưa có", hint="Chưa kết nối GA4" if not cfg.ga4_property
-                             else "Không lấy được số GA4", spark=[], tone=tone)
+                             else "Không lấy được số GA4", spark=[], tone=tone, source=hint)
             now, before, spark, spark_prev = g[key]
             d = change(now, before)
-            return T.kpi(ui, icon, label, F.n(now), F.delta_pct(d, before), T.good_of(d), hint, spark=spark,
+            return T.kpi(ui, icon, label, F.n(now), F.delta_pct(d, before), T.good_of(d), source=hint, spark=spark,
                          tone=tone, spark_kind="line", spark_labels=labels, prev=F.vs_parts(now, before, label=prev_label),
                          spark_compare=spark_prev, spark_compare_labels=plabels)
 
         with ui.element("div").classes("sr-dash-grid w-full"):
             dc, di = change(clicks, clicks_prev), change(impr, impr_prev)
             T.kpi(ui, "ads_click", "Click từ Google", F.n(clicks), F.delta_pct(dc, clicks_prev), T.good_of(dc),
-                  "Google Search Console", spark=[total(s, e, 0) for s, e in bks], tone="blue", spark_kind="line",
+                  source="Google Search Console", spark=[total(s, e, 0) for s, e in bks], tone="blue", spark_kind="line",
                   spark_labels=labels, href="/url", prev=F.vs_parts(clicks, clicks_prev, label=prev_label),
                   spark_compare=[total(s, e, 0) for s, e in pbks], spark_compare_labels=plabels)
             T.kpi(ui, "visibility", "Lượt hiển thị", F.n(impr), F.delta_pct(di, impr_prev), T.good_of(di),
-                  "Số lần site hiện trên Google", spark=[total(s, e, 1) for s, e in bks], tone="blue",
+                  source="Google Search Console: số lần site hiện trên Google", spark=[total(s, e, 1) for s, e in bks], tone="blue",
                   spark_kind="line", spark_labels=labels, href="/url", prev=F.vs_parts(impr, impr_prev, label=prev_label),
                   spark_compare=[total(s, e, 1) for s, e in pbks], spark_compare_labels=plabels)
             ga4_tile("groups", "Lượt truy cập (mọi kênh)", "all", "green", "Google Analytics 4")
@@ -139,8 +152,9 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
             if aio and aio.get("share") is not None:
                 dp = (aio["share"] - aio["prev_share"]) if aio.get("prev_share") is not None else None
                 T.kpi(ui, "lightbulb", "Tỷ lệ hiện trong AI", F.pct(aio["share"], 1), F.delta_points(dp),
-                      T.good_of(dp), "Phần lượt hiển thị Google trong câu trả lời AI"
-                      + (f" · số đến {aio['until']:%d/%m}" if aio.get("until") else ""),
+                      T.good_of(dp), (f"Số đến {aio['until']:%d/%m} (file AI Overviews về trễ)"
+                                      if aio.get("until") else ""),
+                      source="Phần lượt hiển thị Google nằm trong câu trả lời AI (file Generative AI của GSC)",
                       spark=aio.get("share_spark") or [], tone="amber", spark_kind="line", spark_labels=labels,
                       spark_fmt="pct", href="/ai", prev=F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=prev_label),
                       spark_compare=aio.get("share_spark_prev"), spark_compare_labels=aio.get("prev_labels"))
@@ -151,23 +165,103 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
 
     pulse()
 
-    # ---- Thứ hạng · Index · OKR ----
+    # ---- Backlink (DataForSEO): website trỏ về, backlink, uy tín; link mới / mất của tháng; xu hướng 12 tháng ----
+    from . import backlinks as BL
+
+    async def fetch_backlinks(btn):
+        if not ed:  # tốn tiền DataForSEO: chặn ở server, nút bị ẩn chưa đủ
+            return
+        from contextlib import closing
+
+        from . import db
+        btn.props("loading")
+
+        def work():
+            with closing(db.connect(cfg.db_path)) as c:
+                logs: list[str] = []
+                BL.refresh(c, site, cfg, force=True, log=logs.append)
+                return " ".join(logs)
+        try:
+            msg = await run.io_bound(work)
+            ui.notify(msg or "Đã lấy số backlink", type="positive", position="bottom-right", classes="sr-toast")
+        except Exception as e:  # noqa: BLE001
+            ui.notify("Không lấy được số backlink", caption=str(e)[:200], type="negative", position="bottom-right",
+                      classes="sr-toast", timeout=0, close_button="Đóng")
+        btn.props(remove="loading")
+        backlink_card.refresh()
+
+    @ui.refreshable
+    def backlink_card():
+        with connect() as c:
+            bl = BL.latest(c, site)
+        now = (bl or {}).get("now")
+        sub = (f"DataForSEO · lấy ngày {date.fromisoformat(now['day']):%d/%m}, tự lấy lại mỗi tuần" if now
+               else "Chưa lấy số lần nào")
+        with T.section(ui, "Backlink", "link", sub):
+            if now:
+                prev = bl["prev"]
+                with ui.element("div").classes("sr-mini-stats"):
+                    with ui.column().classes("gap-0"):
+                        ui.label("Website trỏ về").classes("text-xs muted")
+                        with ui.row().classes("items-baseline gap-2 no-wrap"):
+                            ui.html(f'<div class="sr-mini-num num">{F.n(now["referring_domains"] or 0)}</div>')
+                            if prev and prev["referring_domains"] is not None and now["referring_domains"] is not None:
+                                d = now["referring_domains"] - prev["referring_domains"]
+                                T.delta_badge(ui, f"{'+' if d > 0 else '-' if d < 0 else ''}{F.n(abs(d))}" if d
+                                              else "", T.good_of(d),
+                                              since=f"lần lấy {date.fromisoformat(prev['day']):%d/%m}")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Backlink").classes("text-xs muted")
+                        ui.html(f'<div class="sr-mini-num num">{F.n(now["backlinks"] or 0)}</div>')
+                    with ui.column().classes("gap-0").tooltip(
+                            "Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link trỏ về"):
+                        ui.label("Uy tín").classes("text-xs muted")
+                        ui.html(f'<div class="sr-mini-num num">{now["rank"] if now["rank"] is not None else "–"}'
+                                '<span>/1000</span></div>')
+                hist = [h for h in bl["history"] if h["referring_domains"] is not None]
+                last_full = next((h for h in reversed(hist) if h["month"] < date.today().strftime("%Y-%m")), None)
+                if last_full and (last_full["new_backlinks"] or last_full["lost_backlinks"]):
+                    m = f"{last_full['month'][5:]}/{last_full['month'][:4]}"
+                    ui.html(f"Tháng {m}: <b>+{F.n(last_full['new_backlinks'] or 0)}</b> link mới · "
+                            f"<b>−{F.n(last_full['lost_backlinks'] or 0)}</b> link mất").classes("sr-cmp-note")
+                if len(hist) >= 2:
+                    with ui.element("div").classes("w-full"):
+                        T.sparkline(ui, [h["referring_domains"] for h in hist], T.GREEN,
+                                    labels=[f"{h['month'][5:]}/{h['month'][2:4]}" for h in hist])
+                    ui.label(f"Website trỏ về, {len(hist)} tháng gần nhất").classes("sr-kpi-hint")
+                if now["spam_score"] is not None or now["broken_backlinks"]:
+                    ui.label(f"Điểm spam {now['spam_score'] or 0}/100 · {F.n(now['broken_backlinks'] or 0)} "
+                             "link gãy").classes("sr-kpi-hint").tooltip(
+                        "Điểm spam trung bình của backlink (càng thấp càng tốt) và số link trỏ về trang không còn")
+            else:
+                ui.label("Số website trỏ về, số backlink, uy tín và link mới / mất mỗi tháng, lấy từ DataForSEO. "
+                         "Lần đầu khoảng 0,05 USD (kèm lịch sử 12 tháng), sau đó tự lấy mỗi tuần khoảng 0,02 USD."
+                         ).classes("text-sm muted")
+            if ed and not cfg.rank.paused:
+                b = ui.button("Lấy số mới" if now else "Lấy số backlink", icon="refresh").props(
+                    "flat dense no-caps size=sm color=primary").classes("sr-link-btn")
+                b.on_click(lambda _, b=b: fetch_backlinks(b))
+                b.tooltip("Gọi DataForSEO ngay (khoảng 0,02 USD, tính vào ngân sách check rank của website)")
+
+    # ---- Thứ hạng · Index · Backlink · OKR ----
     with ui.element("div").classes("sr-dash-three w-full"):
         sub = (f"{rank['checked']}/{rank['total']} từ khóa đã check · lần mới nhất "
                f"{date.fromisoformat(rank['last']):%d/%m}" if rank["last"] else "Chưa có lần check nào")
-        with T.section(ui, "Thứ hạng", "leaderboard", sub, href="/rank", link_text="Từ khóa & rank"):
+        with T.section(ui, "Thứ hạng", "leaderboard", sub, href="/rank", link_text="Thứ hạng"):
             if rank["checked"]:
                 with ui.element("div").classes("sr-mini-stats"):
-                    for label, v in (("Top 3", rank["top3"]), ("Top 10", rank["top10"]), ("Top 30", rank["top30"])):
+                    for label, v in (("Top 3", rank["top3"]), ("Top 5", rank["top5"]), ("Top 10", rank["top10"])):
                         with ui.column().classes("gap-0"):
                             ui.label(label).classes("text-xs muted")
-                            ui.html(f'<div class="sr-mini-num num">{v}<span>/{rank["checked"]}</span></div>')
+                            ui.html(f'<div class="sr-mini-num num">{v}<span>/{rank["total"]}</span></div>')
                 with ui.row().classes("gap-2 q-mt-xs"):
-                    T.status_chip(ui, f"{rank['up']} tăng hạng", "green", "trending_up")
-                    T.status_chip(ui, f"{rank['down']} giảm hạng", "red" if rank["down"] else "grey",
+                    T.status_chip(ui, f"{rank['up']} lên hạng", "green", "trending_up")
+                    T.status_chip(ui, f"{rank['down']} rớt hạng", "red" if rank["down"] else "grey",
                                   "trending_down")
+                from .web_aio import dashboard_lines
+                dashboard_lines(ui, connect, cfg)  # AI Overview + đối thủ hay gặp (từ kết quả check rank)
             else:
-                ui.label("Thêm từ khóa và đặt lịch check ở màn Từ khóa & rank.").classes("text-sm muted")
+                ui.label("Thêm từ khóa và đặt lịch check ở màn Từ khóa & Thứ hạng.").classes("text-sm muted")
             if cfg.rank.paused:
                 T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
 
@@ -189,6 +283,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                             ui.label(F.n(n)).classes("text-xs muted num")
                 else:
                     ui.label("Chưa kiểm tra index lần nào.").classes("text-sm muted")
+
+        backlink_card()
 
         with T.section(ui, "Công việc & OKR", "task_alt", (f"Đợt {okr['cycle']}" if okr else "Chưa có sheet OKR"),
                        href="/okr", link_text="Công việc & OKR"):
@@ -218,12 +314,6 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     # ---- KPI cam kết (tải nền, có GA4) ----
     kpi_box = ui.column().classes("w-full")
 
-    # ---- Cần xử lý (team) ----
-    if ed:
-        from .report import build
-        with connect() as c:
-            rep = build(c, cfg, ctx["group"], 0, with_ai=False)
-        todo_section(ui, cfg, connect, rep, ctx, site)
 
     async def load():
         def work():

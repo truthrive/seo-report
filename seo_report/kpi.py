@@ -271,24 +271,21 @@ def fetch(cfg, sid: str) -> dict[str, list[list]]:
     from . import auth
     svc = build("sheets", "v4", credentials=auth.get_credentials(cfg, need=(auth.SHEETS_SCOPE,)),
                 cache_discovery=False)
-    titles = [s["properties"]["title"] for s in
-              svc.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(title))").execute()["sheets"]]
-    def norm(t: str) -> str:  # tab chép từ sheet mẫu sang được Google đặt tên "Bản sao của …" / "Copy of …"
-        t = t.strip().lower()
-        for p in ("bản sao của ", "copy of "):
-            t = t.removeprefix(p)
-        return t
-
+    props = [s["properties"] for s in svc.spreadsheets().get(
+        spreadsheetId=sid, fields="sheets(properties(sheetId,title))").execute()["sheets"]]
+    saved = _saved_ids(cfg, sid)
+    found = {want: resolve_tab(props, want, saved) for want in (KPI_TAB, KW_TAB)}
+    if found[KPI_TAB] is None:
+        raise TabNotFound(KPI_TAB, [x["title"] for x in props])
+    _remember(cfg, sid, found)
     out = {}
-    for want in (KPI_TAB, KW_TAB):
-        title = next((t for t in titles if norm(t) == want.lower()), None)
-        if title:
-            rng = "'" + title.replace("'", "''") + "'!A1:AZ1000"
-            out[want] = svc.spreadsheets().values().get(
-                spreadsheetId=sid, range=rng, valueRenderOption="UNFORMATTED_VALUE",
-                dateTimeRenderOption="SERIAL_NUMBER").execute().get("values", [])
-    if KPI_TAB not in out:
-        raise ValueError(f"Sheet không có tab '{KPI_TAB}'")
+    for want, p in found.items():
+        if p is None:  # chưa có tab từ khóa (hoặc đổi tên khó đoán): sync() không đụng bộ Cam kết
+            continue
+        rng = "'" + p["title"].replace("'", "''") + "'!A1:AZ1000"
+        out[want] = svc.spreadsheets().values().get(
+            spreadsheetId=sid, range=rng, valueRenderOption="UNFORMATTED_VALUE",
+            dateTimeRenderOption="SERIAL_NUMBER").execute().get("values", [])
     return out
 
 
@@ -331,11 +328,16 @@ def sync(con, cfg, user: str = "tool", today: date | None = None) -> dict:
     data = parse_kpi(tables[KPI_TAB], today)
     data["keywords"] = parse_keywords(tables.get(KW_TAB, []))
     changed = save(con, data, today)
-    # bộ Cam kết ở màn Từ khóa & rank khớp tab Từ khóa cam kết (thêm mới, cập nhật URL / Top, chuyển từ khóa đã bỏ)
-    added = R.sync_kpi_set(con, cfg.site_url, cfg.rank, K.latest_date(con, cfg.site_url), data["keywords"], user)
+    # bộ Cam kết ở màn Từ khóa & rank khớp tab Từ khóa cam kết (thêm mới, cập nhật URL / Top, chuyển từ khóa đã bỏ).
+    # Không thấy tab từ khóa thì KHÔNG đồng bộ: nếu coi như danh sách rỗng, mọi từ khóa cam kết bị chuyển ra ngoài.
+    if KW_TAB in tables:
+        added = R.sync_kpi_set(con, cfg.site_url, cfg.rank, K.latest_date(con, cfg.site_url), data["keywords"], user)
+    else:
+        added = {"added": [], "over_budget": False, "bad_url": [], "missing_tab": True}
     info = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "changed": changed,
             "months": len(data["months"]), "lines": len(data["lines"]), "keywords": len(data["keywords"]),
-            "added": len(added["added"]), "over_budget": added["over_budget"], "bad_url": added["bad_url"]}
+            "added": len(added["added"]), "over_budget": added["over_budget"], "bad_url": added["bad_url"],
+            "keyword_tab_missing": bool(added.get("missing_tab"))}
     _setting(con, "kpi_synced", json.dumps(info, ensure_ascii=False))
     return info
 
@@ -941,6 +943,81 @@ def _norm_tab(t: str) -> str:
     return t
 
 
+class TabNotFound(ValueError):
+    """Không tìm được tab KPI / Từ khóa cam kết trong sheet (thường do đổi tên mà tên mới không đoán được)."""
+
+    def __init__(self, want: str, titles: list[str]):
+        self.want, self.titles = want, titles
+        super().__init__(f"Sheet không có tab '{want}' (có thể đã đổi tên). Các tab đang có: "
+                         + ", ".join(f"'{t}'" for t in titles) + ". Đổi lại tên tab, hoặc chọn tab ở màn KPI cam kết.")
+
+
+def _plain(t: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFD", _norm_tab(t).replace("đ", "d"))
+    return "".join(ch for ch in t if unicodedata.category(ch) != "Mn")
+
+
+def _looks_like(want: str, title: str) -> bool:
+    """Tên tab mới có còn giống tab cần tìm không (khách hay thêm số thứ tự / chữ: "2. KPI SEO 12 tháng")."""
+    t = _plain(title)
+    if want == KPI_TAB:
+        return "kpi" in t and "okr" not in t
+    return "cam ket" in t and ("tu khoa" in t or "keyword" in t)
+
+
+def tab_ids(con, sid: str) -> dict[str, int]:
+    """Mã tab (sheetId, không đổi khi đổi tên tab) đã nhận ra của sheet này: {KPI_TAB: …, KW_TAB: …}."""
+    raw = _setting(con, "kpi_tab_ids")
+    return {k: int(v) for k, v in (json.loads(raw).get(sid, {}) if raw else {}).items()}
+
+
+def set_tab_id(con, sid: str, want: str, gid: int) -> None:
+    raw = _setting(con, "kpi_tab_ids")
+    allv = json.loads(raw) if raw else {}
+    allv.setdefault(sid, {})[want] = int(gid)
+    _setting(con, "kpi_tab_ids", json.dumps(allv))
+
+
+def resolve_tab(props: list[dict], want: str, saved: dict[str, int]) -> dict | None:
+    """Tab cần tìm trong danh sách tab của sheet: mã tab đã lưu (đổi tên vẫn đúng) → tên chuẩn ("Bản sao của …" vẫn
+    nhận) → tên gần giống, chỉ khi có đúng một tab khớp (không đoán bừa khi có nhiều tab giống nhau)."""
+    gid = saved.get(want)
+    hit = next((p for p in props if gid is not None and p.get("sheetId") == gid), None)
+    if hit:
+        return hit
+    hit = next((p for p in props if _norm_tab(p["title"]) == want.lower()), None)
+    if hit:
+        return hit
+    like = [p for p in props if _looks_like(want, p["title"])]
+    return like[0] if len(like) == 1 else None
+
+
+def _saved_ids(cfg, sid: str) -> dict[str, int]:
+    from contextlib import closing
+
+    from . import db
+    try:
+        with closing(db.connect(cfg.db_path)) as c:
+            return tab_ids(c, sid)
+    except Exception:  # noqa: BLE001  (test / không có DB)
+        return {}
+
+
+def _remember(cfg, sid: str, found: dict[str, dict]) -> None:
+    from contextlib import closing
+
+    from . import db
+    try:
+        with closing(db.connect(cfg.db_path)) as c:
+            have = tab_ids(c, sid)
+            for want, p in found.items():
+                if p and have.get(want) != p["sheetId"]:
+                    set_tab_id(c, sid, want, p["sheetId"])
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _format_requests(tab: dict, rows: list[list], is_kpi: bool) -> list[dict]:
     """Định dạng tab vừa ghi: tiêu đề đậm nền xanh, % cho dòng Top theo %, số có dấu phân cách, độ rộng cột."""
     sid = tab["sheetId"]
@@ -979,10 +1056,16 @@ def _format_requests(tab: dict, rows: list[list], is_kpi: bool) -> list[dict]:
     return out
 
 
-def write_tabs(sh, sid: str, values: dict[str, list[list]]) -> None:
+def write_tabs(sh, sid: str, values: dict[str, list[list]], saved_ids: dict[str, int] | None = None) -> None:
     """Ghi (đè) các tab KPI vào sheet dự án: tab chưa có thì thêm; tab 'Bản sao của …' vẫn nhận ra."""
     meta = sh.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(sheetId,title))").execute()
-    tabs = {_norm_tab(p["title"]): p for p in (x["properties"] for x in meta["sheets"])}
+    props = [x["properties"] for x in meta["sheets"]]
+    saved = saved_ids if saved_ids is not None else {}
+    tabs = {_norm_tab(p["title"]): p for p in props}
+    for want in values:  # tab đã đổi tên (nhận theo mã tab / tên gần giống): ghi vào đó, không thêm tab mới
+        hit = resolve_tab(props, want, saved)
+        if hit:
+            tabs[_norm_tab(want)] = hit
     reqs = [{"addSheet": {"properties": {"title": t}}} for t in values if _norm_tab(t) not in tabs]
     if reqs:
         resp = sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": reqs}).execute()
@@ -1110,13 +1193,15 @@ def sheet_keyword_op(cfg, sid: str, op: str, keyword: str, url: str | None = Non
     sh = build("sheets", "v4", credentials=auth.get_credentials(cfg, need=(auth.SHEETS_WRITE_SCOPE,)),
                cache_discovery=False)
     meta = sh.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(sheetId,title))").execute()
-    tab = next((x["properties"] for x in meta["sheets"] if _norm_tab(x["properties"]["title"]) == KW_TAB.lower()),
-               None)
+    props = [x["properties"] for x in meta["sheets"]]
+    tab = resolve_tab(props, KW_TAB, _saved_ids(cfg, sid))
     if tab is None:
-        if op == "delete":
-            return
+        # Có tab KPI (sheet đã dùng) mà không thấy tab từ khóa: có thể đã đổi tên khó đoán → không tự tạo tab trùng
+        if resolve_tab(props, KPI_TAB, _saved_ids(cfg, sid)) is not None or op == "delete":
+            raise TabNotFound(KW_TAB, [p["title"] for p in props])
         write_tabs(sh, sid, {KW_TAB: [["Từ khóa", "URL mục tiêu", "Top target", "Ghi chú"]]})
         return sheet_keyword_op(cfg, sid, op, keyword, url, target)
+    _remember(cfg, sid, {KW_TAB: tab})
     name = "'" + tab["title"].replace("'", "''") + "'"
     for _ in range(2):  # lần đầu có thể chỉ thêm cột Top target
         rows = sh.spreadsheets().values().get(spreadsheetId=sid, range=name + "!A1:Z2000",
@@ -1182,5 +1267,5 @@ def write_sheet(cfg, sid: str, data: dict, keywords: list, expect: str | None = 
     if expect and not force and fingerprint(fetch(cfg, sid)) != expect:
         raise SheetChanged("Sheet đã bị sửa từ lúc bạn mở form")
     sh = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    write_tabs(sh, sid, sheet_values(data, keywords))
+    write_tabs(sh, sid, sheet_values(data, keywords), _saved_ids(cfg, sid))
     return fingerprint(fetch(cfg, sid))

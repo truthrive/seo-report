@@ -71,9 +71,87 @@ class SetsTest(unittest.TestCase):
         R.add_keywords(self.con, SITE, self.s, END, [("a", None)], "t", set_id=a)
         R.delete_set(self.con, a, "t")
         self.assertEqual(R.sets(self.con, SITE), [])
-        k = R.kpi_set(self.con, SITE, create=True)
+        k = R.kpi_set(self.con, SITE, create=True)  # bộ Cam kết giờ cũng đổi tên / xóa được
+        R.update_set(self.con, k["id"], "t", name="Cam kết 2026")
+        self.assertEqual(R.get_set(self.con, k["id"])["name"], "Cam kết 2026")
+        R.delete_set(self.con, k["id"], "t")
+        self.assertEqual(R.sets(self.con, SITE), [])
+
+
+class SetModelTest(unittest.TestCase):
+    """Bộ đặt tên tự do, loại Cam kết / Theo dõi, Nháp → Chốt, lịch có giờ, dùng lại kết quả trùng, xóa vĩnh viễn."""
+
+    def setUp(self):
+        self.con = db.connect(":memory:")
+        self.s = RankSettings(monthly_budget_usd=20)
+
+    def test_draft_set_is_not_checked_until_locked(self):
+        a = R.create_set(self.con, SITE, "Bổ trợ", "t", kind="kpi", state="draft")
+        R.add_keywords(self.con, SITE, self.s, END, [("a", None)], "t", set_id=a)
+        st = R.get_set(self.con, a)
+        self.assertEqual((st["kind"], st["draft"]), ("kpi", True))
+        self.assertEqual(R.due(self.con, SITE, END, TUE), [])
+        fake = FakeDataForSEO({})
+        self.assertEqual(R.post(self.con, SITE, self.s, fake, R.keywords(self.con, SITE, END), TUE,
+                                lambda *_: None), 0)  # bấm Check trên bộ Nháp cũng không gửi
+        R.lock_set(self.con, a, "t")
+        self.assertEqual([k["keyword"] for k in R.due(self.con, SITE, END, TUE)], ["a"])
+        R.update_set(self.con, a, "t", kind="custom")
+        self.assertEqual(R.get_set(self.con, a)["kind"], "custom")
+
+    def test_schedule_time(self):
+        from datetime import datetime
+        a = R.create_set(self.con, SITE, "Sáng", "t", schedule={"type": "weekdays", "weekdays": [1], "time": "9:30"})
+        self.assertEqual(R.get_set(self.con, a)["schedule"]["time"], "09:30")
+        self.assertIn("lúc 09:30", R.describe_sets(self.con, SITE))
+        R.add_keywords(self.con, SITE, self.s, END, [("a", None)], "t", set_id=a)
+        tue = datetime.combine(TUE, datetime.min.time())
+        from datetime import timedelta
+        kid = R.keywords(self.con, SITE, END)[0]["id"]  # đã check thứ Ba tuần trước
+        self.con.execute("INSERT INTO rank_checks VALUES (?, ?, 10, 3, NULL, NULL, 0, 'x')",
+                         (kid, (TUE - timedelta(days=7)).isoformat()))
+        self.assertEqual(R.due(self.con, SITE, END, TUE, tue.replace(hour=9)), [])  # thứ Ba 9:00: chưa tới giờ
+        self.assertEqual(len(R.due(self.con, SITE, END, TUE, tue.replace(hour=9, minute=30))), 1)
         with self.assertRaises(ValueError):
-            R.delete_set(self.con, k["id"], "t")
+            R.update_set(self.con, a, "t", schedule={"type": "weekdays", "weekdays": [1], "time": "25:00"})
+        # từ khóa mới thêm (chưa check lần nào) sau giờ theo lịch: chờ lần theo lịch sau, không check ngay
+        R.add_keywords(self.con, SITE, self.s, END, [("mới", None)], "t", set_id=a)
+        now = datetime.now()
+        self.assertNotIn("mới", [k["keyword"] for k in R.due(self.con, SITE, END, now.date(), now)])
+
+    def test_same_keyword_same_place_same_day_is_paid_once(self):
+        a = R.create_set(self.con, SITE, "A", "t")
+        b = R.create_set(self.con, SITE, "B", "t", schedule={"type": "manual"})
+        R.add_keywords(self.con, SITE, self.s, END, [("gọng kính", None)], "t", set_id=a)
+        R.add_keywords(self.con, SITE, self.s, END, [("gọng kính", f"{SITE}gong/")], "t", set_id=b)
+        fake = FakeDataForSEO({"gọng kính": [("x.com", "https://x.com/"), ("vidushop.com", f"{SITE}gong/")]})
+        run(self.con, self.s, fake, TUE)  # bộ A theo lịch
+        self.assertEqual(len(fake.posted), 1)
+        kb = R.keywords(self.con, SITE, END, b)[0]
+        run(self.con, self.s, fake, TUE, only_ids=[kb["id"]])  # bộ B bấm Check cùng ngày: dùng lại
+        self.assertEqual(len(fake.posted), 1)
+        kb = R.keywords(self.con, SITE, END, b)[0]
+        self.assertEqual((kb["rank"], kb["target_rank"]), (2, 2))  # URL mục tiêu riêng của bộ B
+        self.assertEqual(self.con.execute("SELECT cost FROM rank_checks WHERE keyword_id = ?",
+                                          (kb["id"],)).fetchone()[0], 0)
+        both = R.keywords(self.con, SITE, END)
+        R.purge_keywords(self.con, SITE, [k["id"] for k in both], "t")  # xóa chép: hôm sau gửi lại
+        self.assertEqual(R.keywords(self.con, SITE, END), [])
+
+    def test_hard_delete_keeps_month_cost(self):
+        a = R.create_set(self.con, SITE, "A", "t")
+        R.add_keywords(self.con, SITE, self.s, END, [("a", None), ("b", None)], "t", set_id=a)
+        run(self.con, self.s, FakeDataForSEO({"a": [("vidushop.com", SITE)]}), TUE)
+        spent = R.spent_this_month(self.con, TUE)
+        ka = next(k for k in R.keywords(self.con, SITE, END) if k["keyword"] == "a")
+        self.assertEqual(R.purge_stats(self.con, [ka["id"]])["checks"], 1)
+        R.purge_keywords(self.con, SITE, [ka["id"]], "t")
+        self.assertEqual([k["keyword"] for k in R.keywords(self.con, SITE, END)], ["b"])
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM rank_checks WHERE keyword_id = ?",
+                                          (ka["id"],)).fetchone()[0], 0)
+        self.assertAlmostEqual(R.spent_this_month(self.con, TUE), spent)  # tiền đã trả vẫn tính
+        stats = R.delete_set(self.con, a, "t")
+        self.assertEqual((stats["keywords"], R.sets(self.con, SITE)), (1, []))
 
     def test_kpi_set_follows_sheet(self):
         sheet = [{"keyword": "a", "url": "", "target": 3}, {"keyword": "b", "url": "", "target": None}]
@@ -131,6 +209,23 @@ class SetsTest(unittest.TestCase):
         self.assertEqual(R.band_labels({"depths": [20], "out_depths": [20]}), ("Hạng 11–20", "Ngoài top 20"))
         self.assertEqual(R.band_labels({"depths": [10, 30], "out_depths": [10, 30]})[1],
                          "Không thấy trong độ sâu check")
+
+    def test_dashboard_rank_snapshot_counts_like_rank_page(self):
+        """Tổng quan đếm giống màn Thứ hạng: Top 3 / 5 / 10 trên tổng từ khóa; rớt khỏi độ sâu check vẫn là rớt hạng,
+        vào lại top N là lên hạng; không còn "Top 30" đoán mò khi chỉ check top 10."""
+        from seo_report.web_dashboard import rank_snapshot
+        sid = R.create_set(self.con, SITE, "Bộ", "t")
+        R.add_keywords(self.con, SITE, self.s, END, [("a", None), ("b", None), ("c", None), ("d", None)], "t",
+                       set_id=sid)
+        ids = {k["keyword"]: k["id"] for k in R.keywords(self.con, SITE, END, sid)}
+        for kw, d, r in (("a", "2026-10-06", 5), ("a", "2026-10-13", None), ("b", "2026-10-06", None),
+                         ("b", "2026-10-13", 8), ("c", "2026-10-06", 2), ("c", "2026-10-13", 2)):
+            self.con.execute("INSERT INTO rank_checks VALUES (?, ?, 10, ?, NULL, NULL, 0, '')", (ids[kw], d, r))
+        snap = rank_snapshot(self.con, SITE, END)
+        self.assertEqual((snap["total"], snap["checked"]), (4, 3))
+        self.assertEqual((snap["top3"], snap["top5"], snap["top10"]), (1, 1, 2))
+        self.assertEqual((snap["up"], snap["down"]), (1, 1))
+        self.assertNotIn("top30", snap)
 
     def test_budget_counts_each_set_schedule(self):
         a = R.create_set(self.con, SITE, "Tuần", "t", schedule={"depth": 10})

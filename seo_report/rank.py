@@ -1,11 +1,12 @@
 """Check rank thực tế qua DataForSEO cho các bộ từ khóa của dự án.
 
-- Bộ từ khóa (tab ở màn Từ khóa & rank): mỗi bộ có nơi check riêng (vùng Google, thiết bị, vị trí, ngôn ngữ; để trống
-  = theo dự án), lịch và độ sâu riêng. Bộ "Cam kết" tự khớp tab Từ khóa cam kết của sheet dự án; các bộ khác team tự
-  tạo. Một từ khóa nằm ở nhiều bộ thì mỗi bộ check riêng (mỗi dòng rank_keywords là một từ khóa trong một bộ).
+- Bộ từ khóa (tab ở màn Từ khóa & rank): tên tự đặt, loại Cam kết (làm nguồn cho dòng KPI) hoặc Theo dõi; mỗi bộ có
+  nơi check riêng (vùng Google, thiết bị, vị trí, ngôn ngữ; để trống = theo dự án), lịch (ngày + giờ) và độ sâu riêng.
+  Bộ mới ở dạng Nháp (không check, không tốn tiền) đến khi bấm Chốt. Mỗi dòng rank_keywords là một từ khóa trong một
+  bộ; cùng từ khóa, cùng nơi check, cùng ngày ở bộ khác thì dùng lại kết quả (không trả tiền lần hai).
 - Keyword đến từ: sheet cam kết, nhập tay, hoặc gắn ★ ở màn URL. URL mục tiêu và Top mục tiêu là tùy chọn.
-- Lịch: các thứ trong tuần, một ngày trong tháng, hoặc chỉ khi bấm "Check ngay". Lỡ lịch (máy tắt) thì lần chạy sau
-  check bù.
+- Lịch: các thứ trong tuần hoặc một ngày trong tháng, kèm giờ; hoặc chỉ khi bấm "Check ngay". Lỡ lịch (máy tắt)
+  thì lần chạy sau check bù.
 - Độ sâu: "auto" (lần đầu top 30; sau đó theo vị trí check lần trước: ≤ 8 → top 10, ≤ 18 → top 20, còn lại → top 30)
   hoặc cố định 10/20/30/50/100. Giá tính theo từng trang 10 kết quả. Không dùng position GSC: đó là số trung bình,
   không phải rank.
@@ -21,6 +22,7 @@ import sqlite3
 import time
 import tomllib
 from datetime import date, datetime, timedelta, timezone
+from datetime import time as dtime
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -67,7 +69,10 @@ def describe_target(s) -> str:
             f"{LANGUAGES.get(s.language_code, s.language_code)}")
 
 
-DEFAULT_SCHEDULE = {"type": "weekdays", "weekdays": [1], "day": 1, "depth": "auto"}  # thứ Ba, trước báo cáo thứ Năm
+DEFAULT_SCHEDULE = {"type": "weekdays", "weekdays": [1], "day": 1, "depth": "auto", "time": "07:00"}  # thứ Ba 7:00,
+# trước báo cáo thứ Năm
+SET_STATES = {"draft": "Nháp", "active": "Đã chốt"}
+SET_KINDS = {"kpi": "Cam kết", "custom": "Theo dõi"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS rank_sets (
@@ -128,6 +133,29 @@ CREATE TABLE IF NOT EXISTS rank_checks (
     checked_at TEXT NOT NULL,
     PRIMARY KEY (keyword_id, check_date)
 );
+-- Trang kết quả Google của mỗi lần check (đọc thêm từ kết quả đã trả tiền): AI Overview có không, site có được trích
+-- không, các nguồn AI trích (JSON [{domain, url, title}]), 10 kết quả tự nhiên đầu (JSON [{rank, domain, url}]), các
+-- loại ô đặc biệt (JSON [type]). aio NULL = lần check cũ chưa đọc phần này.
+CREATE TABLE IF NOT EXISTS rank_serp (
+    keyword_id INTEGER NOT NULL,
+    check_date TEXT NOT NULL,
+    aio INTEGER,
+    aio_cited INTEGER,
+    aio_refs TEXT,
+    top10 TEXT,
+    features TEXT,
+    PRIMARY KEY (keyword_id, check_date)
+);
+-- Từ khóa dùng lại kết quả của một task đã gửi (cùng từ khóa, cùng nơi check, cùng ngày, ở bộ khác): không trả tiền
+-- lần hai. status 'posted' → 'done' khi đã ghi kết quả cho từ khóa này.
+CREATE TABLE IF NOT EXISTS rank_task_links (
+    task_id TEXT NOT NULL,
+    keyword_id INTEGER NOT NULL,
+    check_date TEXT NOT NULL,
+    posted_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    PRIMARY KEY (task_id, keyword_id)
+);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -158,8 +186,13 @@ def _add_columns(con: sqlite3.Connection) -> None:
                      ("removed_by", "TEXT")):
         if col not in have:
             con.execute(f"ALTER TABLE rank_keywords ADD COLUMN {col} {typ}")
-    if "paused" not in {c[1] for c in con.execute("PRAGMA table_info(rank_sets)")}:
+    set_cols = {c[1] for c in con.execute("PRAGMA table_info(rank_sets)")}
+    if "paused" not in set_cols:
         con.execute("ALTER TABLE rank_sets ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
+    if "state" not in set_cols:  # bộ đã có trước đây coi như đã chốt
+        con.execute("ALTER TABLE rank_sets ADD COLUMN state TEXT NOT NULL DEFAULT 'active'")
+    if "aio_text" not in {c[1] for c in con.execute("PRAGMA table_info(rank_serp)")}:  # nội dung chữ AI Overview
+        con.execute("ALTER TABLE rank_serp ADD COLUMN aio_text TEXT")
     con.commit()
 
 
@@ -213,18 +246,22 @@ SET_SETTING_KEYS = ("se_domain", "device", "location_code", "language_code")
 KPI_SET_NAME, DROPPED_SET_NAME, DEFAULT_SET_NAME = "Cam kết", "Ngoài cam kết", "Từ khóa chính"
 
 
+_SET_COLS = "id, site, name, kind, settings, schedule, position, paused, state"
+
+
 def _set_row(r) -> dict:
-    sid, site, name, kind, settings, schedule, pos, paused = r
+    sid, site, name, kind, settings, schedule, pos, paused, state = r
     return {"id": sid, "site": site, "name": name, "kind": kind,
             "settings": json.loads(settings) if settings else None,
-            "schedule": {**DEFAULT_SCHEDULE, **json.loads(schedule)}, "position": pos, "paused": bool(paused)}
+            "schedule": {**DEFAULT_SCHEDULE, **json.loads(schedule)}, "position": pos, "paused": bool(paused),
+            "state": state or "active", "draft": state == "draft"}
 
 
 def sets(con: sqlite3.Connection, site: str) -> list[dict]:
     """Các bộ của website: bộ Cam kết trước, rồi theo thứ tự tạo. Kèm số từ khóa ("count")."""
     ensure_tables(con)
-    rows = con.execute("SELECT id, site, name, kind, settings, schedule, position, paused FROM rank_sets "
-                       "WHERE site = ? ORDER BY kind != 'kpi', position, id", (site,)).fetchall()
+    rows = con.execute(f"SELECT {_SET_COLS} FROM rank_sets WHERE site = ? ORDER BY kind != 'kpi', position, id",
+                       (site,)).fetchall()
     counts = dict(con.execute("SELECT set_id, COUNT(*) FROM rank_keywords WHERE site = ? AND removed_at IS NULL "
                               "GROUP BY set_id", (site,)))
     return [{**_set_row(r), "count": counts.get(r[0], 0)} for r in rows]
@@ -232,8 +269,7 @@ def sets(con: sqlite3.Connection, site: str) -> list[dict]:
 
 def get_set(con: sqlite3.Connection, set_id: int) -> dict | None:
     ensure_tables(con)
-    r = con.execute("SELECT id, site, name, kind, settings, schedule, position, paused FROM rank_sets WHERE id = ?",
-                    (set_id,)).fetchone()
+    r = con.execute(f"SELECT {_SET_COLS} FROM rank_sets WHERE id = ?", (set_id,)).fetchone()
     return _set_row(r) if r else None
 
 
@@ -255,9 +291,25 @@ def _clean_settings(settings: dict | None) -> str | None:
     return json.dumps(out) if out else None
 
 
+def _clean_schedule(schedule: dict) -> str:
+    out = {**DEFAULT_SCHEDULE, **schedule}
+    try:
+        h, m = (int(x) for x in str(out.get("time") or "07:00").split(":")[:2])
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError
+    except ValueError:
+        raise ValueError("Giờ check không hợp lệ (dạng 07:00)") from None
+    out["time"] = f"{h:02d}:{m:02d}"
+    return json.dumps(out)
+
+
 def create_set(con: sqlite3.Connection, site: str, name: str, user: str, kind: str = "custom",
-               settings: dict | None = None, schedule: dict | None = None) -> int:
+               settings: dict | None = None, schedule: dict | None = None, state: str = "active") -> int:
+    """Bộ mới. Team tạo trên màn rank thì state="draft" (Nháp: chưa check, chưa tốn tiền đến khi Chốt); bộ tool tự
+    tạo (đồng bộ sheet, ★ ở màn URL) chạy ngay."""
     ensure_tables(con)
+    if kind not in SET_KINDS or state not in SET_STATES:
+        raise ValueError("Loại / trạng thái bộ không hợp lệ")
     name = " ".join((name or "").split())[:60]
     if not name:
         raise ValueError("Chưa nhập tên bộ từ khóa")
@@ -266,23 +318,27 @@ def create_set(con: sqlite3.Connection, site: str, name: str, user: str, kind: s
     pos = con.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM rank_sets WHERE site = ?", (site,)).fetchone()[0]
     with con:
         cur = con.execute("INSERT INTO rank_sets (site, name, kind, settings, schedule, position, created_by, "
-                          "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                          (site, name, kind, _clean_settings(settings),
-                           json.dumps({**DEFAULT_SCHEDULE, **(schedule or {})}), pos, user, _now()))
+                          "created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          (site, name, kind, _clean_settings(settings), _clean_schedule(schedule or {}), pos, user,
+                           _now(), state))
         U.log_change(con, user, site, "Tạo bộ từ khóa", None, name)
     return cur.lastrowid
 
 
 def update_set(con: sqlite3.Connection, set_id: int, user: str, name: str | None = None,
                settings: dict | None | bool = False, schedule: dict | None = None,
-               paused: bool | None = None) -> None:
-    """Đổi tên (bộ Cam kết giữ tên), nơi check (settings=None: theo dự án; False: không đổi), lịch, tạm dừng cả bộ
-    (không check, không tính tiền; lịch sử vẫn giữ)."""
+               paused: bool | None = None, kind: str | None = None) -> None:
+    """Đổi tên, loại (Cam kết / Theo dõi), nơi check (settings=None: theo dự án; False: không đổi), lịch, tạm dừng cả
+    bộ (không check, không tính tiền; lịch sử vẫn giữ)."""
     st = get_set(con, set_id)
     if not st:
         raise ValueError("Không có bộ từ khóa này")
+    if kind is not None and kind not in SET_KINDS:
+        raise ValueError("Loại bộ không hợp lệ")
     with con:
-        if name is not None and st["kind"] != "kpi":
+        if kind is not None and kind != st["kind"]:
+            con.execute("UPDATE rank_sets SET kind = ? WHERE id = ?", (kind, set_id))
+        if name is not None:
             name = " ".join(name.split())[:60]
             if not name:
                 raise ValueError("Chưa nhập tên bộ từ khóa")
@@ -293,8 +349,7 @@ def update_set(con: sqlite3.Connection, set_id: int, user: str, name: str | None
         if settings is not False:
             con.execute("UPDATE rank_sets SET settings = ? WHERE id = ?", (_clean_settings(settings), set_id))
         if schedule is not None:
-            con.execute("UPDATE rank_sets SET schedule = ? WHERE id = ?",
-                        (json.dumps({**DEFAULT_SCHEDULE, **schedule}), set_id))
+            con.execute("UPDATE rank_sets SET schedule = ? WHERE id = ?", (_clean_schedule(schedule), set_id))
         if paused is not None and bool(paused) != st["paused"]:
             con.execute("UPDATE rank_sets SET paused = ? WHERE id = ?", (int(bool(paused)), set_id))
             U.log_change(con, user, st["site"], "Tạm dừng bộ từ khóa" if paused else "Chạy lại bộ từ khóa", None,
@@ -302,18 +357,78 @@ def update_set(con: sqlite3.Connection, set_id: int, user: str, name: str | None
         U.log_change(con, user, st["site"], "Sửa bộ từ khóa", None, name or st["name"])
 
 
-def delete_set(con: sqlite3.Connection, set_id: int, user: str) -> None:
-    """Xóa một bộ team tạo (bộ Cam kết theo sheet thì không). Từ khóa trong bộ thôi được check; lịch sử rank vẫn
-    nằm trong file dữ liệu."""
+def lock_set(con: sqlite3.Connection, set_id: int, user: str) -> None:
+    """Chốt bộ Nháp: từ đây bộ chạy theo lịch (tốn tiền check)."""
     st = get_set(con, set_id)
     if not st:
         raise ValueError("Không có bộ từ khóa này")
-    if st["kind"] == "kpi":
-        raise ValueError("Bộ Cam kết đi theo sheet dự án, không xóa được")
+    if not st["draft"]:
+        return
     with con:
-        con.execute("DELETE FROM rank_keywords WHERE set_id = ?", (set_id,))
+        con.execute("UPDATE rank_sets SET state = 'active' WHERE id = ?", (set_id,))
+        U.log_change(con, user, st["site"], "Chốt bộ từ khóa", None, st["name"])
+
+
+def delete_set(con: sqlite3.Connection, set_id: int, user: str) -> dict:
+    """Xóa vĩnh viễn một bộ: từ khóa, mọi lần check, kết quả Google, mốc sự kiện riêng của bộ. Không khôi phục được.
+    Tiền đã trả vẫn tính vào chi phí tháng. Trả số liệu đã xóa (purge_stats)."""
+    st = get_set(con, set_id)
+    if not st:
+        raise ValueError("Không có bộ từ khóa này")
+    ids = [r[0] for r in con.execute("SELECT id FROM rank_keywords WHERE set_id = ?", (set_id,))]
+    stats = purge_stats(con, ids)
+    _purge(con, ids)
+    with con:
+        con.execute("DELETE FROM rank_events WHERE set_id = ?", (set_id,))
         con.execute("DELETE FROM rank_sets WHERE id = ?", (set_id,))
-        U.log_change(con, user, st["site"], "Xóa bộ từ khóa", None, st["name"])
+        U.log_change(con, user, st["site"], "Xóa vĩnh viễn bộ từ khóa", None,
+                     f"{st['name']}: {len(ids)} từ khóa, {stats['checks']} lần check")
+    return stats
+
+
+def purge_stats(con: sqlite3.Connection, ids: list[int]) -> dict:
+    """Những gì sẽ mất khi xóa vĩnh viễn các từ khóa: số lần check, tiền đã trả cho các lần check đó."""
+    if not ids:
+        return {"keywords": 0, "checks": 0, "cost": 0.0}
+    marks = ",".join("?" * len(ids))
+    checks = con.execute(f"SELECT COUNT(*) FROM rank_checks WHERE keyword_id IN ({marks})", ids).fetchone()[0]
+    cost = con.execute(f"SELECT COALESCE(SUM(cost), 0) FROM rank_tasks WHERE keyword_id IN ({marks})",
+                       ids).fetchone()[0]
+    return {"keywords": len(ids), "checks": checks, "cost": cost}
+
+
+def _purge(con: sqlite3.Connection, ids: list[int]) -> None:
+    """Xóa hẳn dữ liệu của các từ khóa. Dòng rank_tasks giữ lại (keyword_id = 0) để chi phí tháng vẫn đúng; task đang
+    chờ mà có từ khóa khác dùng chung thì giao cho từ khóa đó nhận kết quả."""
+    from . import volume
+    volume.ensure_tables(con)
+    with con:
+        for kid in ids:
+            for task_id, status in con.execute("SELECT task_id, status FROM rank_tasks WHERE keyword_id = ?",
+                                               (kid,)).fetchall():
+                heir = con.execute("SELECT keyword_id FROM rank_task_links WHERE task_id = ? AND status = 'posted' "
+                                   "AND keyword_id != ? ORDER BY posted_at LIMIT 1", (task_id, kid)).fetchone()
+                if status == "posted" and heir:
+                    con.execute("UPDATE rank_tasks SET keyword_id = ? WHERE task_id = ?", (heir[0], task_id))
+                    con.execute("DELETE FROM rank_task_links WHERE task_id = ? AND keyword_id = ?", (task_id, heir[0]))
+                else:
+                    con.execute("UPDATE rank_tasks SET keyword_id = 0, status = CASE status WHEN 'posted' THEN "
+                                "'deleted' ELSE status END WHERE task_id = ?", (task_id,))
+            for table in ("rank_task_links", "rank_checks", "rank_serp", "keyword_volume"):
+                con.execute(f"DELETE FROM {table} WHERE keyword_id = ?", (kid,))
+            con.execute("DELETE FROM rank_keywords WHERE id = ?", (kid,))
+
+
+def purge_keywords(con: sqlite3.Connection, site: str, ids: list[int], user: str) -> dict:
+    """Xóa vĩnh viễn từ khóa (cả lịch sử rank). Không khôi phục được. Trả số liệu đã xóa."""
+    rows = con.execute(f"SELECT id, keyword FROM rank_keywords WHERE site = ? AND id IN ({','.join('?' * len(ids))})",
+                       (site, *ids)).fetchall() if ids else []
+    stats = purge_stats(con, [r[0] for r in rows])
+    _purge(con, [r[0] for r in rows])
+    with con:
+        for _, kw in rows:
+            U.log_change(con, user, site, "Xóa vĩnh viễn keyword", None, kw)
+    return stats
 
 
 def kpi_set(con: sqlite3.Connection, site: str, create: bool = False, user: str = "tool") -> dict | None:
@@ -390,11 +505,12 @@ def set_schedule(con: sqlite3.Connection, site: str, schedule: dict, user: str, 
 
 def describe_schedule(s: dict) -> str:
     depth = "độ sâu tự động" if s["depth"] == "auto" else f"top {s['depth']}"
+    at = f" lúc {s.get('time') or DEFAULT_SCHEDULE['time']}"
     if s["type"] == "weekdays":
         days = ", ".join(WEEKDAYS[d] for d in sorted(s["weekdays"])) or "chưa chọn thứ nào"
-        return f"Hằng tuần vào {days}; {depth}"
+        return f"Hằng tuần vào {days}{at}; {depth}"
     if s["type"] == "monthly":
-        return f"Hằng tháng vào ngày {s['day']}; {depth}"
+        return f"Hằng tháng vào ngày {s['day']}{at}; {depth}"
     return f"Chỉ khi bấm Check ngay; {depth}"
 
 
@@ -425,6 +541,32 @@ def last_scheduled_day(s: dict, today: date) -> date | None:
         if today.day < min(s["day"], calendar.monthrange(y, m)[1]):
             y, m = (y, m - 1) if m > 1 else (y - 1, 12)
         return date(y, m, min(s["day"], calendar.monthrange(y, m)[1]))
+    return None
+
+
+def schedule_time(s: dict) -> dtime:
+    try:
+        h, m = (int(x) for x in str(s.get("time") or DEFAULT_SCHEDULE["time"]).split(":")[:2])
+        return dtime(h, m)
+    except (ValueError, TypeError):
+        return dtime(7, 0)
+
+
+def last_scheduled_at(s: dict, now: datetime) -> datetime | None:
+    """Lúc theo lịch gần nhất ≤ bây giờ (ngày + giờ check của bộ); None nếu chỉ chạy tay."""
+    t = schedule_time(s)
+    day = last_scheduled_day(s, now.date())
+    if day == now.date() and now.time() < t:  # hôm nay có lịch nhưng chưa tới giờ: lấy lần trước
+        day = last_scheduled_day(s, now.date() - timedelta(days=1))
+    return datetime.combine(day, t) if day else None
+
+
+def next_scheduled_day(s: dict, today: date) -> date | None:
+    """Ngày theo lịch kế tiếp sau hôm nay; None nếu lịch chỉ chạy tay."""
+    for ahead in range(1, 63):
+        d = today + timedelta(days=ahead)
+        if last_scheduled_day(s, d) == d:
+            return d
     return None
 
 
@@ -476,7 +618,8 @@ def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None =
             "id": kid, "keyword": kw, "url_id": url_id, "target_url": url, "source": source, "added_by": by,
             "added_at": at, "best": best, "set_id": sid, "set_name": st["name"], "set_kind": st["kind"],
             "set": st, "top_target": top, "own_paused": bool(kpaused),
-            "paused": bool(kpaused) or bool(st.get("paused")), "note": note or "", "removed_at": rm_at,
+            "paused": bool(kpaused) or bool(st.get("paused")), "draft": bool(st.get("draft")),
+            "note": note or "", "removed_at": rm_at,
             "removed_by": rm_by,
             "date": last[0] if last else None, "rank": last[1] if last else None,
             "ranking_url": last[2] if last else None, "target_rank": last[3] if last else None,
@@ -513,17 +656,20 @@ def spent_this_month(con: sqlite3.Connection, today: date | None = None) -> floa
     ensure_tables(con)
     today = today or date.today()
     month = today.strftime("%Y-%m")
-    from . import volume  # chi phí lấy volume keyword tính chung ngân sách DataForSEO
-    return con.execute("SELECT COALESCE(SUM(cost), 0) FROM rank_tasks WHERE substr(check_date, 1, 7) = ?",
-                       (month,)).fetchone()[0] + volume.spent_this_month(con, today)
+    from . import backlinks, volume  # chi phí volume keyword và backlink tính chung ngân sách DataForSEO
+    return (con.execute("SELECT COALESCE(SUM(cost), 0) FROM rank_tasks WHERE substr(check_date, 1, 7) = ?",
+                        (month,)).fetchone()[0] + volume.spent_this_month(con, today)
+            + backlinks.spent_this_month(con, today))
 
 
 def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]:
-    """Chi phí DataForSEO theo tháng ("YYYY-MM"): {"rank", "volume", "checks" (số lượt check rank), "total"}."""
+    """Chi phí DataForSEO theo tháng ("YYYY-MM"): {"rank", "volume", "backlinks", "checks" (số lượt check rank),
+    "total"}."""
     ensure_tables(con)
-    from . import volume
+    from . import backlinks, volume
     volume.ensure_tables(con)
-    out = {m: {"rank": 0.0, "volume": 0.0, "checks": 0, "total": 0.0} for m in months}
+    backlinks.ensure_tables(con)
+    out = {m: {"rank": 0.0, "volume": 0.0, "backlinks": 0.0, "checks": 0, "total": 0.0} for m in months}
     for m, cost, n in con.execute("SELECT substr(check_date, 1, 7), SUM(cost), COUNT(*) FROM rank_tasks "
                                   "GROUP BY 1"):
         if m in out:
@@ -531,8 +677,11 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
     for m, cost in con.execute("SELECT substr(run_at, 1, 7), SUM(cost) FROM volume_runs GROUP BY 1"):
         if m in out:
             out[m]["volume"] = cost or 0.0
+    for m, cost in con.execute("SELECT substr(run_at, 1, 7), SUM(cost) FROM backlink_runs GROUP BY 1"):
+        if m in out:
+            out[m]["backlinks"] = cost or 0.0
     for v in out.values():
-        v["total"] = v["rank"] + v["volume"]
+        v["total"] = v["rank"] + v["volume"] + v["backlinks"]
     return out
 
 
@@ -1063,7 +1212,9 @@ class DataForSEO:
         return {r["id"] for t in self._call("GET", "tasks_ready")["tasks"] or [] for r in t.get("result") or []}
 
     def get(self, task_id: str) -> dict:
-        return self._call("GET", f"task_get/regular/{task_id}")["tasks"][0]
+        """Kết quả bản đầy đủ (advanced): có AI Overview và các ô đặc biệt bên cạnh kết quả tự nhiên. DataForSEO chỉ
+        tính tiền lúc gửi task, đọc kết quả (regular hay advanced) trong 30 ngày không tốn thêm."""
+        return self._call("GET", f"task_get/advanced/{task_id}")["tasks"][0]
 
     def balance(self) -> float | None:
         req = Request("https://api.dataforseo.com/v3/appendix/user_data", headers=self.headers)
@@ -1071,51 +1222,140 @@ class DataForSEO:
         return resp["tasks"][0]["result"][0]["money"]["balance"]
 
 
-def due(con: sqlite3.Connection, site: str, end: date, today: date) -> list[dict]:
-    """Keyword cần check theo lịch của bộ chứa nó: chưa có lần check (hoặc task đang chờ) từ ngày theo lịch gần nhất."""
+def _local_dt(iso_utc: str | None) -> datetime:
+    """Giờ máy (giờ Việt Nam) của một mốc lưu dạng ISO UTC; lỗi / trống thì coi như rất cũ."""
+    try:
+        return datetime.fromisoformat(iso_utc).astimezone().replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return datetime.min
+
+
+def due(con: sqlite3.Connection, site: str, end: date, today: date, now: datetime | None = None) -> list[dict]:
+    """Keyword cần check theo lịch của bộ chứa nó: chưa có lần check (hoặc task đang chờ) từ lần theo lịch gần nhất.
+    now: tính cả giờ check của bộ (chưa tới giờ thì chưa đến hạn); không có thì chỉ xét ngày. Bộ Nháp không check."""
     out = []
     for k in keywords(con, site, end):
-        if k["paused"]:
+        if k["paused"] or k["draft"]:
             continue
-        sched_day = last_scheduled_day(k["set"]["schedule"], today)
+        if now is not None:
+            at = last_scheduled_at(k["set"]["schedule"], now)
+            sched_day = at.date() if at else None
+            if at and k["date"] is None and _local_dt(k["added_at"]) > at:
+                continue  # từ khóa mới thêm sau lần theo lịch gần nhất: chờ tới giờ của lần sau, không check ngay
+        else:
+            sched_day = last_scheduled_day(k["set"]["schedule"], today)
         if sched_day is None:
             continue
-        pending = con.execute("SELECT MAX(check_date) FROM rank_tasks WHERE keyword_id = ? AND status = 'posted'",
-                              (k["id"],)).fetchone()[0]
+        pending = con.execute(
+            "SELECT MAX(d) FROM (SELECT check_date d FROM rank_tasks WHERE keyword_id = ? AND status = 'posted' "
+            "UNION ALL SELECT check_date FROM rank_task_links WHERE keyword_id = ? AND status = 'posted')",
+            (k["id"], k["id"])).fetchone()[0]
         last = max(filter(None, [k["date"], pending]), default=None)
         if last is None or date.fromisoformat(last) < sched_day:
             out.append(k)
     return out
 
 
+def _where_key(s: RankSettings, k: dict) -> tuple:
+    """Hai dòng từ khóa cho cùng một trang kết quả Google khi cùng chữ và cùng nơi check."""
+    w = settings_for(s, k.get("set"))
+    return (k["keyword"].strip().lower(), w.se_domain, w.device, w.location_code, w.language_code)
+
+
 def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date, log=print) -> int:
+    """Gửi DataForSEO các từ khóa cần check. Cùng từ khóa + cùng nơi check: chỉ gửi một task (độ sâu lớn nhất), các
+    dòng còn lại nhận chung kết quả; đã có task hôm nay ở bộ khác (đủ sâu) thì dùng lại, không trả tiền lần hai.
+    Trả số dòng từ khóa đã gửi hoặc đã gắn vào task dùng chung."""
+    todo = [k for k in todo if not k.get("draft")]
     if not todo:
         return 0
-    batch_cost = sum(_pages(k["depth"]) for k in todo) * s.price_per_page
+    day = today.isoformat()
+    groups: dict[tuple, list[dict]] = {}
+    for k in todo:
+        groups.setdefault(_where_key(s, k), []).append(k)
+    need = {key: max(k["depth"] for k in ks) for key, ks in groups.items()}
+    reuse: dict[tuple, tuple[str, str]] = {}  # key → (task_id, status) của task hôm nay dùng lại được
+    by_set = {x["id"]: x for x in sets(con, site)}
+    for task_id, depth, status, kid, kw, sid in con.execute(
+            "SELECT t.task_id, t.depth, t.status, k.id, k.keyword, k.set_id FROM rank_tasks t "
+            "JOIN rank_keywords k ON k.id = t.keyword_id WHERE t.check_date = ? AND t.status IN ('posted', 'done') "
+            "AND k.site = ? ORDER BY t.status = 'done' DESC, t.posted_at DESC", (day, site)).fetchall():
+        key = _where_key(s, {"keyword": kw, "set": by_set.get(sid)})
+        if key in groups and key not in reuse and depth >= need[key] and \
+                all(k["id"] != kid for k in groups[key]):  # check lại chính dòng đó trong ngày: gửi mới
+            reuse[key] = (task_id, status)
+    to_post = [(key, ks) for key, ks in groups.items() if key not in reuse]
+    batch_cost = sum(_pages(need[key]) for key, _ in to_post) * s.price_per_page
     spent = spent_this_month(con, today)
-    if spent + batch_cost > s.monthly_budget_usd:
+    if to_post and spent + batch_cost > s.monthly_budget_usd:
         log(f"Dừng check rank: đã dùng {usd(spent)} USD tháng này, lượt này cần {usd(batch_cost, 3)} USD, "
             f"vượt ngân sách {s.monthly_budget_usd:.0f} USD.")
-        return 0
-    tasks = []
-    for k in todo:  # mỗi từ khóa check theo nơi check của bộ chứa nó
-        w = settings_for(s, k.get("set"))
-        tasks.append({"keyword": k["keyword"], "location_code": w.location_code, "language_code": w.language_code,
-                      "device": w.device, "se_domain": w.se_domain, "depth": k["depth"], "tag": str(k["id"])})
-    posted, errors = 0, {}
+        to_post = []
+        if not reuse:
+            return 0
+    linked = 0
     with con:
-        for k, t in zip(todo, client.post(tasks)):
-            if t.get("status_code") != 20100:
-                errors.setdefault(t.get("status_message") or str(t.get("status_code")), []).append(k["keyword"])
-                continue
-            con.execute("INSERT INTO rank_tasks VALUES (?, ?, ?, ?, ?, ?, 'posted')",
-                        (t["id"], k["id"], k["depth"], today.isoformat(), _now(), t.get("cost", 0)))
-            posted += 1
+        for key, (task_id, _) in reuse.items():
+            for k in groups[key]:
+                con.execute("INSERT OR REPLACE INTO rank_task_links VALUES (?, ?, ?, ?, 'posted')",
+                            (task_id, k["id"], day, _now()))
+                linked += 1
+    for task_id, status in reuse.values():  # task đã có kết quả: đọc lại (miễn phí) và ghi luôn
+        if status == "done":
+            try:
+                task = client.get(task_id)
+                if task.get("status_code") == 20000:
+                    with con:
+                        _save_links(con, site, task_id, task)
+            except Exception as e:  # noqa: BLE001  (lần chạy sau đọc lại)
+                log(f"Chưa đọc lại được kết quả dùng chung: {e}")
+    posted, errors = 0, {}
+    if to_post:
+        tasks = []
+        for key, ks in to_post:  # mỗi nhóm check theo nơi check của bộ chứa nó
+            w = settings_for(s, ks[0].get("set"))
+            tasks.append({"keyword": ks[0]["keyword"], "location_code": w.location_code,
+                          "language_code": w.language_code, "device": w.device, "se_domain": w.se_domain,
+                          "depth": need[key], "tag": str(ks[0]["id"]),
+                          # tải cả AI Overview hiện chậm (+0,0006 USD, hoàn lại nếu từ khóa không có AI Overview)
+                          "load_async_ai_overview": True})
+        with con:
+            for (key, ks), t in zip(to_post, client.post(tasks)):
+                if t.get("status_code") != 20100:
+                    errors.setdefault(t.get("status_message") or str(t.get("status_code")), []).extend(
+                        k["keyword"] for k in ks)
+                    continue
+                con.execute("INSERT INTO rank_tasks VALUES (?, ?, ?, ?, ?, ?, 'posted')",
+                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0)))
+                for k in ks[1:]:
+                    con.execute("INSERT OR REPLACE INTO rank_task_links VALUES (?, ?, ?, ?, 'posted')",
+                                (t["id"], k["id"], day, _now()))
+                posted += len(ks)
     for message, kws in errors.items():  # gộp: thường mọi keyword cùng một lỗi tài khoản
         log(f"Không gửi được {len(kws)} keyword ({', '.join(kws[:3])}{'…' if len(kws) > 3 else ''}): {message}")
     if posted:
         log(f"Đã gửi {posted} keyword để check rank, khoảng {usd(batch_cost, 3)} USD.")
-    return posted
+    if linked:
+        log(f"Dùng lại kết quả hôm nay cho {linked} keyword trùng ở bộ khác (không tính thêm tiền).")
+    return posted + linked
+
+
+def _save_links(con, site: str, task_id: str, task: dict) -> int:
+    """Ghi kết quả của một task cho các dòng từ khóa dùng chung (mỗi dòng theo URL mục tiêu của nó), chi phí 0."""
+    row = con.execute("SELECT depth FROM rank_tasks WHERE task_id = ?", (task_id,)).fetchone()
+    depth = row[0] if row else 10
+    rows = con.execute("SELECT l.keyword_id, l.check_date, u.url FROM rank_task_links l JOIN rank_keywords k ON "
+                       "k.id = l.keyword_id LEFT JOIN urls u ON u.id = k.url_id WHERE l.task_id = ? AND "
+                       "l.status = 'posted'", (task_id,)).fetchall()
+    serp = parse_serp(task, site) if rows else None
+    for kid, day, target in rows:
+        rank, ranking_url, target_rank = parse_rank(task, site, target)
+        con.execute("INSERT OR REPLACE INTO rank_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (kid, day, depth, rank, ranking_url, target_rank, 0, _now()))
+        save_serp(con, kid, day, serp)
+        con.execute("UPDATE rank_task_links SET status = 'done' WHERE task_id = ? AND keyword_id = ?",
+                    (task_id, kid))
+    return len(rows)
 
 
 def _is_goto(url: str) -> bool:
@@ -1170,6 +1410,57 @@ def parse_rank(task: dict, site: str, target_url: str | None,
     return best, best_url, target_rank
 
 
+def _host_match(host: str, site_host: str) -> bool:
+    host = (host or "").lower().removeprefix("www.")
+    return bool(host) and (host == site_host or host.endswith("." + site_host))
+
+
+def parse_serp(task: dict, site: str) -> dict:
+    """Phần còn lại của trang kết quả (ngoài vị trí của site): AI Overview (có / không, site có được trích, các nguồn
+    được trích), 10 kết quả tự nhiên đầu, các loại ô đặc biệt. aio_cited None khi có AI Overview nhưng DataForSEO
+    không tải được nội dung (AI Overview hiện chậm)."""
+    host = domain(site)
+    items = (task.get("result") or [{}])[0].get("items") or []
+    aio, cited, refs, top10, features, text = False, None, [], [], set(), []
+    for it in items:
+        t = it.get("type") or ""
+        if t and t != "organic":
+            features.add(t)
+        if t == "ai_overview":
+            aio = True
+            found = list(it.get("references") or [])
+            for el in it.get("items") or []:
+                found += el.get("references") or []
+                for part in (el.get("title"), el.get("text") or el.get("markdown")):
+                    if part:
+                        text.append(str(part))
+            seen = set()
+            for r in found:
+                d = (r.get("domain") or domain(r.get("url") or "")).lower().removeprefix("www.")
+                key = (d, r.get("url"))
+                if d and key not in seen:
+                    seen.add(key)
+                    refs.append({"domain": d, "url": r.get("url") or "", "title": r.get("title") or r.get("source") or ""})
+            if refs:
+                cited = any(_host_match(r["domain"], host) for r in refs)
+            elif not it.get("asynchronous_ai_overview"):
+                cited = False
+        elif t == "organic" and (it.get("rank_group") or 99) <= 10:
+            top10.append({"rank": it.get("rank_group"), "domain": (it.get("domain") or "").lower().removeprefix("www."),
+                          "url": it.get("url") or ""})
+    return {"aio": aio, "aio_cited": cited if aio else False, "aio_refs": refs, "top10": top10,
+            "features": sorted(features), "aio_text": "\n".join(text) if aio else ""}
+
+
+def save_serp(con, keyword_id: int, check_date: str, serp: dict) -> None:
+    con.execute("INSERT OR REPLACE INTO rank_serp (keyword_id, check_date, aio, aio_cited, aio_refs, top10, features, "
+                "aio_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (keyword_id, check_date, int(serp["aio"]),
+                 None if serp["aio_cited"] is None else int(serp["aio_cited"]),
+                 json.dumps(serp["aio_refs"], ensure_ascii=False), json.dumps(serp["top10"], ensure_ascii=False),
+                 json.dumps(serp["features"]), serp.get("aio_text") or None))
+
+
 def collect(con, site: str, client, log=print) -> int:
     pending = con.execute(
         "SELECT t.task_id, t.keyword_id, t.depth, t.check_date, t.cost, u.url FROM rank_tasks t "
@@ -1190,7 +1481,9 @@ def collect(con, site: str, client, log=print) -> int:
         with con:
             con.execute("INSERT OR REPLACE INTO rank_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (kid, check_date, depth, rank, ranking_url, target_rank, cost, _now()))
+            save_serp(con, kid, check_date, parse_serp(task, site))
             con.execute("UPDATE rank_tasks SET status = 'done' WHERE task_id = ?", (task_id,))
+            _save_links(con, site, task_id, task)
         done += 1
     return done
 
@@ -1203,21 +1496,29 @@ def reparse(con, site: str, client, since: date, log=print) -> int:
         "JOIN rank_keywords k ON k.id = t.keyword_id LEFT JOIN urls u ON u.id = k.url_id "
         "JOIN rank_checks c ON c.keyword_id = t.keyword_id AND c.check_date = t.check_date "
         "WHERE t.status = 'done' AND k.site = ? AND t.check_date >= ?", (site, since.isoformat())).fetchall()
-    changed = 0
+    changed, skipped = 0, {}
     for task_id, kid, check_date, target, old_rank, old_url, old_target in rows:
         try:
             task = client.get(task_id)
         except Exception as e:  # noqa: BLE001
             log(f"Không đọc lại được task {task_id}: {e}")
             continue
-        if task.get("status_code") != 20000:
+        if task.get("status_code") != 20000:  # ví dụ 40001: task của tài khoản DataForSEO khác
+            msg = f"{task.get('status_code')}: {task.get('status_message')}"
+            skipped[msg] = skipped.get(msg, 0) + 1
             continue
         new = parse_rank(task, site, target)
+        with con:  # đọc lại cũng lưu AI Overview / đối thủ (lần check cũ chưa có phần này)
+            save_serp(con, kid, check_date, parse_serp(task, site))
         if new != (old_rank, old_url, old_target):
             with con:
                 con.execute("UPDATE rank_checks SET rank = ?, ranking_url = ?, target_rank = ? "
                             "WHERE keyword_id = ? AND check_date = ?", (*new, kid, check_date))
             changed += 1
+    for msg, n in skipped.items():  # trước đây bỏ qua im lặng: đổi tài khoản DataForSEO thì không biết vì sao trống
+        log(f"Không đọc lại được {n}/{len(rows)} lần check (DataForSEO {msg}). Kết quả của tài khoản DataForSEO cũ "
+            "không đọc được bằng tài khoản mới." if msg.startswith("40001") else
+            f"Không đọc lại được {n}/{len(rows)} lần check (DataForSEO {msg}).")
     return changed
 
 
@@ -1240,11 +1541,170 @@ def run(con, site: str, s: RankSettings, client, end: date, today: date | None =
         log("Tạm ngưng check rank cho website này: không gửi yêu cầu nào.")
         return
     ensure_tables(con)
+    now = datetime.now() if today is None else None  # chạy thật: tính cả giờ check của từng bộ
     today = today or date.today()
     collect(con, site, client, log)
     if only_ids is not None:
         todo = [k for k in keywords(con, site, end) if k["id"] in set(only_ids)]
     else:
-        todo = due(con, site, end, today)
+        todo = due(con, site, end, today, now)
     post(con, site, s, client, todo, today, log)
     wait_and_collect(con, site, client, wait_minutes, log, sleep)
+
+
+def serp_latest(con: sqlite3.Connection, site: str, end: date, set_id: int | None = None) -> list[dict]:
+    """Mỗi từ khóa (mỗi từ khóa một dòng, như Tổng quan; set_id: chỉ một bộ) kèm phần trang kết quả của lần check
+    gần nhất có đọc phần đó: aio, aio_cited, aio_refs, top10, ngày; và lần trước đó (để so)."""
+    ensure_tables(con)
+    kws = keywords(con, site, end, set_id) if set_id else primary_keywords(con, site, end)
+    out = []
+    for k in kws:
+        rows = con.execute("SELECT check_date, aio, aio_cited, aio_refs, top10 FROM rank_serp WHERE keyword_id = ? "
+                           "AND aio IS NOT NULL ORDER BY check_date DESC LIMIT 2", (k["id"],)).fetchall()
+        cur = rows[0] if rows else None
+        prev = rows[1] if len(rows) > 1 else None
+        out.append({"id": k["id"], "keyword": k["keyword"], "rank": k["rank"], "depth": k["last_depth"],
+                    "date": cur[0] if cur else None, "aio": bool(cur[1]) if cur else None,
+                    "cited": (None if cur[2] is None else bool(cur[2])) if cur else None,
+                    "refs": json.loads(cur[3] or "[]") if cur else [], "top10": json.loads(cur[4] or "[]") if cur else [],
+                    "prev_aio": bool(prev[1]) if prev else None,
+                    "prev_cited": (None if prev[2] is None else bool(prev[2])) if prev else None})
+    return out
+
+
+def aio_summary(rows: list[dict], site: str) -> dict:
+    """Tổng hợp AI Overview trên bộ từ khóa: có AIO, site được trích (lần này / lần trước), nguồn AI hay trích, đối thủ
+    hay gặp ở top 10 (không tính site)."""
+    host = domain(site)
+    have = [r for r in rows if r["aio"] is not None]
+    with_aio = [r for r in have if r["aio"]]
+    cited = [r for r in with_aio if r["cited"]]
+    prev = [r for r in have if r["prev_aio"] is not None]
+    ref_count: dict[str, int] = {}
+    for r in with_aio:
+        for d in {x["domain"] for x in r["refs"]}:
+            if not _host_match(d, host):
+                ref_count[d] = ref_count.get(d, 0) + 1
+    comp: dict[str, list[int]] = {}
+    for r in have:
+        for x in r["top10"]:
+            if x["domain"] and not _host_match(x["domain"], host):
+                comp.setdefault(x["domain"], []).append(x["rank"] or 0)
+    return {"total": len(rows), "checked": len(have), "aio": len(with_aio), "cited": len(cited),
+            "prev_aio": sum(1 for r in prev if r["prev_aio"]) if prev else None,
+            "prev_cited": sum(1 for r in prev if r["prev_cited"]) if prev else None,
+            "last": max((r["date"] for r in have), default=None),
+            "top_refs": sorted(ref_count.items(), key=lambda x: (-x[1], x[0]))[:10],
+            "competitors": sorted(((d, len(v), sum(v) / len(v)) for d, v in comp.items()),
+                                  key=lambda x: (-x[1], x[2]))[:10]}
+
+
+def serp_history(con: sqlite3.Connection, keyword_id: int) -> list[dict]:
+    """Các lần check có đọc trang kết quả của một từ khóa, mới trước: ngày, có AIO, được trích, nguồn AI trích, top 10."""
+    ensure_tables(con)
+    out = []
+    for d, aio, cited, refs, top10 in con.execute(
+            "SELECT check_date, aio, aio_cited, aio_refs, top10 FROM rank_serp WHERE keyword_id = ? AND aio IS NOT NULL "
+            "ORDER BY check_date DESC", (keyword_id,)):
+        out.append({"date": d, "aio": bool(aio), "cited": None if cited is None else bool(cited),
+                    "refs": json.loads(refs or "[]"), "top10": json.loads(top10 or "[]")})
+    return out
+
+
+def serp_flags(con: sqlite3.Connection, ids: list[int]) -> dict[int, tuple[bool, bool | None]]:
+    """(có AI Overview, site được trích) ở lần check gần nhất có đọc trang kết quả, cho bảng từ khóa."""
+    ensure_tables(con)
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    out = {}
+    for kid, aio, cited in con.execute(
+            f"SELECT s.keyword_id, s.aio, s.aio_cited FROM rank_serp s JOIN (SELECT keyword_id, MAX(check_date) m "
+            f"FROM rank_serp WHERE aio IS NOT NULL AND keyword_id IN ({marks}) GROUP BY keyword_id) l "
+            "ON l.keyword_id = s.keyword_id AND l.m = s.check_date", list(ids)):
+        out[kid] = (bool(aio), None if cited is None else bool(cited))
+    return out
+
+
+def compare_top10(cur: list[dict], prev: list[dict] | None) -> list[dict]:
+    """Top 10 lần này kèm thay đổi so với lần trước theo tên miền: move > 0 lên hạng, "new" mới vào top 10."""
+    before = {}
+    for x in prev or []:
+        before.setdefault(x["domain"], x["rank"])
+    out = []
+    for x in cur:
+        b = before.get(x["domain"])
+        out.append({**x, "move": None if prev is None else ("new" if b is None else b - x["rank"])})
+    return out
+
+
+def where_short(s: RankSettings) -> str:
+    """Nơi check gọn cho nhãn số liệu: "Điện thoại · Toàn quốc (Việt Nam)"."""
+    return f"{DEVICES.get(s.device, s.device)} · {locations().get(s.location_code, str(s.location_code))}"
+
+
+def aio_window(con: sqlite3.Connection, site: str, end: date, today: date, weeks: int = 4,
+               set_id: int | None = None) -> list[dict]:
+    """AI Overview của từng từ khóa trong `weeks` tuần gần nhất (mỗi tuần lấy lần check cuối của tuần đó): số tuần có
+    số, số tuần có AI Overview, số tuần website được trích (trong các tuần biết được), và lần mới nhất (nguồn trích,
+    ngày). AI Overview thay đổi giữa các lần tìm, nên đo theo nhiều tuần thay vì một lần chụp."""
+    ensure_tables(con)
+    since = (today - timedelta(days=7 * weeks - 1)).isoformat()
+    kws = keywords(con, site, end, set_id) if set_id else primary_keywords(con, site, end)
+    out = []
+    for k in kws:
+        by_week: dict[str, tuple] = {}
+        for d, aio, cited, refs in con.execute(
+                "SELECT check_date, aio, aio_cited, aio_refs FROM rank_serp WHERE keyword_id = ? AND aio IS NOT NULL "
+                "AND check_date >= ? ORDER BY check_date", (k["id"], since)):
+            wk = (date.fromisoformat(d) - timedelta(days=date.fromisoformat(d).weekday())).isoformat()
+            by_week[wk] = (d, bool(aio), None if cited is None else bool(cited), refs)
+        rows = sorted(by_week.values(), key=lambda r: r[0], reverse=True)
+        last = rows[0] if rows else None
+        out.append({"id": k["id"], "keyword": k["keyword"], "rank": k["rank"], "depth": k["last_depth"],
+                    "target_url": k.get("target_url"), "weeks": len(rows),
+                    "aio_weeks": sum(1 for r in rows if r[1]),
+                    "cited_weeks": sum(1 for r in rows if r[1] and r[2]),
+                    "known_weeks": sum(1 for r in rows if r[1] and r[2] is not None),
+                    "date": last[0] if last else None, "aio": last[1] if last else None,
+                    "cited": last[2] if last else None, "refs": json.loads(last[3] or "[]") if last else []})
+    return out
+
+
+def aio_stats(rows: list[dict]) -> dict:
+    """Ba số chính trên cửa sổ nhiều tuần: tỷ lệ có AI Overview (trên các lần kiểm tra), tỷ lệ được trích (trên các lần
+    có AI Overview biết được nội dung), số từ khóa đã có số / tổng."""
+    checks = sum(r["weeks"] for r in rows)
+    aio = sum(r["aio_weeks"] for r in rows)
+    known = sum(r["known_weeks"] for r in rows)
+    cited = sum(r["cited_weeks"] for r in rows)
+    return {"total": len(rows), "checked": sum(1 for r in rows if r["weeks"]), "checks": checks, "aio": aio,
+            "known": known, "cited": cited, "aio_rate": aio / checks if checks else None,
+            "cited_rate": cited / known if known else None,
+            "last": max((r["date"] for r in rows if r["date"]), default=None)}
+
+
+def aio_weekly(con: sqlite3.Connection, site: str, end: date, today: date, weeks: int = 12,
+               set_id: int | None = None) -> list[dict]:
+    """Theo từng tuần (thứ Hai đầu tuần): số từ khóa có số, có AI Overview, được trích; để vẽ xu hướng."""
+    ensure_tables(con)
+    kws = keywords(con, site, end, set_id) if set_id else primary_keywords(con, site, end)
+    ids = [k["id"] for k in kws]
+    if not ids:
+        return []
+    since = (today - timedelta(days=today.weekday()) - timedelta(weeks=weeks - 1)).isoformat()
+    marks = ",".join("?" * len(ids))
+    per: dict[tuple, tuple] = {}
+    for kid, d, aio, cited in con.execute(
+            f"SELECT keyword_id, check_date, aio, aio_cited FROM rank_serp WHERE aio IS NOT NULL AND check_date >= ? "
+            f"AND keyword_id IN ({marks}) ORDER BY check_date", [since, *ids]):
+        wk = (date.fromisoformat(d) - timedelta(days=date.fromisoformat(d).weekday())).isoformat()
+        per[(wk, kid)] = (bool(aio), None if cited is None else bool(cited))
+    weeks_out: dict[str, dict] = {}
+    for (wk, _), (aio, cited) in per.items():
+        w = weeks_out.setdefault(wk, {"week": wk, "checked": 0, "aio": 0, "known": 0, "cited": 0})
+        w["checked"] += 1
+        w["aio"] += aio
+        w["known"] += aio and cited is not None
+        w["cited"] += bool(aio and cited)
+    return [weeks_out[k] for k in sorted(weeks_out)]

@@ -32,7 +32,7 @@ NAV = [
             ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
     ("SEO", [("Hiệu suất URL", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
              ("Index", "/index", "travel_explore"), ("Quản lý URL", "/urls", "folder_open")]),
-    ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"),
+    ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates"),
                   ("Chất lượng dữ liệu", "/ai?tab=chat-luong", "verified")]),
     ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách check rank", "/budget", "account_balance_wallet"),
                   ("Phân quyền", "/access", "admin_panel_settings"),
@@ -515,8 +515,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 people_group(user, P)
             if not A.can_edit(user):
                 T.status_chip(ui, A.PROJECT_ROLES.get(user.role, "Team xem"), "grey", "visibility")
-            if ctx:
-                with ui.row().classes("items-center gap-1 no-wrap"):
+            if ctx:  # điện thoại: ẩn (đã có trong chú thích chỉ báo dữ liệu), để thanh đầu trang không xuống 3 dòng
+                with ui.row().classes("items-center gap-1 no-wrap gt-xs"):
                     ui.icon("schedule", size="16px").classes("muted")
                     ui.label(f"GSC đến {ctx['end']:%d/%m}").classes("text-xs muted")
         return budget_card
@@ -532,9 +532,23 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("Tổng quan", user, P, ctx, period="days", group=False)
         build_dashboard_page(ui, P.cfg, P.connect, user, ctx, days)
 
+    @ui.page("/aio")
+    def aio_page(request: Request):
+        """AI Overview của Google trên bộ từ khóa theo dõi (DataForSEO): trang riêng, tách khỏi số GA4 / GSC ở AI Search
+        & GEO để khách hàng dễ theo dõi. Khách hàng xem được, không sửa danh sách thương hiệu."""
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        shell("AI Overview", user, P, page_ctx(P), period=False, group=False)
+        from .web_aio import build_aio_page
+        build_aio_page(ui, P.cfg, P.connect, user)
+
     @ui.page("/ai")
     def ai_page(request: Request):
         params = dict(request.query_params)
+        if params.get("tab") == "ai-overview":  # link cũ: AI Overview đã thành trang riêng
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse("/aio")
         if not (opened := open_page(request, edit=params.get("tab") == "chat-luong")):
             return
         user, P = opened
@@ -909,5 +923,11 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         group_select.on_value_change(on_group_change)
 
     # Chỉ nghe trên máy này. Người ngoài vào qua Cloudflare Tunnel + Access (access.py), không mở cho mạng LAN.
+    from .web_rank import schedule_loop
+
+    def start_schedule():  # check rank theo lịch (ngày + giờ) của từng bộ, mỗi 15 phút
+        from nicegui import background_tasks
+        background_tasks.create(schedule_loop(base), name="rank-schedule")
+    app.on_startup(start_schedule)
     ui.run(host="127.0.0.1", port=port, title="SEO Report", reload=False, show=show, language="vi",
            storage_secret=_storage_secret(base), favicon=assets / "app-icon.svg")

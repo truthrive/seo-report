@@ -35,7 +35,7 @@ LOCAL, EDITOR, VIEWER, CLIENT = "local", "editor", "viewer", "client"
 # Loại tài khoản (cột role của access_users): EDITOR = quản trị mọi dự án, VIEWER = chỉ các dự án được gắn.
 ADMIN, MEMBER = EDITOR, VIEWER
 PROJECT_ROLES = {CLIENT: "Khách hàng", VIEWER: "Team xem", EDITOR: "Được sửa"}  # quyền trong một dự án
-CLIENT_PAGES = ("/", "/report", "/kpi", "/okr", "/tai-khoan")  # màn khách hàng được mở
+CLIENT_PAGES = ("/", "/report", "/kpi", "/okr", "/aio", "/tai-khoan")  # màn khách hàng được mở
 MAX_FAILED, LOCK_MINUTES, MIN_PASSWORD = 5, 15, 10
 
 

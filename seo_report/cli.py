@@ -281,16 +281,20 @@ def _daily_one(cfg) -> None:
     import traceback
     try:
         cmd_sync(cfg, backfill=False)
-        try:
-            cmd_rank(cfg, wait_minutes=15)
-        except (Exception, SystemExit):  # lỗi check rank không được chặn các việc sau
-            traceback.print_exc()
+        # Check rank không chạy ở đây nữa: máy chủ web tự check theo ngày + giờ của từng bộ (web_rank.schedule_loop);
+        # chạy cả hai thì cùng một bộ có thể bị gửi hai lần.
         try:
             from . import keywords, volume
             with db.connect(cfg.db_path) as con:
                 volume.refresh(con, cfg.site_url, cfg, keywords.latest_date(con, cfg.site_url),
                                log=lambda m: print(m, flush=True))
         except Exception:
+            traceback.print_exc()
+        try:  # backlink (DataForSEO): lấy lại khi lần gần nhất đã cũ hơn 7 ngày
+            from . import backlinks
+            with db.connect(cfg.db_path) as con:
+                backlinks.refresh(con, cfg.site_url, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
             traceback.print_exc()
         try:  # báo cáo công việc: chép sheet OKR / Weekly Task về, ghi trạng thái hôm nay
             from . import okr

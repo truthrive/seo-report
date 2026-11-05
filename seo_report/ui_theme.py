@@ -49,12 +49,20 @@ HEAD = """
   .sr-link:hover { color: var(--green) !important; border-color: var(--green); }
   .sr-kpi { transition: box-shadow .15s, transform .15s; flex: 1 1 0; min-width: 160px; align-self: stretch;
             display: flex; flex-direction: column; border-radius: 12px !important; }
-  .sr-kpi-hint { margin-top: auto; padding-top: 6px; line-height: 1.3; }
+  .sr-kpi-hint { margin-top: auto; padding-top: 6px; line-height: 1.35; font-size: 12px; color: var(--muted); }
+  .sr-kpi-name { font-size: 14px; color: #4A4A40; font-weight: 500; line-height: 1.2; }
+  .sr-spark-key { display: flex; gap: 16px; align-items: center; font-size: 12px; color: var(--muted); }
+  .sr-spark-key i { display: inline-block; width: 18px; vertical-align: middle; margin-right: 6px;
+    border-top: 2px solid #6B6A5E; }
+  .sr-spark-key i.dash { border-top-style: dashed; border-top-color: #A9A79B; }
+  .sr-data-ok { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: #4A4A40;
+    text-decoration: none; }
+  .sr-data-ok:hover { color: var(--green); }
   /* Khối so sánh dưới số chính (như GSC): kỳ so sánh · số của kỳ đó · chênh lệch tô màu */
   .sr-bx { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
     grid-template-areas: "t3 t5 t10 o10 hit" "gr gr gr cov cov" "mov mov mov mov mov";
     /* hàng KPI và hàng biểu đồ cao cố định (bộ nào cũng cùng khung); hàng biến động theo số dòng */
-    grid-template-rows: 150px auto auto;
+    grid-template-rows: minmax(180px, auto) auto auto;
     gap: 8px; padding: 8px; background: #E9E7DF; border-radius: 20px; }
   .sr-bx-cell { background: #FFFFFF; border-radius: 14px; padding: 16px 18px; min-width: 0; min-height: 0;
     overflow: auto; display: flex; flex-direction: column; }
@@ -65,7 +73,7 @@ HEAD = """
     letter-spacing: -0.01em; }
   .sr-bx-big { font-family: var(--head); font-size: 40px; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; }
   .sr-bx-num { font-family: var(--head); font-size: 30px; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; }
-  .sr-bx-of { font-size: 15px; color: var(--muted); font-weight: 600; }
+  .sr-bx-of { font-size: 15px; color: var(--muted); font-weight: 600; white-space: nowrap; }
   .sr-bx-pct { font-size: 13px; color: var(--muted); font-weight: 600; margin-left: 2px; padding: 1px 6px;
     background: #F4F3EE; border-radius: 6px; }
   .sr-bx-bar { height: 6px; background: #EFEDE5; border-radius: 3px; margin-top: 8px; overflow: hidden; }
@@ -127,6 +135,66 @@ HEAD = """
   .sr-more-val { font-size: 13.5px; font-weight: 600; color: var(--ink); }
   @media (max-width: 600px) { .sr-setbar-actions { margin-left: 0; width: 100%; }
     .sr-setbar-cta { flex: 1 1 auto; } }
+  .sr-kw-link { cursor: pointer; }
+  .sr-kw-link:hover, .sr-kw-link:focus-visible { text-decoration: underline; text-underline-offset: 3px;
+    color: var(--green); outline: none; }
+  .sr-serp-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .sr-serp-cell { background: #F6F6F1; border-radius: 10px; padding: 10px 14px; min-width: 0; }
+  .sr-serp-row { padding: 5px 6px; border-bottom: 1px solid #F0EEE6; border-radius: 6px; }
+  .sr-serp-row.me { background: #E7F3EA; }
+  @media (max-width: 600px) { .sr-serp-pair { grid-template-columns: 1fr; } }
+  .sr-aio-scope { font-size: 13px; color: #4A4A40; margin-bottom: 12px; }
+  .sr-aio-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+  .sr-aio-kpis > .sr-kpi { min-width: 0; height: 100%; }
+  @media (max-width: 1100px) { .sr-aio-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .sr-aio-bars { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; max-width: 720px; }
+  .sr-aio-bar { display: grid; grid-template-columns: minmax(0, 160px) minmax(0, 1fr) 110px; gap: 12px;
+    align-items: center; font-size: 13.5px; color: #3A3A32; }
+  .sr-aio-bar.own { font-weight: 700; }
+  .sr-aio-bar .track { height: 10px; background: #EFEDE5; border-radius: 5px; overflow: hidden; }
+  .sr-aio-bar .fill { height: 100%; border-radius: 5px; }
+  .sr-aio-bar .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .sr-aio-wait { height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; background: #FAFAF6; border-radius: 10px; margin-top: 10px; }
+  .sr-brand-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .sr-brand-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid #E4E2D9;
+    border-radius: 999px; font-size: 13px; color: #3A3A32; background: #fff; }
+  .sr-brand-chip.own { border-color: #1F221E; border-width: 1.5px; font-weight: 700; }
+  .sr-brand-chip i, .sr-brand-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .sr-brand-chip .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sr-brand-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+  .sr-brand-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .sr-brand-card.own { border-color: #1F221E; }
+  .sr-brand-logo { width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center;
+    justify-content: center; overflow: hidden; flex: none; font-size: 13px; font-weight: 700; }
+  .sr-brand-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .sr-brand-chip .sr-brand-logo { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; }
+  .sr-brand-name { font-size: 15px; font-weight: 700; color: var(--ink); min-width: 0; }
+  .sr-brand-meta { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 13px; }
+  .sr-brand-meta dt { color: var(--muted); }
+  .sr-brand-meta dd { margin: 0; color: #2A2A24; overflow-wrap: anywhere; }
+  .sr-brand-add { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 100px;
+    border: 1.5px dashed #CFCCC0; border-radius: 14px; background: transparent; color: #4A4A40; font: inherit;
+    font-size: 14px; font-weight: 600; cursor: pointer; }
+  .sr-brand-add:hover, .sr-brand-add:focus-visible { border-color: var(--green); color: var(--green); outline: none; }
+  .sr-sug-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sr-sug { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px 5px 9px; border: 1px solid #E4E2D9;
+    border-radius: 999px; background: #fff; font: inherit; font-size: 13px; color: #2A2A24; cursor: pointer; }
+  .sr-sug .n { color: var(--muted); font-size: 12px; }
+  .sr-sug:hover, .sr-sug:focus-visible { border-color: var(--green); outline: none; }
+  .sr-aio-text { white-space: pre-wrap; font-size: 13.5px; line-height: 1.55; background: #FAFAF6; border-radius: 10px;
+    padding: 12px 14px; max-height: 320px; overflow: auto; }
+  .sr-aio-table table { table-layout: fixed; width: 100%; }
+  .sr-aio-table td { overflow: hidden; text-overflow: ellipsis; }
+  @media (min-width: 900px) { .sr-aio-table .q-table__middle { overflow-x: hidden; } }
+  @media (max-width: 899px) { .sr-aio-table table { min-width: 860px; } }
+  .sr-tier-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: auto; padding-top: 10px; }
+  .sr-tier-chips > .row { white-space: nowrap; padding: 2px 7px !important; gap: 3px !important; }
+  .sr-tier-chips .sr-miss-link { padding: 2px 10px;
+    border-radius: 999px; font-size: 12px; }
+  .sr-miss-link { border: 0; cursor: pointer; font: inherit; color: var(--green); background: #E7F3EA; font-weight: 650; }
+  .sr-miss-link:hover, .sr-miss-link:focus-visible { text-decoration: underline; outline: none; }
+  .sr-opp-row { padding: 6px 2px; border-bottom: 1px solid #F0EEE6; }
   .sr-set-chip { flex: none; font-size: 11.5px; font-weight: 600; color: #5F5D52; background: #F1F0EA;
     border-radius: 999px; padding: 1px 9px; }
   .sr-set-facts { display: flex; flex-wrap: wrap; gap: 8px 0; margin-top: 8px; }
@@ -196,7 +264,7 @@ HEAD = """
   @media (max-width: 1100px) { .sr-bx { grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas: "t3 t5" "t10 o10" "hit hit" "gr gr" "cov cov" "mov mov";
-    grid-template-rows: 150px 150px auto auto auto auto; } }
+    grid-template-rows: minmax(180px, auto) minmax(180px, auto) auto auto auto auto; } }
   @media (max-width: 600px) { .sr-bx { grid-template-columns: minmax(0, 1fr); padding: 6px;
     grid-template-areas: "t3" "t5" "t10" "o10" "hit" "gr" "cov" "mov";
     grid-template-rows: auto; }
@@ -215,6 +283,10 @@ HEAD = """
   .sr-a11y-panel:focus-visible { outline: 2px solid #2563EB; outline-offset: 4px; border-radius: 12px; }
   .sr-set-row { padding: 12px 16px; }
   .sr-set-editor { border-top: 1px solid #EEECE4; margin-top: 12px; padding-top: 12px; }
+  .sr-danger-box { border-radius: 10px; padding: 10px 12px; background: #FCEBE3; color: #9A3412;
+    display: flex; flex-direction: column; gap: 4px; }
+  .sr-draft-note { display: flex; align-items: center; gap: 12px; border-radius: 14px; padding: 12px 16px;
+    background: #FBF1DE; color: #8F5F14; margin-bottom: 12px; }
   .sr-cost-box { border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
   .sr-cost-box.green { background: #EEF6EF; color: #1E5A2A; }
   .sr-cost-box.amber { background: #FBF1DE; color: #8F5F14; }
@@ -224,11 +296,14 @@ HEAD = """
   .sr-info-tip { font-size: 12.5px; line-height: 1.45; padding: 8px 10px; background: #2B2E29; }
   .sr-info-head { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
     color: #C9D88A; }
-  .sr-cmp { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; margin-top: 8px; padding-top: 6px;
+  .sr-cmp { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 4px; margin-top: 8px;
+    padding-top: 6px;
             border-top: 1px dashed #DEDCD2; white-space: nowrap; min-width: 0; }
-  .sr-cmp .lab { flex-basis: 100%; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+  .sr-cmp .lab { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #5F5D52;
+    background: #F1F0EA; border-radius: 6px; padding: 2px 7px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 100%;
                  line-height: 1.3; }
-  .sr-cmp .val { font-size: 15px; font-weight: 650; color: #4A4A40; font-variant-numeric: tabular-nums; }
+  .sr-cmp .val { font-size: 15px; font-weight: 700; color: #9A8F6E; font-variant-numeric: tabular-nums; }
   .sr-cmp .diff { font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .sr-cmp .diff.up { color: #1E7C31; } .sr-cmp .diff.down { color: #C2410C; } .sr-cmp .diff.flat { color: #6B6A5E; }
   .sr-kpi-row { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; align-items: stretch; }
@@ -286,7 +361,9 @@ HEAD = """
   .sr-bento-hero { font-family: var(--head); font-size: 32px; font-weight: 800; letter-spacing: -0.035em;
                    line-height: 1.05; }
   .sr-seg { background: #EEECE4; border-radius: 999px; padding: 3px; gap: 2px; box-shadow: none; }
-  .sr-seg .q-btn { border-radius: 999px !important; padding: 2px 12px; min-height: 26px; font-size: 12.5px; }
+  .sr-seg .q-btn { border-radius: 999px !important; padding: 2px 12px; min-height: 26px; font-size: 12.5px;
+    white-space: nowrap; }
+  .sr-seg { flex: none; }
   .sr-seg .q-btn.bg-white { box-shadow: 0 1px 2px rgba(31,34,30,.12); font-weight: 600; }
   .sr-access-row { padding: 8px 4px; border-bottom: 1px solid var(--line); }
   .sr-access-row:last-child { border-bottom: 0; }
@@ -412,7 +489,7 @@ HEAD = """
   @media (max-width: 1100px) { .sr-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 600px) { .sr-dash-grid { grid-template-columns: 1fr; } }
   .sr-dash-grid > .sr-kpi { min-width: 0; }
-  .sr-dash-three { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px;
+  .sr-dash-three { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px;
                    align-items: stretch; }
   .sr-dash-three > .sr-card { height: 100%; }
   .sr-mini-stats { display: flex; gap: 24px; flex-wrap: wrap; }
@@ -525,7 +602,9 @@ def compare_line(ui, parts: dict, good: bool | None) -> None:
     """Khối so sánh dưới số chính: kỳ so sánh và số của kỳ đó ("Tuần 28/09 · 5.535"). Mức chênh không đặt ở đây (dễ
     đọc nhầm là kỳ trước tăng / giảm) mà ở nhãn cạnh số chính, xem change_text."""
     with ui.element("div").classes("sr-cmp") as box:
-        ui.label(parts["label"]).classes("lab")
+        with ui.element("span").classes("lab"):
+            ui.icon("event", size="13px").props('aria-hidden="true"')
+            ui.label(parts["label"])
         ui.label(parts["value"]).classes("val")
     box.props["title"] = f"{parts['label']}: {parts['value']}" + (f" ({parts['diff']})" if parts.get("diff") else "")
 
@@ -558,13 +637,21 @@ def change_text(delta: str, prev: dict | None) -> str:
     return f"{diff} ({delta})" if delta and not delta.startswith("kỳ trước") else diff
 
 
-def delta_badge(ui, text: str, good: bool | None):
+def delta_badge(ui, text: str, good: bool | None, since: str = ""):
+    """Nhãn thay đổi: ▲ / ▼ thay cho dấu +/− (không ghi cả hai: "▼ -123"), màu theo tốt / xấu. since: kỳ so sánh, hiện
+    trong chú thích và cho trình đọc màn hình ("Giảm 123 (0,6%) so với 28 ngày trước đó")."""
     if not text:
         return
     cls = "flat" if good is None else ("up" if good else "down")
-    arrow = "" if good is None else ("▲ " if text.lstrip().startswith("+") else "▼ " if text.lstrip().startswith(
-        ("-", "−")) else "")
-    ui.label(arrow + text).classes(f"sr-delta {cls}")
+    raw = text.strip()
+    up, down = raw.startswith("+"), raw.startswith(("-", "−"))
+    arrow = "▲ " if up else "▼ " if down else ""
+    shown = re.sub(r"(?<![\w,.])[+\-−](?=\d)", "", raw)  # bỏ dấu trước số, mũi tên đã nói chiều
+    b = ui.label(arrow + shown).classes(f"sr-delta {cls}")
+    if since and (up or down):
+        tip = f"{'Tăng' if up else 'Giảm'} {shown} so với {since}"
+        b.tooltip(tip)
+        b.props["aria-label"] = tip
 
 
 def sparkline(ui, values: list, color: str = GREEN, height: int = 40, labels: list | None = None,
@@ -769,7 +856,8 @@ def _has(m: dict) -> bool:
 def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | None = None, hint: str = "",
         spark: list | None = None, tone: str = "green", href: str | None = None, spark_kind: str = "bar",
         spark_labels: list | None = None, spark_fmt: str = "num", prev: dict | None = None,
-        spark_compare: list | None = None, spark_compare_labels: list | None = None, info: tuple | None = None):
+        spark_compare: list | None = None, spark_compare_labels: list | None = None, info: tuple | None = None,
+        source: str = ""):
     """Thẻ KPI: icon + nhãn, số lớn, nhãn thay đổi (xanh/đỏ), sparkline, dòng phụ. Có href thì bấm để đi sâu.
     Bố cục cố định để mọi thẻ cùng hàng cao bằng nhau: spark=[] giữ chỗ biểu đồ dù không có số, dòng phụ luôn có
     chỗ (để trống nếu không có)."""
@@ -782,18 +870,23 @@ def kpi(ui, icon: str, label: str, value: str, delta: str = "", good: bool | Non
         with ui.row().classes("items-center gap-2 no-wrap"):
             with ui.element("div").classes("sr-icon-bubble").style(f"background:{bg}"):
                 ui.icon(icon, size="18px").style(f"color:{fg}")
-            ui.label(label).classes("text-sm muted").style("line-height:1.2")
+            name = ui.label(label).classes("sr-kpi-name")
+            if source:  # nguồn số liệu: trong chú thích, không chiếm một dòng chữ nhỏ cuối thẻ
+                name.tooltip(f"Nguồn: {source}")
             info_icon(ui, label, info)  # (i): chỉ số là gì, đo thế nào
-        with ui.row().classes("items-baseline gap-2 q-mt-sm").style("row-gap:2px"):  # hẹp thì nhãn chênh xuống dòng
+        # số lớn bên trái, nhãn thay đổi bên phải (như thẻ ở màn Thứ hạng); hẹp thì nhãn xuống dòng
+        with ui.row().classes("w-full items-baseline gap-2 q-mt-sm").style("row-gap:2px"):
             ui.label(value).classes("sr-kpi-value num")
-            delta_badge(ui, change_text(delta, prev), good)
-        if prev:  # số kỳ so sánh và mức chênh (như ô so sánh của GSC)
+            ui.space()
+            delta_badge(ui, change_text(delta, prev), good, since=(prev or {}).get("label", ""))
+        if prev:  # số kỳ so sánh: nhãn kỳ (xám) + số, màu nhạt hơn số chính
             compare_line(ui, prev, good)
         if spark is not None:
             with ui.element("div").classes("q-mt-xs w-full"):
                 sparkline(ui, spark, fg, labels=spark_labels, fmt=spark_fmt, compare=spark_compare,
                           compare_labels=spark_compare_labels)
-        ui.label(hint or " ").classes("text-xs muted sr-kpi-hint")
+        if hint:  # chỉ trạng thái cần đọc (chưa kết nối, số đến ngày…), không phải nguồn
+            ui.label(hint).classes("sr-kpi-hint")
     return card
 
 

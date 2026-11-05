@@ -381,7 +381,7 @@ def rank_overview(ui, rs: dict, unit: str, kpi: dict | None = None) -> None:
     title = "Thứ hạng từ khóa cam kết" if rs["committed"] else "Thứ hạng từ khóa theo dõi"
     sub = "Đo trên Google điện thoại tại Việt Nam · lần đo mới nhất so với lần trước"
     with T.section(ui, title, "leaderboard", (f"{rs['total']} từ khóa · " if rs["total"] else "") + sub, href="/rank",
-                   link_text="Từ khóa & rank"):
+                   link_text="Thứ hạng"):
         if not rs["total"]:
             ui.label(f"Chưa có lần check rank nào trong {unit} này.").classes("text-sm muted")
             return
@@ -537,19 +537,25 @@ def health_strip(ui, cfg, connect, rep) -> None:
     icon = {Q.OK: "check_circle", Q.WARN: "warning", Q.ERROR: "error", Q.INFO: "info"}
     short = {"GSC_FRESHNESS": "GSC", "GSC_GAPS": "GSC thiếu ngày", "GENERATIVE_AI_FRESHNESS": "AI Overviews",
              "NO_GENERATIVE_AI_SOURCE": "AI Overviews: chưa nhập", "DAILY_JOB": "Lịch hằng ngày", "GSC_NO_DATA": "GSC"}
-    with ui.row().classes("w-full items-center gap-2"):
-        ui.label("Dữ liệu:").classes("text-xs muted")
-        for chk in gsc + [daily]:
-            if chk["code"] == "GSC_GAPS" and chk["status"] == Q.OK:
-                continue
-            m = re.search(r"tới (\d{4})-(\d{2})-(\d{2})|cuối (\d{2}/\d{2})", chk["title"])
-            when = (f" {m.group(3)}/{m.group(2)}" if m.group(1) else f" {m.group(4)}") if m else ""
-            with ui.element("div"):
-                T.status_chip(ui, short.get(chk["code"], chk["title"]) + when, tone[chk["status"]],
-                              icon[chk["status"]])
-                ui.tooltip(chk["title"] + (". " + chk["detail"] if chk["detail"] else ""))
-        ui.link("Chất lượng dữ liệu →", "/ai?tab=chat-luong").classes("text-xs no-underline q-ml-sm").style(
-            f"color:{T.GREEN}")
+    # Một chỉ báo gọn thay cho hàng nhãn nhỏ: ổn hết thì "Dữ liệu đầy đủ", có vấn đề thì nêu số cảnh báo; chi tiết
+    # từng nguồn trong chú thích, bấm để mở màn Chất lượng dữ liệu.
+    checks = [c_ for c_ in gsc + [daily] if not (c_["code"] == "GSC_GAPS" and c_["status"] == Q.OK)]
+    order = [Q.ERROR, Q.WARN, Q.INFO, Q.OK]
+    worst = min((c_["status"] for c_ in checks), key=order.index, default=Q.OK)
+    bad = [c_ for c_ in checks if c_["status"] in (Q.ERROR, Q.WARN)]
+    text = "Dữ liệu đầy đủ" if not bad else f"Dữ liệu: {len(bad)} cảnh báo"
+    link = ui.link(target="/ai?tab=chat-luong").classes("sr-data-ok")
+    with link:
+        ui.icon(icon[worst], size="16px").style(f"color:{T.TONES[tone[worst]][1]}")
+        ui.label(text)
+        with ui.tooltip().props("max-width=360px"):
+            for chk in checks:
+                m = re.search(r"tới (\d{4})-(\d{2})-(\d{2})|cuối (\d{2}/\d{2})", chk["title"])
+                when = (f" {m.group(3)}/{m.group(2)}" if m.group(1) else f" {m.group(4)}") if m else ""
+                ui.label(f"{'✓' if chk['status'] == Q.OK else '!'} {short.get(chk['code'], chk['title'])}{when}"
+                         + (f": {chk['detail']}" if chk["detail"] and chk["status"] != Q.OK else ""))
+            ui.label("Bấm để mở màn Chất lượng dữ liệu").classes("muted")
+    link.props["aria-label"] = text + ". Mở màn Chất lượng dữ liệu"
 
 
 

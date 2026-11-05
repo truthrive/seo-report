@@ -444,7 +444,7 @@ class EditTest(unittest.TestCase):
         written = []
         with mock.patch.object(auth, "get_credentials", return_value=creds), \
                 mock.patch.object(KP, "fetch", return_value=after), \
-                mock.patch.object(KP, "write_tabs", side_effect=lambda sh, sid, values: written.append(values)), \
+                mock.patch.object(KP, "write_tabs", side_effect=lambda sh, sid, values, *_: written.append(values)), \
                 mock.patch("googleapiclient.discovery.build", return_value=object()):
             d = KP.plan(WizardTest.SPEC)
             with self.assertRaises(KP.SheetChanged):
@@ -524,3 +524,51 @@ class ParentFolderTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TabRenameTest(unittest.TestCase):
+    """Khách đổi tên tab trên Google Sheets: tool vẫn nhận ra tab (mã tab đã lưu, tên gần giống), không đoán bừa."""
+
+    def test_resolve_by_saved_id_exact_and_similar_name(self):
+        props = [{"sheetId": 1, "title": "OKRs 3 tháng"}, {"sheetId": 7, "title": "2. KPI SEO 12 tháng"},
+                 {"sheetId": 9, "title": "Từ khóa cam kết"}, {"sheetId": 3, "title": "3. Bộ Keyword SEO"}]
+        self.assertEqual(KP.resolve_tab(props, KP.KPI_TAB, {})["sheetId"], 7)  # tên mới vẫn có "KPI"
+        self.assertEqual(KP.resolve_tab(props, KP.KW_TAB, {})["sheetId"], 9)
+        renamed = [dict(p, title="Danh sách KW") if p["sheetId"] == 9 else p for p in props]
+        self.assertIsNone(KP.resolve_tab(renamed, KP.KW_TAB, {}))  # tên khó đoán: không đoán bừa
+        self.assertEqual(KP.resolve_tab(renamed, KP.KW_TAB, {KP.KW_TAB: 9})["title"], "Danh sách KW")  # mã tab
+        two = props + [{"sheetId": 8, "title": "KPI cũ"}]
+        self.assertIsNone(KP.resolve_tab(two, KP.KPI_TAB, {}))  # hai tab giống nhau: phải chọn tay
+        self.assertEqual(KP.resolve_tab([{"sheetId": 5, "title": "Bản sao của KPI cam kết"}], KP.KPI_TAB, {})["sheetId"],
+                         5)
+
+    def test_tab_ids_saved_per_sheet(self):
+        con = sqlite3.connect(":memory:")
+        KP.ensure_tables(con)
+        KP.set_tab_id(con, "S1", KP.KPI_TAB, 7)
+        KP.set_tab_id(con, "S1", KP.KW_TAB, 9)
+        KP.set_tab_id(con, "S2", KP.KPI_TAB, 1)
+        self.assertEqual(KP.tab_ids(con, "S1"), {KP.KPI_TAB: 7, KP.KW_TAB: 9})
+        self.assertEqual(KP.tab_ids(con, "S2"), {KP.KPI_TAB: 1})
+        self.assertIn("KPI cam kết", str(KP.TabNotFound(KP.KPI_TAB, ["A", "B"])))
+
+    def test_sync_without_keyword_tab_keeps_committed_keywords(self):
+        """Không thấy tab từ khóa (đổi tên khó đoán) thì không coi như danh sách rỗng: từ khóa cam kết giữ nguyên."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from seo_report import db
+        from seo_report.config import RankSettings
+        con = db.connect(":memory:")
+        KP.set_sheet(con, "https://docs.google.com/spreadsheets/d/" + "a" * 30 + "/edit")
+        cfg = SimpleNamespace(site_url="https://x.vn/", rank=RankSettings(monthly_budget_usd=20))
+        with mock.patch.object(KP, "fetch", return_value={KP.KPI_TAB: NEW_ROWS, KP.KW_TAB: [
+                ["Từ khóa", "URL mục tiêu"], ["kính a", ""], ["kính b", ""]]}):
+            KP.sync(con, cfg, "t", TODAY)
+        kpi_set = next(s for s in R.sets(con, cfg.site_url) if s["kind"] == "kpi")
+        self.assertEqual(kpi_set["count"], 2)
+        with mock.patch.object(KP, "fetch", return_value={KP.KPI_TAB: NEW_ROWS}):
+            info = KP.sync(con, cfg, "t", TODAY)
+        self.assertTrue(info["keyword_tab_missing"])
+        kpi_set = next(s for s in R.sets(con, cfg.site_url) if s["kind"] == "kpi")
+        self.assertEqual(kpi_set["count"], 2)

@@ -107,8 +107,9 @@ def _tile(ui, line: dict, ch: dict, running: bool, has_ga4: bool) -> None:
                 f'background:{color};opacity:.28"></div>'
                 f'<div style="position:absolute;inset:0 auto 0 0;width:{done * 100:.1f}%;'
                 f'background:{color}"></div></div>').classes("w-full")
-        T.status_chip(ui, text, tone, icon)
-        ui.label(hint).classes("text-xs muted sr-kpi-hint")
+        if ch["target"] is not None:  # tháng không cam kết: ghi một lần ở đầu khối, không lặp trên từng ô
+            T.status_chip(ui, text, tone, icon)
+        ui.label(hint).classes("sr-kpi-hint")
 
 
 def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
@@ -131,8 +132,11 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
     m = next((x for x in months if x["status"] == "running"), months[-1])
     running = m["status"] == "running"
     total = len(p["months"])
+    free = [KP.line_label(ln).replace("Từ khóa top", "Top") for ln in p["lines"]
+            if (m["checks"].get(KP.line_id(ln)) or {}).get("target", 0) is None]
     sub = (f"{_vn(m['from'])} – {_vn(m['to'])} · {m['rank']['total']} từ khóa cam kết"
-           + (" · đang chạy, số còn thay đổi" if running else " · đã chốt"))
+           + (" · đang chạy, số còn thay đổi" if running else " · đã chốt")
+           + (f" · tháng này không cam kết: {', '.join(free)}" if free else ""))
     with T.section(ui, f"Tiến độ KPI · Tháng {m['n']}/{total}" + (f" · {p['project']}" if p.get("project") else ""),
                    "flag", sub, href="/kpi" if compact else None, link_text=f"Xem {total} tháng"):
         with T.kpi_row(ui):
@@ -142,11 +146,12 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
                     _tile(ui, line, ch, running, bool(p.get("ga4")))
         notes = []
         if m["rank"].get("target_set"):
-            notes.append(f"{m['rank']['target_ok']}/{m['rank']['target_set']} từ khóa đạt top target riêng")
+            notes.append(f"{m['rank']['target_ok']}/{m['rank']['target_set']} từ khóa đạt Top mục tiêu riêng "
+                         "của từng từ khóa")
         if m["rank"]["checked"] < m["rank"]["total"]:
             left = m["rank"]["total"] - m["rank"]["checked"]
             notes.append(f"{left} từ khóa chưa có lần check nào trong tháng này" + (
-                ": lịch check tự động sẽ cập nhật, hoặc bấm Check ngay ở Từ khóa & rank" if running
+                ": lịch check tự động sẽ cập nhật, hoặc bấm Kiểm tra thứ hạng ở màn Từ khóa & Thứ hạng" if running
                 else ": tính là chưa đạt"))
         if notes:
             ui.label(" · ".join(notes)).classes("text-xs muted")
@@ -274,11 +279,52 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
             if r["bad_url"]:
                 ui.notify(f"{len(r['bad_url'])} dòng có URL mục tiêu không thuộc site: {r['bad_url'][0]}",
                           type="warning", multi_line=True)
+        except KP.TabNotFound as e:  # tab đổi tên mà không đoán được: cho chọn tab, tool nhớ theo mã tab
+            sync_btn.props(remove="loading")
+            pick_tab(e)
+            return
         except (Exception, SystemExit) as e:  # noqa: BLE001
             ui.notify(f"Không đồng bộ được: {e}", type="negative", multi_line=True)
         finally:
             sync_btn.props(remove="loading")
         ui.navigate.reload()
+
+    def pick_tab(err) -> None:
+        """Chọn tab thay cho tab không tìm thấy; tool lưu mã tab (không đổi khi đổi tên) rồi đồng bộ lại."""
+        if not ed:
+            ui.notify(str(err), type="negative", multi_line=True)
+            return
+        label = {KP.KPI_TAB: "tab KPI cam kết", KP.KW_TAB: "tab Từ khóa cam kết"}.get(err.want, err.want)
+        with ui.dialog() as dlg, ui.card().style("min-width: 460px; max-width: 94vw; border-radius: 14px"):
+            ui.label(f"Không tìm thấy {label}").classes("text-lg font-semibold")
+            ui.label("Có thể tab đã được đổi tên trên Google Sheets. Chọn đúng tab, tool sẽ nhớ tab này kể cả khi đổi "
+                     "tên lần sau.").classes("text-sm muted")
+            sel = ui.select(err.titles, label="Tab trong sheet").props("outlined dense").classes("w-full")
+
+            async def go():
+                if not sel.value:
+                    return
+
+                def work():
+                    from googleapiclient.discovery import build
+
+                    from . import auth
+                    svc = build("sheets", "v4", credentials=auth.get_credentials(cfg, need=(auth.SHEETS_SCOPE,)),
+                                cache_discovery=False)
+                    meta = svc.spreadsheets().get(spreadsheetId=sid,
+                                                  fields="sheets(properties(sheetId,title))").execute()
+                    gid = next(x["properties"]["sheetId"] for x in meta["sheets"]
+                               if x["properties"]["title"] == sel.value)
+                    with connect() as c:
+                        KP.set_tab_id(c, sid, err.want, gid)
+                await run.io_bound(work)
+                dlg.close()
+                await do_sync()
+
+            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+                ui.button("Dùng tab này", on_click=go).props("unelevated no-caps color=primary")
+        dlg.open()
 
     if not sid:
         _setup(ui, cfg, connect, ed, user, app_connect, project)
@@ -335,7 +381,7 @@ def keyword_table(ui, m: dict, site: str) -> None:
                                                x["rank"] or 0, x["keyword"]))
     sub = ((f"Theo lần check cuối trong tháng {m['n']}" if m["n"] else "Mốc trước dự án: lần check mới nhất")
            + (f" · {rk['target_ok']}/{rk['target_set']} đạt top target" if rk["target_set"] else ""))
-    with T.section(ui, f"Từ khóa cam kết · {rk['total']}", "search", sub, href="/rank", link_text="Từ khóa & rank"):
+    with T.section(ui, f"Từ khóa cam kết · {rk['total']}", "search", sub, href="/rank", link_text="Thứ hạng"):
         if not items:
             ui.label("Tab 'Từ khóa cam kết' chưa có từ khóa nào.").classes("text-sm muted")
             return

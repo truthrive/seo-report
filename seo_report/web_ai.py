@@ -68,6 +68,7 @@ def _make_analytics(cfg, connect_db):
 
 
 TAB_SLUGS = {"tong-quan": "Tổng quan", "nguon": "Nguồn AI", "trang-dich": "Trang đích", "dia-ly": "Nguồn AI", "ai-google": "AI trên Google",
+
              "co-hoi": "Cơ hội SEO/GEO", "chat-luong": "Chất lượng dữ liệu"}
 LAZY = {"Trang đích": "land", "Địa lý": "geo", "Cơ hội SEO/GEO": "opp", "Chất lượng dữ liệu": "dq"}
 
