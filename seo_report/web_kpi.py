@@ -229,17 +229,25 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
     ed = can_edit(user)
     with connect() as c:
         sid = KP.sheet_id(c)
+    with connect() as c:
+        has_versions = bool(KP.versions(c)) if sid else False
     right = T.page_header(ui, "flag", "Cam kết KPI",
-                          "Thứ hạng bộ từ khóa cam kết và phiên Organic / AI Assistant theo từng tháng dự án, nhập trên "
-                          "Google Sheet", eyebrow="KPI")
+                          "Thứ hạng bộ từ khóa cam kết và phiên Organic / AI Assistant theo từng tháng dự án. Sửa trên "
+                          "tool; sheet dự án để xem (tool tự ghi).", eyebrow="KPI")
     with right:
         if sid and ed:  # người chỉ xem không mở được sheet nội bộ
             ui.button("Mở sheet", icon="open_in_new", on_click=lambda: ui.navigate.to(
                 f"https://docs.google.com/spreadsheets/d/{sid}/edit", new_tab=True)).props("outline no-caps")
-        if sid and ed:
+        if sid and ed and has_versions:
             ui.button("Sửa cam kết", icon="edit", on_click=lambda: ui.navigate.to("/kpi/sua")).props(
                 "outline no-caps")
-            sync_btn = ui.button("Đồng bộ ngay", icon="sync", on_click=lambda: do_sync()).props("unelevated no-caps")
+            sync_btn = ui.button("Ghi lên sheet", icon="upload", on_click=lambda: do_publish()).props(
+                "unelevated no-caps").tooltip("Ghi ngay tab KPI cam kết, tab từng bộ từ khóa và tab Dữ liệu check "
+                                              "(tool cũng tự ghi khi dữ liệu đổi)")
+        elif sid and ed:  # sheet vừa gắn: nhập một lần từ sheet, sau đó tool là nơi quản lý
+            sync_btn = ui.button("Nhập từ sheet", icon="download", on_click=lambda: do_sync()).props(
+                "unelevated no-caps")
+        if sid and ed:
             with ui.button(icon="more_vert").props("flat round dense color=grey-8"):
                 with ui.menu():
                     ui.menu_item("Đổi sheet / tạo sheet dự án mới", on_click=lambda: ask_unlink())
@@ -261,6 +269,22 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
                 ui.button("Gỡ sheet", on_click=go).props("unelevated no-caps color=negative")
         dlg.open()
+
+    async def do_publish():
+        from . import sheet_view as SV
+        sync_btn.props("loading")
+        try:
+            def work():
+                with connect() as c:
+                    info = SV.publish(c, cfg)
+                    KP._setting(c, "sheet_view_fp", SV.fingerprint(c, cfg.site_url))
+                    return info
+            r = await run.io_bound(work)
+            ui.notify(f"Đã ghi {r['tabs']} tab lên sheet ({r['rows']} dòng dữ liệu check)", type="positive")
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            ui.notify(f"Không ghi được lên sheet: {e}", type="negative", multi_line=True)
+        finally:
+            sync_btn.props(remove="loading")
 
     async def do_sync():
         sync_btn.props("loading")
@@ -330,13 +354,15 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
         _setup(ui, cfg, connect, ed, user, app_connect, project)
         return
 
+    from . import sheet_view as SV
     with connect() as c:
-        info, vs = KP.sync_info(c), KP.versions(c)
-    if info:
-        T.status_chip(ui, f"Đồng bộ lúc {_local(info['at'])} · {info['months']} tháng · {info['keywords']} từ khóa",
-                      "grey", "schedule")
+        KP.snapshot_keywords(c, cfg.site_url, date.today())  # từ khóa cam kết theo bộ Cam kết trên tool
+        vs, pub = KP.versions(c), SV.published(c)
+    if pub:
+        T.status_chip(ui, f"Ghi lên sheet lúc {_local(pub['at'])} · {pub['tabs']} tab", "grey", "schedule")
     if not vs:
-        T.empty_state(ui, "sync", "Chưa đồng bộ lần nào", "Bấm Đồng bộ ngay để đọc KPI từ sheet.")
+        T.empty_state(ui, "download", "Chưa có KPI trên tool", "Bấm Nhập từ sheet để lấy KPI cam kết và từ khóa từ "
+                      "sheet một lần; sau đó sửa trên tool.")
         return
 
     box = ui.column().classes("w-full gap-4")
@@ -664,39 +690,24 @@ def _new_line(lid: str, mode: str, unit: str) -> dict:
 
 
 def build_kpi_edit_page(ui, cfg, connect, user) -> None:
-    """Form sửa cam kết: khối thông tin, mỗi cam kết một dòng với ô theo tháng, từ khóa. Lưu = ghi vào sheet (bố cục
-    mới) rồi đồng bộ; sheet bị sửa trong lúc mở form thì hỏi lại trước khi ghi đè."""
+    """Form sửa cam kết: khối thông tin, mỗi cam kết một dòng với ô theo tháng. Lưu = phiên bản KPI mới trên tool, rồi
+    tool ghi lại tab KPI cam kết lên sheet (nơi xem). Từ khóa cam kết quản lý ở màn Từ khóa & Thứ hạng."""
     from nicegui import run
 
     from .okr import parse_date
     with connect() as c:
         sid = KP.sheet_id(c)
     right = T.page_header(ui, "edit", "Sửa cam kết KPI",
-                          "Sửa trên tool rồi Lưu: tool ghi vào sheet (bố cục mới) và đồng bộ lại. Sheet vẫn là nơi "
-                          "lưu cam kết.", eyebrow="KPI")
+                          "Sửa trên tool rồi Lưu: tool lưu phiên bản mới và ghi lại tab KPI cam kết lên sheet dự án.",
+                          eyebrow="KPI")
     with right:
         ui.button("Quay lại", icon="arrow_back", on_click=lambda: ui.navigate.to("/kpi")).props("flat no-caps")
-    if not sid:
-        T.empty_state(ui, "flag", "Chưa có sheet KPI", "Thiết lập cam kết ở màn KPI cam kết trước.")
+    with connect() as c:
+        cur = KP.version_at(KP.versions(c), date.today())
+    if not cur:
+        T.empty_state(ui, "flag", "Chưa có KPI cam kết", "Thiết lập cam kết ở màn KPI cam kết trước.")
         return
-    box = ui.column().classes("w-full gap-4")
-    with box:
-        T.skeleton(ui).classes("w-full").style("height: 260px; border-radius: 14px")
-
-    async def load():
-        try:
-            loaded = await run.io_bound(lambda: KP.load_for_edit(cfg, sid))
-        except (Exception, SystemExit) as e:  # noqa: BLE001
-            box.clear()
-            with box:
-                T.status_chip(ui, f"Không đọc được sheet: {str(e)[:200]}", "red", "error")
-            return
-        box.clear()
-        with box:
-            _edit_form(ui, cfg, connect, user, sid, loaded)
-
-    from nicegui import background_tasks
-    background_tasks.create(load())
+    _edit_form(ui, cfg, connect, user, sid, {"data": cur, "keywords": [], "fingerprint": None, "old_format": False})
 
 
 def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
@@ -721,6 +732,12 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
                                  step=1).props("outlined dense").classes("w-60")
             base_ai = ui.number("Baseline AI Assistant", value=data["baseline"].get("ai"), min=0, step=1).props(
                 "outlined dense").classes("w-52")
+        from . import rank as R
+        with connect() as c:
+            kpi_sets = {x["id"]: x["name"] for x in R.sets(c, cfg.site_url) if x["kind"] == "kpi"}
+        first_set = next((ln.get("set") for ln in state["lines"] if ln["kind"] == "rank"), None)
+        set_pick = ui.select({0: "Mọi bộ Cam kết", **kpi_sets}, value=first_set if first_set in kpi_sets else 0,
+                             label="Thứ hạng tính trên bộ").props("outlined dense").classes("w-72")
         with ui.row().classes("items-center gap-4"):
             mode = ui.radio({"shared": "Bộ chung (top 3 nằm trong top 5, tính trên cả danh sách)",
                              "per_tier": "Bộ riêng theo mốc (từ khóa có Top target = N, chấm độc lập)"},
@@ -805,11 +822,18 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
                 ln["targets"][str(n)] = int(v)
             if ln["kind"] == "rank":
                 ln["unit"], ln["mode"] = unit.value, mode.value
+        for ln in state["lines"]:  # bộ từ khóa của các dòng Top N (0 = mọi bộ Cam kết)
+            if ln["kind"] == "rank":
+                ln.pop("set", None)
+                if set_pick.value:
+                    ln["set"] = int(set_pick.value)
 
-    with T.section(ui, "Từ khóa cam kết", "search", "Mỗi dòng một từ khóa: từ khóa | URL mục tiêu | Top 3 (URL và "
-                                                    "Top không bắt buộc)"):
-        kw_text = ui.textarea(value=KP.keyword_text(loaded["keywords"])).props("outlined autogrow").classes(
-            "w-full").style("font-family: var(--mono); font-size: 12.5px")
+    with T.section(ui, "Từ khóa cam kết", "search"):
+        with ui.row().classes("items-center gap-3"):
+            ui.label("Từ khóa cam kết là các từ khóa trong bộ loại Cam kết (đã chốt) ở màn Từ khóa & Thứ hạng. Thêm / "
+                     "bớt / đổi Top mục tiêu ở đó.").classes("text-sm")
+            ui.button("Mở Từ khóa & Thứ hạng", icon="leaderboard", on_click=lambda: ui.navigate.to("/rank")).props(
+                "outline no-caps")
 
     def build() -> tuple[dict, list]:
         d = parse_date(start.value, date.today())
@@ -826,7 +850,7 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
                "baseline": {"organic": int(base_org.value) if base_org.value not in (None, "") else None,
                             "ai": int(base_ai.value) if base_ai.value not in (None, "") else None},
                "lines": lines}
-        return new, KP.parse_keyword_text(kw_text.value)
+        return new, []
 
     async def save(force: bool = False):
         try:
@@ -837,12 +861,17 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
         save_btn.props("loading")
         try:
             def work():
-                fp = KP.write_sheet(cfg, sid, new, kws, expect=state["fp"], force=force)
+                from . import sheet_view as SV
                 with connect() as c:
-                    KP.sync(c, cfg, user)
-                return fp
-            state["fp"] = await run.io_bound(work)
-            ui.notify("Đã ghi vào sheet và đồng bộ", type="positive")
+                    KP.save(c, {**new, "keywords": KP.commitment_keywords(c, cfg.site_url)}, date.today())
+                    try:  # sheet chỉ để xem: ghi lỗi (thiếu quyền, mạng) thì lượt tự động sau ghi lại
+                        SV.publish(c, cfg)
+                        return None
+                    except (Exception, SystemExit) as e:  # noqa: BLE001
+                        return str(e)
+            err = await run.io_bound(work)
+            ui.notify("Đã lưu cam kết" + ("" if not err else f"; chưa ghi được lên sheet: {err[:160]}"),
+                      type="positive" if not err else "warning", multi_line=True)
             ui.navigate.to("/kpi")
         except KP.SheetChanged:
             with ui.dialog() as dlg, ui.card().style("border-radius:16px; max-width:520px"):
@@ -860,7 +889,7 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
             save_btn.props(remove="loading")
 
     with ui.row().classes("items-center gap-3 q-mt-sm"):
-        save_btn = ui.button("Lưu vào sheet", icon="save", on_click=lambda: save()).props("unelevated no-caps")
+        save_btn = ui.button("Lưu", icon="save", on_click=lambda: save()).props("unelevated no-caps")
         ui.button("Hủy", on_click=lambda: ui.navigate.to("/kpi")).props("flat no-caps")
-        ui.label("Tool ghi lại hai tab KPI cam kết và Từ khóa cam kết; các tab khác không đụng tới. Cần quyền ghi "
-                 "Google Sheets (đăng nhập Google lại một lần nếu tool báo thiếu quyền).").classes("text-xs muted")
+        ui.label("Tool lưu phiên bản mới (tháng đã qua vẫn chấm theo phiên bản cũ) và ghi lại tab KPI cam kết lên "
+                 "sheet dự án; các tab khác của khách không đụng tới.").classes("text-xs muted")

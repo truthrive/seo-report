@@ -117,7 +117,7 @@ def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
                 "source": "Cam kết" if k["set_kind"] == "kpi" else SOURCES.get(k["source"], k["source"]),
                 "top": f"Top {k['top_target']}" if k.get("top_target") else "",
                 "target": short(k["target_url"]), "target_full": k["target_url"] or "",
-                "locked": k["set_kind"] == "kpi",
+                "locked": False,  # tool là nơi quản lý từ khóa (kể cả bộ Cam kết): sửa ở đây, sheet chỉ để xem
                 "ranking": short(k["ranking_url"]), "ranking_full": k["ranking_url"] or "",
                 "wrong": bool(k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"]),
             })

@@ -91,8 +91,16 @@ def sync_info(con) -> dict | None:
 # ---- Dòng cam kết ----
 
 def line_id(line: dict) -> str:
-    """Khóa ổn định của một dòng: top3 / top5 / top10, level:organic, cum:ai…"""
-    return f"top{line['top']}" if line["kind"] == "rank" else f"{line['kind']}:{line['source']}"
+    """Khóa ổn định của một dòng: top3 / top5 / top10 (top3@12: chỉ tính bộ 12), level:organic, cum:ai…"""
+    if line["kind"] == "rank":
+        return f"top{line['top']}" + (f"@{line['set']}" if line.get("set") else "")
+    return f"{line['kind']}:{line['source']}"
+
+
+def rank_pool(line: dict, items: list[dict]) -> list[dict]:
+    """Từ khóa chấm cho một dòng Top N: theo bộ của dòng (nếu chọn), rồi theo Top target nếu là bộ riêng."""
+    pool = [x for x in items if not line.get("set") or x.get("set") == line["set"]]
+    return pool if line.get("mode") != "per_tier" else [x for x in pool if x["target"] == line["top"]]
 
 
 def line_label(line: dict) -> str:
@@ -342,6 +350,44 @@ def sync(con, cfg, user: str = "tool", today: date | None = None) -> dict:
     return info
 
 
+def commitment_keywords(con, site: str) -> list[dict]:
+    """Từ khóa cam kết lấy từ tool: mọi từ khóa trong các bộ loại Cam kết đã chốt (kể cả đang tạm dừng: vẫn là cam
+    kết). Một từ khóa ở nhiều bộ Cam kết thì lấy dòng ở bộ đứng trước."""
+    from . import rank as R
+    out, seen = [], set()
+    for st in R.sets(con, site):
+        if st["kind"] != "kpi" or st["draft"]:
+            continue
+        for kid, kw, url, top in con.execute(
+                "SELECT k.id, k.keyword, u.url, k.top_target FROM rank_keywords k LEFT JOIN urls u ON u.id = k.url_id "
+                "WHERE k.set_id = ? AND k.removed_at IS NULL ORDER BY k.id", (st["id"],)):
+            if kw.lower() in seen:
+                continue
+            seen.add(kw.lower())
+            out.append({"keyword": kw, "url": url or "", "target": top, "set": st["id"]})
+    return out
+
+
+def snapshot_keywords(con, site: str, today: date) -> bool:
+    """Tool là nơi quản lý từ khóa cam kết: khi danh sách trên tool khác phiên bản KPI mới nhất thì lưu phiên bản mới
+    (cùng các dòng cam kết, từ khóa mới). Tháng đã qua vẫn chấm theo phiên bản hiệu lực cuối tháng đó.
+    Dự án chưa có bộ Cam kết nào mà phiên bản KPI có từ khóa (đọc từ sheet trước đây): tạo bộ Cam kết từ đó trước."""
+    from . import rank as R
+    vs = versions(con)
+    if not vs:
+        return False
+    cur = vs[-1]["data"]
+    if not any(st["kind"] == "kpi" for st in R.sets(con, site)):
+        if not cur.get("keywords"):
+            return False
+        from .config import RankSettings
+        R.sync_kpi_set(con, site, RankSettings(monthly_budget_usd=1e9), today, cur["keywords"], "tool (chuyển đổi)")
+    kws = commitment_keywords(con, site)
+    if kws == cur.get("keywords"):
+        return False
+    return save(con, {**cur, "keywords": kws}, today)
+
+
 def versions(con) -> list[dict]:
     """Các phiên bản KPI của sheet đang chọn (đổi sang sheet khác thì phiên bản cũ vẫn giữ nhưng không dùng)."""
     ensure_tables(con)
@@ -384,6 +430,7 @@ def _rank_items(con, site: str, kws: list[dict], s: date, e: date) -> dict:
         out["target_set"] += target is not None
         out["target_ok"] += bool(ok)
         out["items"].append({"keyword": k["keyword"], "url": k.get("url", ""), "target": target, "rank": rank,
+                             "set": k.get("set"),
                              "depth": row[2] if row else None, "date": row[0] if row else None, "ok": ok})
     return out
 
@@ -404,7 +451,7 @@ def _judge(line: dict, row: dict, prior: tuple[int, bool] = (0, True)) -> dict:
     t = line["targets"].get(str(n))
     if line["kind"] == "rank":
         items = row["rank"]["items"]
-        pool = items if line.get("mode") != "per_tier" else [x for x in items if x["target"] == line["top"]]
+        pool = rank_pool(line, items)
         total = len(pool)
         count = sum(1 for x in pool if x["rank"] is not None and x["rank"] <= line["top"])
         need, target_pct = rank_need(line, t, total)
@@ -502,14 +549,15 @@ def progress(con, site: str, today: date, sessions=None) -> dict | None:
     return out
 
 
-def rank_kpi_now(con, site: str, today: date) -> dict | None:
+def rank_kpi_now(con, site: str, today: date, set_id: int | None = None) -> dict | None:
     """Tiến độ các dòng cam kết Top N của tháng dự án hiện tại và quý dự án (3 tháng: 1–3, 4–6…) cho màn Từ khóa &
     rank. Số hiện có = cách chấm của màn KPI cam kết (lần check cuối trong tháng); mục tiêu quý = mục tiêu tháng cuối
     quý. Trước khi dự án bắt đầu: so vị trí mới nhất với mục tiêu tháng 1. None khi chưa có sheet KPI / dòng Top N."""
+    snapshot_keywords(con, site, today)  # từ khóa cam kết mới nhất trên tool
     p = progress(con, site, today)
     if not p or not p["months"]:
         return None
-    rank_lines = [ln for ln in p["lines"] if ln["kind"] == "rank"]
+    rank_lines = [ln for ln in p["lines"] if ln["kind"] == "rank" and (set_id is None or ln.get("set") in (None, set_id))]
     if not rank_lines:
         return None
     months = {m["n"]: m for m in p["months"]}
@@ -528,7 +576,7 @@ def rank_kpi_now(con, site: str, today: date) -> dict | None:
            "q_months": (q * 3 - 2, q_last), "q_to": months[q_last].get("to"), "rows": []}
     for ln in rank_lines:
         lid = line_id(ln)
-        pool = items if ln.get("mode") != "per_tier" else [x for x in items if x["target"] == ln["top"]]
+        pool = rank_pool(ln, items)
         total = len(pool)
         count = sum(1 for x in pool if x["rank"] is not None and x["rank"] <= ln["top"])
 

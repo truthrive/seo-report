@@ -303,11 +303,10 @@ def _daily_one(cfg) -> None:
                     print("OKR:", okr.sync(con, cfg), flush=True)
         except (Exception, SystemExit):
             traceback.print_exc()
-        try:  # KPI cam kết: đọc sheet KPI, lưu phiên bản mới nếu đổi, thêm từ khóa cam kết vào check rank
-            from . import kpi
+        try:  # sheet dự án là nơi xem: tool ghi tab KPI cam kết, tab từng bộ, tab Dữ liệu check (nếu dữ liệu đổi)
+            from . import sheet_view
             with db.connect(cfg.db_path) as con:
-                if kpi.sheet_id(con):
-                    print("KPI:", kpi.sync(con, cfg, "tool (daily)"), flush=True)
+                print("Sheet:", sheet_view.publish_if_changed(con, cfg), flush=True)
         except (Exception, SystemExit):
             traceback.print_exc()
         try:

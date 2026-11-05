@@ -623,7 +623,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     cur = next((x for x in all_sets if x["id"] == set_id), all_sets[0])
     hooks["new_set"] = lambda: set_dialog(None)
     sid = cur["id"]
-    is_kpi = cur["id"] == linked  # bộ đồng bộ với tab Từ khóa cam kết của sheet (thêm / xóa ghi lên sheet)
+    # Tool là nơi quản lý từ khóa: không bộ nào còn ghi / đọc từng dòng trên sheet (sheet là nơi xem, tool ghi đè).
+    is_kpi = False
+    commit_set = cur["kind"] == "kpi"
     draft = cur["draft"]
     sched = cur["schedule"]
     where = R.settings_for(cfg.rank, cur)
@@ -1424,7 +1426,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             hist = R.set_history(c, site, sid)
             evs = R.events(c, site, sid)
             try:  # mục tiêu cam kết Top N (sheet KPI) cho bảng / biểu đồ xu hướng của bộ Cam kết
-                kpi_now = KP.rank_kpi_now(c, site, date.today()) if is_kpi else None
+                kpi_now = KP.rank_kpi_now(c, site, date.today(), sid) if commit_set else None
             except Exception:  # noqa: BLE001 — sheet KPI lỗi không được làm hỏng màn rank
                 kpi_now = None
             n_trash = len(R.keywords(c, site, end, sid, removed=True))
@@ -2126,11 +2128,57 @@ async def scheduled_checks(base) -> None:
             traceback.print_exc()
 
 
+async def _publish_one(cfg) -> None:
+    from contextlib import closing
+
+    from nicegui import run
+
+    from . import db
+    from . import sheet_view as SV
+
+    def work():
+        with closing(db.connect(cfg.db_path)) as c:
+            return SV.publish_if_changed(c, cfg)
+    try:
+        await run.io_bound(work)
+    except (Exception, SystemExit):  # noqa: BLE001  (lượt định kỳ sau thử lại)
+        import traceback
+        traceback.print_exc()
+
+
+async def publish_sheets(base) -> None:
+    """Ghi tab xem lên sheet dự án của từng dự án khi dữ liệu đổi (check mới, sửa từ khóa / bộ / KPI)."""
+    from contextlib import closing
+
+    from nicegui import run
+
+    from . import db
+    from . import projects as PJ
+    from . import sheet_view as SV
+
+    with closing(db.connect(base.db_path)) as c:
+        projects = PJ.list_projects(c)
+    for p in projects:
+        cfg = PJ.config_for(base, p)
+        if cfg.site_url in _RUNNING:
+            continue
+
+        def work(cfg=cfg):
+            with closing(db.connect(cfg.db_path)) as c:
+                return SV.publish_if_changed(c, cfg)
+        try:
+            await run.io_bound(work)
+        except (Exception, SystemExit):  # noqa: BLE001  (thiếu quyền ghi sheet / mạng: lượt sau thử lại)
+            import traceback
+            traceback.print_exc()
+
+
 async def schedule_loop(base) -> None:
     import asyncio
     await asyncio.sleep(60)  # để máy chủ khởi động xong
     while True:
         await scheduled_checks(base)
+        await publish_sheets(base)
         await asyncio.sleep(15 * 60)
 
 
@@ -2250,6 +2298,8 @@ async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: 
     finally:
         _RUNNING.discard(site)
         _PROGRESS.pop(site, None)
+        from nicegui import background_tasks
+        background_tasks.create(_publish_one(cfg))  # ghi kết quả mới lên sheet dự án (nơi xem)
         from nicegui import Client
         for cid, fn in list(_VIEWS.get(site, {}).items()):
             client = Client.instances.get(cid)
