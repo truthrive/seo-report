@@ -1252,6 +1252,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                           "Overview hiện chậm thêm tối đa 0,0006 USD).")
             return
         box = ui.column().classes("w-full gap-3")
+        from . import aio as AO
+        with connect() as c:
+            rivals = [b for b in AO.brands(c, cfg) if not b["own"]]
 
         def draw(i: int) -> None:
             box.clear()
@@ -1261,8 +1264,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 with ui.element("div").classes("sr-serp-pair"):
                     with ui.column().classes("gap-0 sr-serp-cell"):
                         ui.label("Vị trí trên Google").classes("text-xs muted")
-                        mine = next((x for x in cur["top10"] if R._host_match(x["domain"], host)), None)
-                        rank_txt = str(mine["rank"]) if mine else ("Ngoài top 10" if cur["top10"] else "–")
+                        mine = next((x for x in cur["organic"] if R._host_match(x["domain"], host)), None)
+                        rank_txt = str(mine["rank"]) if mine else (f"Ngoài top {cur['depth_seen']}"
+                                                                   if cur["organic"] else "–")
                         ui.label(rank_txt).classes("sr-mini-num num")
                         if mine:
                             lk = ui.link(disp(mine["url"], own=True), mine["url"], new_tab=True).classes(
@@ -1292,7 +1296,33 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                             lk = ui.link(x["title"] or disp(x["url"]), x["url"], new_tab=True).classes(
                                 "text-sm ellipsis col")
                             lk.props["title"] = x["url"]
-                # ---- Top 10 (đối thủ) ----
+                # ---- Đối thủ đang theo dõi (danh sách chung của dự án, tối đa 10) ----
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.label("Đối thủ").classes("sr-section-title").style("font-size:14px")
+                    ui.space()
+                    ui.link("Quản lý đối thủ", "/aio?tab=brands").classes("text-xs")
+                if not rivals:
+                    ui.label("Chưa có đối thủ nào: thêm ở trang AI Overview → Thương hiệu (tối đa 10).").classes(
+                        "text-sm muted")
+                else:
+                    pos = AO.brand_ranks(cur["organic"], rivals)
+                    my_rank = mine["rank"] if mine else None
+                    for b in sorted(rivals, key=lambda b: (pos[b["id"]] or {}).get("rank") or 999):
+                        p_ = pos[b["id"]]
+                        ahead = p_ and (my_rank is None or p_["rank"] < my_rank)
+                        with ui.row().classes("w-full items-center no-wrap gap-2 sr-serp-row"):
+                            ui.label(str(p_["rank"]) if p_ else "–").classes("sr-mv-num sr-mv-now").style(
+                                "min-width:28px")
+                            ui.label(b["name"]).classes("text-sm font-medium").style("min-width:180px")
+                            if p_:
+                                lk = ui.link(disp(p_["url"]), p_["url"], new_tab=True).classes(
+                                    "text-xs muted ellipsis col")
+                                lk.props["title"] = p_["url"]
+                            else:
+                                ui.label(f"Không có trong top {cur['depth_seen']}").classes("text-xs muted col")
+                            if ahead:
+                                ui.label("đứng trên mình").classes("sr-delta down")
+                # ---- Top 10 ----
                 ui.label("10 kết quả đầu trên Google").classes("sr-section-title").style("font-size:14px")
                 ref_hosts = {x["domain"] for x in cur["refs"]}
                 for x in R.compare_top10(cur["top10"], prev["top10"] if prev else None):
@@ -1316,7 +1346,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                 f"So với lần check {_vn(prev['date'])[:5]}")
                 if not cur["top10"]:
                     ui.label("Không có kết quả tự nhiên trong lần check này.").classes("text-sm muted")
-                ui.label("Lấy từ kết quả check rank (DataForSEO, cùng nơi check của bộ). Không tốn thêm phí.").classes(
+                ui.label("Lấy từ kết quả check rank (DataForSEO, cùng nơi check của bộ), trong độ sâu đã check. "
+                         "Không tốn thêm phí.").classes(
                     "text-xs muted")
 
         if len(serps) > 1:

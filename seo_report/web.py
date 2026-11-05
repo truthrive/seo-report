@@ -541,7 +541,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         shell("AI Overview", user, P, page_ctx(P), period=False, group=False)
         from .web_aio import build_aio_page
-        build_aio_page(ui, P.cfg, P.connect, user)
+        build_aio_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
     @ui.page("/ai")
     def ai_page(request: Request):

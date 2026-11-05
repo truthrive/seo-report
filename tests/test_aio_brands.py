@@ -99,6 +99,32 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(AO.fill_logos(self.con, CFG, fetch), 1)
         self.assertEqual(seen[-1], "rival2.vn")
 
+class CompetitorTest(unittest.TestCase):
+    def setUp(self):
+        self.con = db.connect(":memory:")
+
+    def test_at_most_ten_competitors(self):
+        AO.brands(self.con, CFG)  # thương hiệu của mình không tính
+        for i in range(AO.MAX_COMPETITORS):
+            AO.save_brand(self.con, SITE, f"Đối thủ {i}", "", f"dt{i}.vn")
+        with self.assertRaises(ValueError):
+            AO.save_brand(self.con, SITE, "Thứ 11", "", "dt11.vn")
+        bid = AO.brands(self.con, CFG)[1]["id"]
+        AO.save_brand(self.con, SITE, "Đổi tên", "", "dt0.vn", bid)  # sửa vẫn được
+        AO.remove_brand(self.con, SITE, bid)
+        AO.save_brand(self.con, SITE, "Thứ 11", "", "dt11.vn")
+
+    def test_competitor_ranks_from_full_depth(self):
+        items = [{"type": "organic", "rank_group": i + 1, "domain": d, "url": f"https://{d}/p"}
+                 for i, d in enumerate(["a.vn"] * 3 + ["x.vn"] * 9 + ["www.rival.vn", "vidushop.com"])]
+        serp = R.parse_serp({"result": [{"items": items}]}, SITE)
+        self.assertEqual((len(serp["top10"]), len(serp["organic"])), (10, 14))
+        rival = {"id": 1, "domains": ["rival.vn"]}
+        nobody = {"id": 2, "domains": ["none.vn"]}
+        got = AO.brand_ranks(serp["organic"], [rival, nobody])
+        self.assertEqual((got[1]["rank"], got[2]), (13, None))
+
+
 class ScheduleTest(unittest.TestCase):
     def test_next_scheduled_day(self):
         today = date(2026, 11, 5)  # thứ Năm

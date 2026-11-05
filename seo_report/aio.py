@@ -98,11 +98,31 @@ def brands(con: sqlite3.Connection, cfg) -> list[dict]:
     return out
 
 
+MAX_COMPETITORS = 10  # đối thủ theo dõi mỗi dự án (dùng chung cho thứ hạng và AI Overview)
+
+
+def competitor_count(con, site: str) -> int:
+    ensure_tables(con)
+    return con.execute("SELECT COUNT(*) FROM aio_brands WHERE site = ? AND own = 0 AND removed_at IS NULL",
+                       (site,)).fetchone()[0]
+
+
+def brand_ranks(organic: list[dict], brands_: list[dict]) -> dict[int, dict | None]:
+    """Vị trí tốt nhất của từng thương hiệu trong các kết quả tự nhiên của một lần check: {id: {rank, url} | None}."""
+    out = {}
+    for b in brands_:
+        hit = next((x for x in sorted(organic, key=lambda x: x["rank"]) if cited([x], b)), None)
+        out[b["id"]] = {"rank": hit["rank"], "url": hit["url"]} if hit else None
+    return out
+
+
 def save_brand(con, site: str, name: str, aliases: str, domains: str, brand_id: int | None = None) -> int:
     ensure_tables(con)
     name = name.strip()
     if not name:
         raise ValueError("Cần tên thương hiệu")
+    if not brand_id and competitor_count(con, site) >= MAX_COMPETITORS:
+        raise ValueError(f"Mỗi dự án theo dõi tối đa {MAX_COMPETITORS} đối thủ: bỏ bớt một đối thủ trước khi thêm")
     doms = "\n".join(domain(d) for d in _lines(domains))
     with con:
         if brand_id:

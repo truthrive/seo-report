@@ -77,7 +77,7 @@ def _h2(ui, text: str, cls: str = "sr-section-title"):
 SEG = "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
 
 
-def tab(ui, connect, cfg, ed: bool, header=None) -> None:
+def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
     """Nội dung trang AI Overview: dòng phạm vi + tab (Tổng quan · Việc nên làm · Từ khóa · Thương hiệu). Nút chọn
     khoảng thời gian đặt ở đầu trang (header) vì nó áp cho cả 4 thẻ và biểu đồ. Số từ kết quả check rank (DataForSEO),
     mỗi tuần lấy lần check cuối của tuần."""
@@ -320,8 +320,9 @@ def tab(ui, connect, cfg, ed: bool, header=None) -> None:
         if any(b.get("logo") is None and not b["own"] for b in bs):  # thương hiệu thêm trước khi có logo
             background_tasks.create(load_logos())
         n_comp = len(bs) - 1
+        full = n_comp >= AO.MAX_COMPETITORS
         with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
-            _h2(ui, f"Thương hiệu theo dõi · {len(bs)}")
+            _h2(ui, f"Thương hiệu & đối thủ · {n_comp}/{AO.MAX_COMPETITORS} đối thủ")
             T.info_icon(ui, "Cách tính", (
                 "Thương hiệu được nhắc khi nội dung AI Overview có tên, cách gọi khác hoặc tên miền của nó.",
                 "So sánh thương hiệu của mình với đối thủ trong câu trả lời AI của Google.",
@@ -352,13 +353,16 @@ def tab(ui, connect, cfg, ed: bool, header=None) -> None:
                         ui.html("<dt>Tên miền</dt>")
                         ui.html("<dd>" + (", ".join(b["domains"]) or "<span class='muted'>Chưa thêm</span>")
                                 + "</dd>")
-            if ed:  # ô thêm nằm cuối lưới, cùng cỡ thẻ
+            if ed and not full:  # ô thêm nằm cuối lưới, cùng cỡ thẻ
                 add = ui.element("button").classes("sr-brand-add").props('type="button"')
                 add.on("click", lambda: edit_brand(None))
                 with add:
                     ui.icon("add", size="20px")
                     ui.label("Thêm đối thủ")
-        if ed and sug:
+        ui.label("Danh sách dùng chung cho AI Overview và thứ hạng (vị trí đối thủ trong kết quả check rank). "
+                 + (f"Đã đủ {AO.MAX_COMPETITORS} đối thủ: bỏ bớt để thêm mới." if full else "")).classes(
+            "text-xs muted q-mt-sm")
+        if ed and sug and not full:
             with ui.column().classes("w-full gap-1 q-mt-md"):
                 ui.label("Gợi ý: website AI hay trích, chưa có trong danh sách").classes("text-sm muted")
                 with ui.element("div").classes("sr-sug-list"):
@@ -400,8 +404,12 @@ def tab(ui, connect, cfg, ed: bool, header=None) -> None:
     def quick_add(d_: str):
         if not ed:
             return
-        with connect() as c:
-            AO.save_brand(c, cfg.site_url, d_, "", d_)  # tên = tên miền (đúng chính tả); sửa lại sau nếu cần
+        try:
+            with connect() as c:
+                AO.save_brand(c, cfg.site_url, d_, "", d_)  # tên = tên miền (đúng chính tả); sửa lại sau nếu cần
+        except ValueError as e:
+            ui.notify(str(e), type="warning")
+            return
         refresh_all()
         background_tasks.create(load_logos())
 
@@ -450,8 +458,8 @@ def tab(ui, connect, cfg, ed: bool, header=None) -> None:
         s_over = ui.tab("Tổng quan")
         s_todo = ui.tab("Việc nên làm")
         s_kw = ui.tab("Từ khóa")
-        s_br = ui.tab("Thương hiệu")
-    with ui.tab_panels(sub, value=s_over).classes("w-full").props("animated=false"):
+        s_br = ui.tab("Thương hiệu & đối thủ")
+    with ui.tab_panels(sub, value=s_br if start == "brands" else s_over).classes("w-full").props("animated=false"):
         with ui.tab_panel(s_over).classes("q-px-none"):
             overview()
         with ui.tab_panel(s_todo).classes("q-px-none"):
@@ -511,10 +519,10 @@ def dashboard_lines(ui, connect, cfg) -> None:
             "sr-cmp-note").tooltip("Top 10 trên bộ từ khóa: " + ", ".join(names))
 
 
-def build_aio_page(ui, cfg, connect, user) -> None:
+def build_aio_page(ui, cfg, connect, user, start: str = "") -> None:
     """Trang AI Overview: tiêu đề + tab (Tổng quan · Việc nên làm · Từ khóa · Thương hiệu & đối thủ)."""
     from .access import can_edit
     right = T.page_header(ui, "tips_and_updates", "AI Overview",
                           "Thương hiệu trong câu trả lời AI của Google trên bộ từ khóa theo dõi. Lượt hiển thị và truy "
                           "cập từ AI (GSC, GA4) xem ở trang AI Search & GEO.")
-    tab(ui, connect, cfg, can_edit(user), header=right)
+    tab(ui, connect, cfg, can_edit(user), header=right, start=start)

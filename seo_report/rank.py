@@ -191,8 +191,11 @@ def _add_columns(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE rank_sets ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
     if "state" not in set_cols:  # bộ đã có trước đây coi như đã chốt
         con.execute("ALTER TABLE rank_sets ADD COLUMN state TEXT NOT NULL DEFAULT 'active'")
-    if "aio_text" not in {c[1] for c in con.execute("PRAGMA table_info(rank_serp)")}:  # nội dung chữ AI Overview
+    serp_cols = {c[1] for c in con.execute("PRAGMA table_info(rank_serp)")}
+    if "aio_text" not in serp_cols:  # nội dung chữ AI Overview
         con.execute("ALTER TABLE rank_serp ADD COLUMN aio_text TEXT")
+    if "organic" not in serp_cols:  # mọi kết quả tự nhiên trong độ sâu đã check (top10 chỉ giữ 10 đầu)
+        con.execute("ALTER TABLE rank_serp ADD COLUMN organic TEXT")
     con.commit()
 
 
@@ -1421,7 +1424,7 @@ def parse_serp(task: dict, site: str) -> dict:
     không tải được nội dung (AI Overview hiện chậm)."""
     host = domain(site)
     items = (task.get("result") or [{}])[0].get("items") or []
-    aio, cited, refs, top10, features, text = False, None, [], [], set(), []
+    aio, cited, refs, top10, features, text, organic = False, None, [], [], set(), [], []
     for it in items:
         t = it.get("type") or ""
         if t and t != "organic":
@@ -1445,20 +1448,24 @@ def parse_serp(task: dict, site: str) -> dict:
                 cited = any(_host_match(r["domain"], host) for r in refs)
             elif not it.get("asynchronous_ai_overview"):
                 cited = False
-        elif t == "organic" and (it.get("rank_group") or 99) <= 10:
-            top10.append({"rank": it.get("rank_group"), "domain": (it.get("domain") or "").lower().removeprefix("www."),
-                          "url": it.get("url") or ""})
-    return {"aio": aio, "aio_cited": cited if aio else False, "aio_refs": refs, "top10": top10,
+        elif t == "organic" and it.get("rank_group"):
+            row = {"rank": it.get("rank_group"), "domain": (it.get("domain") or "").lower().removeprefix("www."),
+                   "url": it.get("url") or ""}
+            organic.append(row)
+            if row["rank"] <= 10:
+                top10.append(row)
+    return {"aio": aio, "aio_cited": cited if aio else False, "aio_refs": refs, "top10": top10, "organic": organic,
             "features": sorted(features), "aio_text": "\n".join(text) if aio else ""}
 
 
 def save_serp(con, keyword_id: int, check_date: str, serp: dict) -> None:
     con.execute("INSERT OR REPLACE INTO rank_serp (keyword_id, check_date, aio, aio_cited, aio_refs, top10, features, "
-                "aio_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "aio_text, organic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (keyword_id, check_date, int(serp["aio"]),
                  None if serp["aio_cited"] is None else int(serp["aio_cited"]),
                  json.dumps(serp["aio_refs"], ensure_ascii=False), json.dumps(serp["top10"], ensure_ascii=False),
-                 json.dumps(serp["features"]), serp.get("aio_text") or None))
+                 json.dumps(serp["features"]), serp.get("aio_text") or None,
+                 json.dumps(serp["organic"], ensure_ascii=False) if serp.get("organic") is not None else None))
 
 
 def collect(con, site: str, client, log=print) -> int:
@@ -1603,11 +1610,16 @@ def serp_history(con: sqlite3.Connection, keyword_id: int) -> list[dict]:
     """Các lần check có đọc trang kết quả của một từ khóa, mới trước: ngày, có AIO, được trích, nguồn AI trích, top 10."""
     ensure_tables(con)
     out = []
-    for d, aio, cited, refs, top10 in con.execute(
-            "SELECT check_date, aio, aio_cited, aio_refs, top10 FROM rank_serp WHERE keyword_id = ? AND aio IS NOT NULL "
-            "ORDER BY check_date DESC", (keyword_id,)):
+    for d, aio, cited, refs, top10, organic, depth in con.execute(
+            "SELECT s.check_date, s.aio, s.aio_cited, s.aio_refs, s.top10, s.organic, c.depth FROM rank_serp s "
+            "LEFT JOIN rank_checks c ON c.keyword_id = s.keyword_id AND c.check_date = s.check_date "
+            "WHERE s.keyword_id = ? AND s.aio IS NOT NULL ORDER BY s.check_date DESC", (keyword_id,)):
+        t10 = json.loads(top10 or "[]")
         out.append({"date": d, "aio": bool(aio), "cited": None if cited is None else bool(cited),
-                    "refs": json.loads(refs or "[]"), "top10": json.loads(top10 or "[]")})
+                    "refs": json.loads(refs or "[]"), "top10": t10,
+                    # organic: mọi kết quả trong độ sâu (lần check cũ chỉ có 10 đầu: depth_seen = 10)
+                    "organic": json.loads(organic) if organic else t10,
+                    "depth_seen": (depth or 10) if organic else min(depth or 10, 10)})
     return out
 
 
