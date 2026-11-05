@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS aio_brands (
 # 1 (xanh dương, không dùng xanh lá / đỏ vì đó là màu tốt / xấu của nhãn ▲▼), 4 đối thủ đầu là màu 2–5; đối thủ thứ 5 trở
 # đi xám và không vẽ trên biểu đồ (không sinh thêm màu).
 OWN_COLOR = "#2a78d6"
-COLORS = ["#eb6834", "#6250d6", "#eda100", "#e87ba4"]
+# Màu đối thủ theo thứ tự thêm (cố định theo thương hiệu, không theo hạng); 7 màu + màu của mình đã chạy
+# validate_palette (độ sáng, độ đậm, mù màu): đối thủ thứ 8 trở đi màu xám
+COLORS = ["#eb6834", "#1a9e8f", "#6250d6", "#eda100", "#b04a8f", "#7d9a1e", "#e87ba4"]
 OTHER_COLOR = "#A9A79B"
 
 
@@ -149,10 +151,18 @@ def _week(d: str) -> str:
     return (x - timedelta(days=x.weekday())).isoformat()
 
 
-def snapshots(con, site: str, end: date, today: date, weeks: int) -> dict[str, dict[int, dict]]:
+def scope_keywords(con, site: str, end: date, set_id: int | None = None) -> list[dict]:
+    """Từ khóa đang xét: mọi bộ (mỗi từ khóa một dòng) hoặc một bộ; bỏ bộ Nháp và từ khóa tạm dừng (cùng cách tính
+    với màn Từ khóa & Thứ hạng)."""
+    kws = R.primary_keywords(con, site, end) if set_id is None else R.keywords(con, site, end, set_id)
+    return [k for k in kws if not k.get("draft") and not k.get("paused")]
+
+
+def snapshots(con, site: str, end: date, today: date, weeks: int,
+              set_id: int | None = None) -> dict[str, dict[int, dict]]:
     """{tuần: {id từ khóa: lần check cuối tuần đó}} trong `weeks` tuần gần nhất (mỗi từ khóa một dòng)."""
     ensure_tables(con)
-    kws = R.primary_keywords(con, site, end)
+    kws = scope_keywords(con, site, end, set_id)
     ids = [k["id"] for k in kws]
     if not ids:
         return {}
@@ -185,7 +195,7 @@ def week_metrics(snap: dict[int, dict], bs: list[dict], site: str) -> dict:
             "brands": per}
 
 
-def dashboard(con, cfg, today: date | None = None, weeks: int = 12) -> dict:
+def dashboard(con, cfg, today: date | None = None, weeks: int = 12, set_id: int | None = None) -> dict:
     """Mọi số cho tab AI Overview: các tuần (cũ → mới), thương hiệu, 4 thẻ của mình (tuần mới nhất so với tuần trước),
     tổng số từ khóa."""
     today = today or date.today()
@@ -193,9 +203,9 @@ def dashboard(con, cfg, today: date | None = None, weeks: int = 12) -> dict:
     from . import keywords as K
     end = K.latest_date(con, site)
     bs = brands(con, cfg)
-    snaps = snapshots(con, site, end, today, weeks)
+    snaps = snapshots(con, site, end, today, weeks, set_id)
     series = [{"week": w, **week_metrics(snaps[w], bs, site)} for w in sorted(snaps)]
-    total = len(R.primary_keywords(con, site, end))
+    total = len(scope_keywords(con, site, end, set_id))
     own = next(b for b in bs if b["own"])
 
     def kpis(m: dict | None) -> dict:
@@ -209,14 +219,14 @@ def dashboard(con, cfg, today: date | None = None, weeks: int = 12) -> dict:
             "last_week": series[-1]["week"] if series else None}
 
 
-def keyword_rows(con, cfg) -> list[dict]:
+def keyword_rows(con, cfg, set_id: int | None = None) -> list[dict]:
     """Bảng tab Từ khóa: lần check mới nhất của từng từ khóa, thương hiệu được nhắc / được trích."""
     from . import keywords as K
     site = cfg.site_url
     end = K.latest_date(con, site)
     bs = brands(con, cfg)
     out = []
-    for k in R.primary_keywords(con, site, end):
+    for k in scope_keywords(con, site, end, set_id):
         row = con.execute("SELECT check_date, aio, aio_refs, aio_text FROM rank_serp WHERE keyword_id = ? AND aio "
                           "IS NOT NULL ORDER BY check_date DESC LIMIT 1", (k["id"],)).fetchone()
         if not row:
@@ -233,7 +243,7 @@ def keyword_rows(con, cfg) -> list[dict]:
     return out
 
 
-def changes(con, cfg) -> dict[str, list[dict]]:
+def changes(con, cfg, set_id: int | None = None) -> dict[str, list[dict]]:
     """So lần check mới nhất với lần trước của từng từ khóa (thương hiệu của mình): mới được nhắc, mất nhắc, mới được
     trích, mất trích. Lần nào chưa có nội dung chữ thì không xét nhắc tên."""
     from . import keywords as K
@@ -241,7 +251,7 @@ def changes(con, cfg) -> dict[str, list[dict]]:
     end = K.latest_date(con, site)
     own = brands(con, cfg)[0]
     out = {"new_mention": [], "lost_mention": [], "new_cite": [], "lost_cite": []}
-    for k in R.primary_keywords(con, site, end):
+    for k in scope_keywords(con, site, end, set_id):
         rows = con.execute("SELECT check_date, aio, aio_refs, aio_text FROM rank_serp WHERE keyword_id = ? AND aio "
                            "IS NOT NULL ORDER BY check_date DESC LIMIT 2", (k["id"],)).fetchall()
         if len(rows) < 2:

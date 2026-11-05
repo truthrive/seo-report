@@ -61,7 +61,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
     T.page_header(ui, "account_balance_wallet", "Ngân sách check rank",
-                  "Chi phí DataForSEO (check rank, volume keyword, backlink) của từng website, tính theo tháng dương lịch.",
+                  "Chi phí DataForSEO (check rank, volume keyword, backlink, ý định từ khóa) của từng website, tính theo tháng dương lịch.",
                   eyebrow="Quản trị", tone="grey")
     today = date.today()
     months = R.last_months(today, 6)
@@ -178,7 +178,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                    "data": [round(r["history"][m]["total"], 4) for m in months]} for i, r in enumerate(rows)]
         totals = [sum(r["history"][m]["total"] for r in rows) for m in months]
         with T.section(ui, "Chi phí 6 tháng gần nhất", "bar_chart",
-                       f"Tổng 6 tháng {_usd(sum(totals))} USD · gồm check rank, volume keyword và backlink"):
+                       f"Tổng 6 tháng {_usd(sum(totals))} USD · gồm check rank, volume keyword, backlink và ý định từ khóa"):
             ui.echart({
                 "animation": False, "legend": {"bottom": 0, "icon": "roundRect", "itemWidth": 12, "itemHeight": 10,
                                                "textStyle": {"fontSize": 12, "color": "#4A4A40"}},

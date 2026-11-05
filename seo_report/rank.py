@@ -612,7 +612,7 @@ def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None =
                                  "schedule": DEFAULT_SCHEDULE}
         sched = st["schedule"]
         checks = con.execute(
-            "SELECT check_date, rank, ranking_url, target_rank, depth FROM rank_checks WHERE keyword_id = ? "
+            "SELECT check_date, rank, ranking_url, target_rank, depth, checked_at FROM rank_checks WHERE keyword_id = ? "
             "ORDER BY check_date DESC LIMIT 2", (kid,)).fetchall()
         best = con.execute("SELECT MIN(rank) FROM rank_checks WHERE keyword_id = ?", (kid,)).fetchone()[0]
         last = checks[0] if checks else None
@@ -626,7 +626,8 @@ def keywords(con: sqlite3.Connection, site: str, end: date, set_id: int | None =
             "removed_by": rm_by,
             "date": last[0] if last else None, "rank": last[1] if last else None,
             "ranking_url": last[2] if last else None, "target_rank": last[3] if last else None,
-            "last_depth": last[4] if last else None, "prev": prev[1] if prev else None,
+            "last_depth": last[4] if last else None, "checked_at": last[5] if last else None,
+            "prev": prev[1] if prev else None, "prev_date": prev[0] if prev else None,
             "prev_depth": prev[4] if prev else None,
             "depth": depth_for(sched["depth"], last[1] if last else None, last[4] if last else None),
         })
@@ -659,20 +660,22 @@ def spent_this_month(con: sqlite3.Connection, today: date | None = None) -> floa
     ensure_tables(con)
     today = today or date.today()
     month = today.strftime("%Y-%m")
-    from . import backlinks, volume  # chi phí volume keyword và backlink tính chung ngân sách DataForSEO
+    from . import backlinks, intent, volume  # volume, backlink, ý định từ khóa: chung ngân sách DataForSEO
     return (con.execute("SELECT COALESCE(SUM(cost), 0) FROM rank_tasks WHERE substr(check_date, 1, 7) = ?",
                         (month,)).fetchone()[0] + volume.spent_this_month(con, today)
-            + backlinks.spent_this_month(con, today))
+            + backlinks.spent_this_month(con, today) + intent.spent_this_month(con, today))
 
 
 def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]:
     """Chi phí DataForSEO theo tháng ("YYYY-MM"): {"rank", "volume", "backlinks", "checks" (số lượt check rank),
     "total"}."""
     ensure_tables(con)
-    from . import backlinks, volume
+    from . import backlinks, intent, volume
     volume.ensure_tables(con)
     backlinks.ensure_tables(con)
-    out = {m: {"rank": 0.0, "volume": 0.0, "backlinks": 0.0, "checks": 0, "total": 0.0} for m in months}
+    intent.ensure_tables(con)
+    out = {m: {"rank": 0.0, "volume": 0.0, "backlinks": 0.0, "intent": 0.0, "checks": 0, "total": 0.0}
+           for m in months}
     for m, cost, n in con.execute("SELECT substr(check_date, 1, 7), SUM(cost), COUNT(*) FROM rank_tasks "
                                   "GROUP BY 1"):
         if m in out:
@@ -683,8 +686,11 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
     for m, cost in con.execute("SELECT substr(run_at, 1, 7), SUM(cost) FROM backlink_runs GROUP BY 1"):
         if m in out:
             out[m]["backlinks"] = cost or 0.0
+    for m, cost in con.execute("SELECT substr(run_at, 1, 7), SUM(cost) FROM intent_runs GROUP BY 1"):
+        if m in out:
+            out[m]["intent"] = cost or 0.0
     for v in out.values():
-        v["total"] = v["rank"] + v["volume"] + v["backlinks"]
+        v["total"] = v["rank"] + v["volume"] + v["backlinks"] + v["intent"]
     return out
 
 
@@ -761,6 +767,7 @@ def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
     total = estimate_all(con, site, s, end)
     per_kw = estimate(con, s, sched, [depth_for(sched["depth"], None, None)])
     res = {"added": [], "updated": [], "exists": [], "over_budget": [], "bad_url": []}
+    free = st["draft"] or bool(getattr(s, "paused", False))
     with con:
         for item in items:
             kw, raw_url, top = (list(item) + [None, None])[:3]
@@ -781,7 +788,8 @@ def add_keywords(con: sqlite3.Connection, site: str, s: RankSettings, end: date,
                     changes.append("top")
                 res["updated" if changes else "exists"].append(kw)
                 continue
-            if total + per_kw > s.monthly_budget_usd:
+            # Bộ Nháp hoặc dự án đang tạm ngưng check: chưa tốn tiền nên không chặn (chặn lúc Chốt bộ / lúc check)
+            if not free and total + per_kw > s.monthly_budget_usd:
                 res["over_budget"].append(kw)
                 continue
             gone = con.execute("SELECT id, url_id, top_target FROM rank_keywords WHERE set_id = ? AND "
@@ -904,7 +912,12 @@ def set_history(con: sqlite3.Connection, site: str, set_id: int, limit: int = 30
     ensure_tables(con)
     kws = con.execute("SELECT id, top_target FROM rank_keywords WHERE set_id = ? AND site = ? AND removed_at IS NULL",
                       (set_id, site)).fetchall()
-    tops = dict(kws)
+    return history_of(con, dict(kws), limit, period, today)
+
+
+def history_of(con: sqlite3.Connection, tops: dict[int, int | None], limit: int = 30, period: str = "check",
+               today: date | None = None) -> list[dict]:
+    """Như set_history nhưng cho một nhóm từ khóa bất kỳ ({keyword_id: Top mục tiêu}), ví dụ cả dự án."""
     if not tops:
         return []
     marks = ",".join("?" * len(tops))

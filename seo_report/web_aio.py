@@ -77,14 +77,14 @@ def _h2(ui, text: str, cls: str = "sr-section-title"):
 SEG = "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
 
 
-def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
+def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | None = None) -> None:
     """Nội dung trang AI Overview: dòng phạm vi + tab (Tổng quan · Việc nên làm · Từ khóa · Thương hiệu). Nút chọn
     khoảng thời gian đặt ở đầu trang (header) vì nó áp cho cả 4 thẻ và biểu đồ. Số từ kết quả check rank (DataForSEO),
     mỗi tuần lấy lần check cuối của tuần."""
     from nicegui import background_tasks
 
     from . import aio as AO
-    state = {"weeks": 12, "metric": "mention", "change": "new_mention"}
+    state = {"weeks": 12, "metric": "mention", "change": "new_mention", "set": set_id}
     where = where_text(connect, cfg)
     if header is not None:
         with header:
@@ -97,8 +97,8 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
     @ui.refreshable
     def overview():
         with connect() as c:
-            d = AO.dashboard(c, cfg, weeks=state["weeks"])
-            ch = AO.changes(c, cfg)
+            d = AO.dashboard(c, cfg, weeks=state["weeks"], set_id=state["set"])
+            ch = AO.changes(c, cfg, state["set"])
         own, now, prev = d["own"], d["now"], d["prev"]
         last = d["weeks"][-1] if d["weeks"] else None
         # ---- dòng phạm vi: tuần, nơi check, đã kiểm tra bao nhiêu, lần check tới ----
@@ -201,7 +201,7 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
                             if v is not None and pv is not None and v != pv:
                                 T.delta_badge(ui, f"{v - pv:+d}", v > pv, since="tuần trước")
                 if len(charted) < len(d["brands"]):
-                    ui.label("Biểu đồ vẽ thương hiệu mình và 4 đối thủ đầu; các thương hiệu còn lại chỉ có trong nhãn."
+                    ui.label(f"Biểu đồ vẽ thương hiệu dự án và {len(AO.COLORS)} đối thủ đầu; các thương hiệu còn lại chỉ có trong nhãn."
                              ).classes("sr-kpi-hint")
             if len(d["brands"]) == 1:
                 ui.label("Thêm đối thủ ở tab Thương hiệu để so sánh.").classes("sr-kpi-hint")
@@ -237,7 +237,7 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
     @ui.refreshable
     def keywords_view():
         with connect() as c:
-            rows = AO.keyword_rows(c, cfg)
+            rows = AO.keyword_rows(c, cfg, state["set"])
         if not rows:
             T.empty_state(ui, "auto_awesome", "Chưa có số AI Overview", "Lần check rank tới sẽ có.")
             return
@@ -325,7 +325,7 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
             _h2(ui, f"Thương hiệu & đối thủ · {n_comp}/{AO.MAX_COMPETITORS} đối thủ")
             T.info_icon(ui, "Cách tính", (
                 "Thương hiệu được nhắc khi nội dung AI Overview có tên, cách gọi khác hoặc tên miền của nó.",
-                "So sánh thương hiệu của mình với đối thủ trong câu trả lời AI của Google.",
+                "So sánh thương hiệu dự án với đối thủ trong câu trả lời AI của Google.",
                 "Không phân biệt hoa thường, có dấu hay không dấu, phải khớp trọn từ. Được trích khi nguồn AI trích "
                 "có link về tên miền của thương hiệu."))
             ui.space()
@@ -339,9 +339,9 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
                         avatar(b)
                         ui.element("i").classes("sr-brand-dot").style(f"background:{b['color']}").tooltip(
                             "Màu của thương hiệu trên biểu đồ" if b["charted"] else
-                            "Không vẽ trên biểu đồ (biểu đồ vẽ 4 đối thủ đầu), vẫn có trong nhãn và bảng")
+                            f"Không vẽ trên biểu đồ (biểu đồ vẽ {len(AO.COLORS)} đối thủ đầu), vẫn có trong nhãn và bảng")
                         ui.label(b["name"]).classes("sr-brand-name col ellipsis").props(f'title="{b["name"]}"')
-                        if ed:
+                        if False:  # sửa ở tab Đối thủ (màn Từ khóa & Thứ hạng)
                             icon_btn(ui, "edit", f"Sửa {b['name']}", lambda _, b=b: edit_brand(b))
                             if not b["own"]:
                                 icon_btn(ui, "delete_outline", f"Bỏ theo dõi {b['name']}",
@@ -353,16 +353,16 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
                         ui.html("<dt>Tên miền</dt>")
                         ui.html("<dd>" + (", ".join(b["domains"]) or "<span class='muted'>Chưa thêm</span>")
                                 + "</dd>")
-            if ed and not full:  # ô thêm nằm cuối lưới, cùng cỡ thẻ
+            if False:  # thêm ở tab Đối thủ (màn Từ khóa & Thứ hạng)
                 add = ui.element("button").classes("sr-brand-add").props('type="button"')
                 add.on("click", lambda: edit_brand(None))
                 with add:
                     ui.icon("add", size="20px")
                     ui.label("Thêm đối thủ")
-        ui.label("Danh sách dùng chung cho AI Overview và thứ hạng (vị trí đối thủ trong kết quả check rank). "
-                 + (f"Đã đủ {AO.MAX_COMPETITORS} đối thủ: bỏ bớt để thêm mới." if full else "")).classes(
-            "text-xs muted q-mt-sm")
-        if ed and sug and not full:
+        with ui.row().classes("items-center gap-2 q-mt-sm"):
+            ui.label("Danh sách dùng chung với thứ hạng. Thêm, sửa, bỏ đối thủ ở").classes("text-sm muted")
+            ui.link("Từ khóa & Thứ hạng → Đối thủ", "/rank?bo=doi-thu").classes("text-sm")
+        if False:  # gợi ý thêm đối thủ: ở tab Đối thủ
             with ui.column().classes("w-full gap-1 q-mt-md"):
                 ui.label("Gợi ý: website AI hay trích, chưa có trong danh sách").classes("text-sm muted")
                 with ui.element("div").classes("sr-sug-list"):
@@ -453,6 +453,22 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "") -> None:
         keywords_view.refresh()
         brands_view.refresh()
 
+    # ---- chọn bộ từ khóa: AI Overview đi theo bộ (cùng lần check rank) ----
+    with connect() as c:
+        from . import rank as R
+        sets_ = [x for x in R.sets(c, cfg.site_url) if not x["draft"]]
+    if state["set"] not in [x["id"] for x in sets_]:
+        state["set"] = None
+    if len(sets_) > 1:
+        def pick_set(v):
+            state["set"] = v or None
+            refresh_all()
+            ui.run_javascript(f"history.replaceState(null, '', '/aio' + ({v or 0} ? '?bo={v}' : ''))")
+        with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
+            ui.label("Tính trên").classes("text-sm muted")
+            ui.toggle({0: "Mọi bộ", **{x["id"]: x["name"] for x in sets_}}, value=state["set"] or 0,
+                      on_change=lambda e: pick_set(e.value)).props(SEG).classes("sr-seg")
+
     # dựng sau khi đã định nghĩa các phần trên
     with ui.tabs().props("align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs") as sub:
         s_over = ui.tab("Tổng quan")
@@ -481,7 +497,7 @@ def opportunities(ui, connect, cfg) -> None:
     todo.sort(key=lambda r: (r["rank"] is None, r["rank"] or 999))
     with T.section(ui, f"AI Overview chưa trích website · {len(todo)} từ khóa", "auto_awesome",
                    f"{where_text(connect, cfg)} · lần check mới nhất. Từ khóa đang ở top 10 xếp trước: dễ được trích "
-                   "nhất. Xem nội dung các website đang được trích để bổ sung trang của mình."):
+                   "nhất. Xem nội dung các website đang được trích để bổ sung trang của website dự án."):
         if not todo:
             ui.label("Không có: mọi từ khóa có AI Overview đều đang trích website.").classes("text-sm muted")
             return
@@ -519,10 +535,10 @@ def dashboard_lines(ui, connect, cfg) -> None:
             "sr-cmp-note").tooltip("Top 10 trên bộ từ khóa: " + ", ".join(names))
 
 
-def build_aio_page(ui, cfg, connect, user, start: str = "") -> None:
+def build_aio_page(ui, cfg, connect, user, start: str = "", set_id: int | None = None) -> None:
     """Trang AI Overview: tiêu đề + tab (Tổng quan · Việc nên làm · Từ khóa · Thương hiệu & đối thủ)."""
     from .access import can_edit
     right = T.page_header(ui, "tips_and_updates", "AI Overview",
                           "Thương hiệu trong câu trả lời AI của Google trên bộ từ khóa theo dõi. Lượt hiển thị và truy "
                           "cập từ AI (GSC, GA4) xem ở trang AI Search & GEO.")
-    tab(ui, connect, cfg, can_edit(user), header=right, start=start)
+    tab(ui, connect, cfg, can_edit(user), header=right, start=start, set_id=set_id)

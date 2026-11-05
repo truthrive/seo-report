@@ -83,6 +83,23 @@ class DashboardTest(unittest.TestCase):
 
 
 
+    def test_aio_per_set(self):
+        from seo_report import rank_overview as RO
+        AO.save_brand(self.con, SITE, "Rival", "", "rival.vn")
+        self.put("a", "2026-10-13", 1, ["rival.vn"], "Rival tốt")
+        self.put("a", "2026-10-20", 1, ["vidushop.com", "rival.vn"], "Mua ở vidushop")
+        self.put("b", "2026-10-20", 1, ["rival.vn"], None)
+        self.put("c", "2026-10-20", 0)
+        kws = R.keywords(self.con, SITE, END)
+        a = RO.aio_for(self.con, CFG, kws)
+        self.assertEqual((a["checked"], a["aio"], a["reffed"], a["cited"], a["texted"], a["mentioned"]),
+                         (3, 2, 2, 1, 1, 1))
+        self.assertEqual((a["prev"]["aio"], a["prev"]["cited"], a["top_rival"][1]), (1, 0, 2))
+        other = R.create_set(self.con, SITE, "Khác", "t")
+        R.add_keywords(self.con, SITE, RankSettings(monthly_budget_usd=20), END, [("z", None)], "t", set_id=other)
+        d = AO.dashboard(self.con, CFG, today=date(2026, 10, 21), weeks=4, set_id=other)
+        self.assertEqual((d["total"], d["weeks"]), (1, []))  # bộ chưa có lần check: không lẫn số bộ khác
+
     def test_logo_fetched_once_and_refetched_when_domain_changes(self):
         bid = AO.save_brand(self.con, SITE, "Rival", "", "rival.vn")
         AO.save_brand(self.con, SITE, "Nope", "", "nope.vn")

@@ -47,7 +47,7 @@ def rank_snapshot(con, site: str, end: date) -> dict:
     sâu check (vào top N / rớt khỏi top N). Không có "Top 30": từ khóa chỉ check top 10 mà không thấy thì không biết
     có trong top 30 hay không."""
     from .report import rank_change
-    kws = R.primary_keywords(con, site, end)
+    kws = [k for k in R.primary_keywords(con, site, end) if not k.get("draft")]  # bộ Nháp chưa tính
     checked = [k for k in kws if k["date"]]
     ranked = [k["rank"] for k in checked if k["rank"] is not None]
     moves = [rank_change(k["date"], k["rank"], k["last_depth"], k["prev"], k["prev_depth"])[2] for k in checked]

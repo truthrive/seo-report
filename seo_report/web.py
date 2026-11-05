@@ -541,7 +541,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         shell("AI Overview", user, P, page_ctx(P), period=False, group=False)
         from .web_aio import build_aio_page
-        build_aio_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+        bo = request.query_params.get("bo", "")  # bộ từ khóa (từ tab bộ ở màn Từ khóa & Thứ hạng)
+        build_aio_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""),
+                       int(bo) if bo.isdigit() else None)
 
     @ui.page("/ai")
     def ai_page(request: Request):
@@ -714,7 +716,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         budget_card = shell("Từ khóa & Thứ hạng", user, P, page_ctx(P), period=False, group=False)
         bo = request.query_params.get("bo", "")  # bộ (tab) đang mở
         build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh,
-                        set_id=int(bo) if bo.isdigit() else None)
+                        set_id=int(bo) if bo.isdigit() else (-1 if bo == "doi-thu" else None))
 
     @ui.page("/stars")
     def stars_page():

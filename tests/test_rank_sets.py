@@ -99,6 +99,17 @@ class SetModelTest(unittest.TestCase):
         R.update_set(self.con, a, "t", kind="custom")
         self.assertEqual(R.get_set(self.con, a)["kind"], "custom")
 
+    def test_zero_budget_blocks_active_set_but_not_draft_or_paused_project(self):
+        from dataclasses import replace
+        broke = RankSettings(monthly_budget_usd=0)
+        live = R.create_set(self.con, SITE, "Chạy", "t")
+        draft = R.create_set(self.con, SITE, "Nháp", "t", state="draft")
+        self.assertEqual(R.add_keywords(self.con, SITE, broke, END, [("a", None)], "t", set_id=live)["over_budget"],
+                         ["a"])
+        self.assertEqual(R.add_keywords(self.con, SITE, broke, END, [("a", None)], "t", set_id=draft)["added"], ["a"])
+        paused = replace(broke, paused=True)
+        self.assertEqual(R.add_keywords(self.con, SITE, paused, END, [("b", None)], "t", set_id=live)["added"], ["b"])
+
     def test_schedule_time(self):
         from datetime import datetime
         a = R.create_set(self.con, SITE, "Sáng", "t", schedule={"type": "weekdays", "weekdays": [1], "time": "9:30"})
@@ -310,3 +321,59 @@ class CrudTest(unittest.TestCase):
         self.con.execute("INSERT INTO rank_checks VALUES (?, '2026-10-06', 30, 4, NULL, NULL, 0, '')", (self.ids["x"],))
         self.assertTrue(R.delete_check(self.con, SITE, self.ids["x"], "2026-10-06", "t"))
         self.assertEqual(R.history(self.con, self.ids["x"]), [])
+
+
+class ProjectOverviewTest(unittest.TestCase):
+    def test_overview_counts_each_keyword_once_and_competitors(self):
+        from types import SimpleNamespace
+        from seo_report import aio as AO
+        from seo_report import rank_overview as RO
+        con = db.connect(":memory:")
+        s = RankSettings(monthly_budget_usd=20)
+        a = R.create_set(con, SITE, "A", "t", kind="kpi")
+        b = R.create_set(con, SITE, "B", "t")
+        d = R.create_set(con, SITE, "Nháp", "t", state="draft")
+        R.add_keywords(con, SITE, s, END, [("x", None), ("y", None)], "t", set_id=a)
+        R.add_keywords(con, SITE, s, END, [("x", None)], "t", set_id=b)
+        R.add_keywords(con, SITE, s, END, [("z", None)], "t", set_id=d)  # bộ Nháp không tính
+        cfg = SimpleNamespace(site_url=SITE, keywords=SimpleNamespace(brand_terms=()), rank=s)
+        AO.save_brand(con, SITE, "Rival", "", "rival.vn")
+        fake = FakeDataForSEO({"x": [("rival.vn", "https://rival.vn/a"), ("vidushop.com", SITE)],
+                               "y": [("vidushop.com", SITE), ("rival.vn", "https://rival.vn/b")]})
+        run(con, s, fake, TUE)
+        self.assertEqual(len(fake.posted), 2)  # x ở hai bộ cùng nơi check: một lần
+        sm = RO.summary(con, SITE, END)
+        self.assertEqual((sm["total"], sm["top3"]), (2, 2))
+        rows = {r["name"]: r for r in RO.set_rows(con, SITE, END, s)}
+        self.assertEqual((rows["B"]["top3"], rows["Nháp"]["cost"]), (1, 0.0))
+        comp = RO.competitors(con, cfg, END)
+        own, rival = comp["rows"]
+        self.assertTrue(own["brand"]["own"])
+        self.assertEqual((rival["present"], rival["ahead_count"], rival["avg"]), (2, 1, 1.5))
+        self.assertAlmostEqual(own["visibility"], (RO.ctr(2) + RO.ctr(1)) / (2 * RO.CTR[1]))
+        import io
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(RO.competitor_workbook(con, cfg, END)))
+        self.assertEqual(wb.sheetnames, ["Vị trí theo từ khóa", "Kết quả Google", "Tổng quan đối thủ", "Ghi chú"])
+        pos = list(wb["Vị trí theo từ khóa"].values)
+        self.assertEqual(pos[0][8:10], (own["brand"]["name"], "Rival"))
+        self.assertEqual(pos[0][1:3], ("Ý định chính", "Ý định khác"))
+        # mọi bộ, kể cả từ khóa trùng ở bộ B (một dòng mỗi bộ); bộ Nháp không có
+        self.assertEqual(sorted((r[0], r[3], r[8], r[9]) for r in pos[1:]),
+                         [("x", "A", 2, 1), ("x", "B", 2, 1), ("y", "A", 1, 2)])
+        self.assertEqual(len(list(wb["Kết quả Google"].values)) - 1, 6)
+        # lần check sau: Rival rớt khỏi top 3 ở x, mình lên 1 → bảng xếp hạng đổi, có ▲▼ Top 3
+        from datetime import timedelta
+        fake.serps = {"x": [("vidushop.com", SITE), ("a.vn", "https://a.vn/"), ("b.vn", "https://b.vn/"),
+                            ("rival.vn", "https://rival.vn/a")],
+                      "y": [("vidushop.com", SITE), ("rival.vn", "https://rival.vn/b")]}
+        run(con, s, fake, TUE + timedelta(days=7))
+        comp = RO.competitors(con, cfg, END)
+        rows = {r["brand"]["own"]: r for r in comp["rows"]}
+        self.assertEqual((rows[True]["place"], rows[True]["move"], rows[False]["move"]), (1, 0, 0))
+        self.assertEqual(rows[False]["delta"], {3: -1, 5: 0, 10: 0})
+        self.assertEqual(rows[True]["delta"], {3: 0, 5: 0, 10: 0})
+        # hạng trước = hạng hiện tại + bậc đã lên; hạng 1 không thể "xuống"
+        self.assertTrue(all(r["move"] is None or r["place"] + r["move"] >= 1 for r in comp["rows"]))
+        self.assertEqual((rows[False]["behind_count"], rows[False]["ahead_count"]), (2, 0))
+
