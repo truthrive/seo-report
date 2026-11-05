@@ -306,31 +306,27 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                 if of:
                     ui.label(f"{value / of * 100:.0f}%").classes("sr-kc-pct").tooltip(
                         f"{value / of * 100:.0f}% tổng số từ khóa")
-            net = enter - leave  # chỉ từ khóa đã có lần trước; từ khóa mới kiểm tra không tính tốt / xấu
-            tone = "" if not net else (" good" if (net > 0) == good_up else " bad")
+            delta = value - before  # = vào − rời + mới kiểm tra: số chính tăng là xanh (giảm là đỏ), thẻ "Ngoài
+            # top 20" ngược lại. Phần chi tiết bên dưới vẫn tách riêng từ khóa mới kiểm tra.
+            tone = "" if not delta else (" good" if (delta > 0) == good_up else " bad")
             with ui.row().classes("w-full items-baseline no-wrap gap-2 sr-kc-main"):
                 ui.label(str(value) if checked else "–").classes("sr-kc-num" + tone)
                 ui.label(f"/ {of} từ khóa").classes("sr-kc-of")
+                if with_prev and delta:  # nhãn nhỏ: tăng / giảm bao nhiêu so với "Trước đó"
+                    in_word, out_word = words or (f"Vào {title}", f"Rời {title}")
+                    ui.label(f"{'▲' if delta > 0 else '▼'} {abs(delta)}").classes("sr-kc-delta" + tone).tooltip(
+                        f"{'Tăng' if delta > 0 else 'Giảm'} {abs(delta)} từ khóa so với trước đó ({before}): "
+                        f"{in_word.lower()} {enter}, {out_word.lower()} {leave}, mới kiểm tra {new_in}.")
 
             if not with_prev:
                 ui.label("Lần check đầu tiên, chưa có lần trước để so").classes("sr-kc-note")
                 return
-            in_word, out_word = words or (f"Vào {title}", f"Rời {title}")
             with ui.element("div").classes("sr-kc-foot") as foot:
-                # lưới cố định, cùng vị trí ở cả 5 thẻ: so với / trước đó · vào · rời · mới kiểm tra
+                # gọn: chỉ so với / trước đó (chi tiết vào · rời · mới kiểm tra nằm trong chú thích của nhãn ▲▼)
                 ui.label(f"So với {d_prev}" if d_prev else "So với lần trước").classes("sr-kc-lab")
                 ui.html(f"<span class='sr-kc-lab'>Trước đó</span> <b class='sr-kc-prev{' zero' if not before else ''}'>"
                         f"{before}</b>").classes("sr-kc-r")
-                good_in = "good" if good_up else "bad"   # vào nhóm: tốt (Top N) hoặc xấu (Ngoài top 10)
-                good_out = "bad" if good_up else "good"
-                for word, n_, tone, sign in ((in_word, enter, good_in, "+"), (out_word, leave, good_out, "−")):
-                    ui.label(word).classes("sr-kc-k")
-                    ui.label(f"{sign}{n_} từ khóa" if n_ else "0").classes(
-                        "sr-kc-r sr-kc-v " + (tone if n_ else "zero"))
-                ui.label("Mới kiểm tra").classes("sr-kc-k")
-                ui.label(f"+{new_in} từ khóa" if new_in else "0").classes(
-                    "sr-kc-r sr-kc-v " + ("neutral" if new_in else "zero"))
-                if extra:  # thẻ Đạt mục tiêu: thêm dòng "Chưa đạt" trong phần chi tiết
+                if extra:  # thẻ Đạt mục tiêu: thêm dòng "Chưa đạt"
                     extra()
             foot.tooltip(f"Hiện tại {value} = trước đó {before} + vào {enter} − rời {leave} + mới kiểm tra {new_in}. "
                          f"Vào / rời: so với lần check trước của chính từng từ khóa (phần lớn ngày {d_prev}). Mới "
@@ -368,37 +364,26 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                 lambda k, n=n: k["rank"] is not None and k["rank"] <= n,
                 lambda k, n=n: k["prev"] is not None and k["prev"] <= n, total)
 
-        kcard("o10", "Ngoài top 10", (
-            "Số từ khóa chưa vào trang đầu Google: thấy ở hạng 11 trở đi, hoặc không thấy trong độ sâu đã check.",
-            "Số này giảm là tốt: “Giảm” màu xanh, “Tăng” màu đỏ.",
-            "Độ sâu check có thể khác nhau giữa các từ khóa (top 10 / 20 / 30), nên “không thấy” chỉ nghĩa là ngoài "
-            "độ sâu đã check của từ khóa đó."),
-            lambda k: k["rank"] is None or k["rank"] > 10,
-            lambda k: k["prev"] is None or k["prev"] > 10, total, good_up=False)
+        kcard("o10", "Ngoài top 20", (
+            "Số từ khóa chưa vào top 20 Google: thấy ở hạng 21 trở đi, hoặc không thấy trong độ sâu đã check.",
+            "Số này giảm là tốt. “Rớt khỏi top 20”: lần trước trong top 20, lần này ra ngoài. “Lên top 20”: lần "
+            "trước ngoài top 20, lần này vào.",
+            "Mọi lần check đều xem ít nhất top 20, nên “ngoài top 20” là chắc chắn. Riêng các lần check cũ chỉ xem "
+            "top 10: không thấy thì tạm tính là ngoài top 20."),
+            lambda k: k["rank"] is None or k["rank"] > 20,
+            lambda k: k["prev"] is None or k["prev"] > 20, total, good_up=False,
+            words=("Rớt khỏi top 20", "Lên top 20"))
 
         targeted = [k for k in kws if k.get("top_target")]
         if targeted:
-            miss = sum(1 for k in targeted if k["date"] and (k["rank"] is None or k["rank"] > k["top_target"]))
-
-            def miss_link():
-                ui.label("Chưa đạt").classes("sr-kc-k")
-                if miss and on_filter:  # bấm để lọc bảng các từ khóa chưa đạt (Tổng quan dự án: không có bảng)
-                    lk = ui.element("button").classes("sr-kc-r sr-kc-v sr-kc-link").props('type="button"')
-                    lk.on("click", lambda: on_filter("miss"))
-                    with lk:
-                        ui.label(f"{miss} từ khóa")
-                        ui.icon("chevron_right", size="15px").props('aria-hidden="true"')
-                    lk.tooltip("Lọc bảng các từ khóa chưa đạt Top mục tiêu")
-                else:
-                    ui.label(f"{miss} từ khóa" if miss else "0").classes(
-                        "sr-kc-r sr-kc-v " + ("bad" if miss else "zero"))
             kcard("hit", "Đạt mục tiêu", (
                 "Số từ khóa đã đạt Top mục tiêu của chính nó (mỗi từ khóa một mục tiêu, ví dụ mục tiêu Top 3 và đang "
                 "hạng 2), trên số từ khóa có đặt mục tiêu.",
-                "Trả lời câu hỏi: bộ từ khóa đã đạt cam kết chưa. Bấm “chưa đạt” để lọc bảng."),
+                "Trả lời câu hỏi: bộ từ khóa đã đạt cam kết chưa. Lọc “Chưa đạt Top mục tiêu” ở bảng để xem các từ "
+                "khóa còn lại."),
                 lambda k: bool(k.get("top_target")) and k["rank"] is not None and k["rank"] <= k["top_target"],
                 lambda k: bool(k.get("top_target")) and k["prev"] is not None and k["prev"] <= k["top_target"],
-                len(targeted), extra=miss_link, words=("Đạt thêm", "Mất mục tiêu"))
+                len(targeted), words=("Đạt thêm", "Mất mục tiêu"))
         else:
             with cell("hit", "Đạt Top mục tiêu", ("Chưa có từ khóa nào đặt Top mục tiêu.",)):
                 ui.label("Chưa đặt Top mục tiêu").classes("text-sm muted q-mt-sm")
@@ -976,42 +961,53 @@ def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: b
         with ui.element("div").classes("sr-comp-grid w-full" + (" thin" if thin else "")):
             # ---- donut thị phần hiển thị ----
             with ui.element("div").classes("sr-comp-donut"):
-                slices, other = [], 0.0
+                slices, logos, other = [], [], 0.0
                 for r in rows_c:
                     b = r["brand"]
                     if not r["vis"]:
                         continue
                     if b["own"] or b["charted"]:
                         pct = round(r["vis"] / vis_sum * 100, 1)
-                        item = {"name": b["name"], "value": pct, "itemStyle": {"color": b["color"]}}
-                        if b.get("logo"):  # logo thương hiệu ngay cạnh phần của nó trên biểu đồ
-                            item["label"] = {"show": True, "formatter": "{logo|}",
-                                             "rich": {"logo": {"backgroundColor": {"image": b["logo"]},
-                                                               "width": 20, "height": 20, "borderRadius": 4}}}
-                        slices.append(item)
+                        slices.append({"name": b["name"], "value": pct, "itemStyle": {"color": b["color"]}})
+                        logos.append(b.get("logo") or "")
                     else:
                         other += r["vis"]
                 if other:
                     slices.append({"name": "Đối thủ khác", "value": round(other / vis_sum * 100, 1),
                                    "itemStyle": {"color": "#A9A79B"}})
+                    logos.append("")
                 own = next((r for r in rows_c if r["brand"]["own"]), None)
                 share = (own["vis"] / vis_sum * 100) if own and vis_sum else 0
-                ui.echart({
-                    "tooltip": {"trigger": "item", "formatter": "{b}: {c}%"},
-                    "series": [{"type": "pie", "radius": ["50%", "74%"], "center": ["50%", "50%"],
-                                "avoidLabelOverlap": True, "minShowLabelAngle": 8,
-                                "label": {"show": False, "position": "outside"},
-                                "labelLine": {"show": True, "length": 6, "length2": 4,
-                                              "lineStyle": {"color": "#C9C7BC"}},
-                                "itemStyle": {"borderColor": "#fff", "borderWidth": 2},
-                                "emphasis": {"scale": True, "scaleSize": 5}, "data": slices}],
-                    "graphic": [{"type": "text", "left": "center", "top": "41%",
-                                 "style": {"text": f"{share:.0f}%", "fontSize": 28, "fontWeight": 700,
-                                           "fill": "#1F221E", "textAlign": "center"}},
-                                {"type": "text", "left": "center", "top": "54%",
-                                 "style": {"text": f"thị phần {own_name}", "fontSize": 12, "fill": "#6B6A5E",
-                                           "textAlign": "center", "width": 130, "overflow": "truncate"}}]}).classes(
-                    "sr-comp-chart")
+                with ui.element("div").classes("sr-comp-chartbox"):
+                    ui.echart({
+                        "tooltip": {"trigger": "item", "formatter": "{b}: {c}%"},
+                        "series": [{"type": "pie", "radius": ["50%", "74%"], "center": ["50%", "50%"],
+                                    "label": {"show": False}, "labelLine": {"show": False},
+                                    "itemStyle": {"borderColor": "#fff", "borderWidth": 2},
+                                    "emphasis": {"scale": True, "scaleSize": 5}, "data": slices}],
+                        "graphic": [{"type": "text", "left": "center", "top": "41%",
+                                     "style": {"text": f"{share:.0f}%", "fontSize": 28, "fontWeight": 700,
+                                               "fill": "#1F221E", "textAlign": "center"}},
+                                    {"type": "text", "left": "center", "top": "54%",
+                                     "style": {"text": f"thị phần {own_name}", "fontSize": 12, "fill": "#6B6A5E",
+                                               "textAlign": "center", "width": 130, "overflow": "truncate"}}]}
+                    ).classes("sr-comp-chart")
+                    # Logo đặt bằng HTML ở giữa cung của từng phần (ECharts không chắc vẽ được ảnh trong nhãn):
+                    # vòng ngoài 74% của bán kính 155px, chip logo cách mép vòng 20px. Phần quá nhỏ (< 12°) bỏ logo
+                    # để các chip không đè nhau; bảng bên cạnh vẫn có logo.
+                    tot = sum(x["value"] for x in slices) or 1
+                    cum = 0.0
+                    for x, logo in zip(slices, logos):
+                        deg = x["value"] / tot * 360
+                        mid = math.radians(90 - (cum + deg / 2))
+                        cum += deg
+                        if not logo or deg < 12:
+                            continue
+                        cx, cy = 155 + 135 * math.cos(mid), 155 - 135 * math.sin(mid)
+                        with ui.element("span").classes("sr-donut-logo").style(
+                                f"left:{cx - 14:.0f}px;top:{cy - 14:.0f}px"):
+                            ui.html(f'<img src="{logo}" alt="">')
+                        ui.tooltip(f"{x['name']}: {x['value']:g}%")
             # ---- bảng số ----
             with ui.element("div").classes("sr-comp-table"):
                 with ui.element("div").classes("sr-comp-row head"):
@@ -1202,9 +1198,6 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 with ui.column().classes("gap-0 q-px-md q-py-sm"):
                     ui.label("Chi phí ước tính").classes("sr-more-cap")
                     cost_label = ui.label("…").classes("sr-more-val")
-                    ui.label("Nơi check").classes("sr-more-cap q-mt-sm")
-                    ui.label(f"{where.se_domain} · {device} · {loc} · {lang}"
-                             + (" (theo dự án)" if not cur["settings"] else "")).classes("sr-more-val")
                 if ed:
                     ui.separator()
                     with ui.item(on_click=lambda: set_dialog(cur)).props("clickable"):
@@ -1366,11 +1359,16 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             with ui.row().classes("items-center gap-3"):
                 month_day = ui.number("Ngày trong tháng", value=sc["day"], min=1, max=31, step=1,
                                       format="%d").props("dense outlined").classes("w-40")
-                at_time = ui.input("Giờ check", value=sc.get("time") or R.DEFAULT_SCHEDULE["time"]).props(
-                    "dense outlined type=time").classes("w-32")
+                # Ô giờ gốc của trình duyệt (<input type="time">): chia giờ / phút / SA-CH, phím mũi tên lên-xuống
+                # đổi từng phần, trái-phải chuyển phần. Trên điện thoại trình duyệt tự mở bánh xe (iOS) / mặt đồng
+                # hồ (Android). Giá trị luôn là 24 giờ "HH:mm"; kiểu hiển thị 12/24 giờ theo ngôn ngữ máy người dùng.
+                at_time = ui.input("Giờ check", value=sc.get("time") or R.DEFAULT_SCHEDULE["time"],
+                                   validation={"Chọn giờ check": lambda v: bool(v)}).props(
+                    'dense outlined type=time step=60 hide-bottom-space').classes("w-40")
+                at_time.props["aria-label"] = "Giờ check theo giờ Việt Nam"
             depth = ui.select({x: ("Tự động" if x == "auto" else f"Top {x}") for x in R.DEPTHS}, value=sc["depth"],
                               label="Độ sâu check").props("dense outlined").classes("w-48")
-            ui.label("Tự động: lần đầu check top 30; sau đó theo vị trí lần trước (≤ 8 → top 10, ≤ 18 → top 20, còn "
+            ui.label("Tự động: lần đầu check top 30; sau đó theo vị trí lần trước (≤ 18 → top 20, còn "
                      "lại top 30). Check sâu hơn tốn tiền hơn.").classes("text-xs muted")
             if st:
                 ui.label("Đổi nơi check thì các lần check sau có thể lệch so với trước (Google trả kết quả khác theo "
@@ -1423,6 +1421,10 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 s_new = sched_now()
                 if s_new["type"] == "weekdays" and not s_new["weekdays"]:
                     ui.notify("Chọn ít nhất một thứ trong tuần", type="warning")
+                    return
+                if s_new["type"] != "manual" and not at_time.value:  # ô giờ bị xóa trống: không tự đặt 07:00
+                    at_time.validate()
+                    ui.notify("Chọn giờ check", type="warning")
                     return
                 settings = None if follow.value else {"se_domain": t_domain.value, "device": t_device.value,
                                                       "location_code": t_loc.value, "language_code": t_lang.value}
@@ -1533,11 +1535,11 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     def rank_sort(field: str) -> str:  # sắp theo hạng: ">20" (ngoài độ sâu) sau mọi số, ô trống cuối cùng
         return (f"(a, b, rowA, rowB) => (rowA.{field}_n ?? 9999) - (rowB.{field}_n ?? 9999)")
     cols = [
-        {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
+        {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True, **w(230)},
         {"name": "pos", "label": "Vị trí", "field": "pos", "align": "center", "sortable": True,
          ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos", **w(72)},
         {"name": "change", "label": "Thay đổi", "field": "change", "align": "center", "sortable": True,
-         ":sort": "(a, b, rowA, rowB) => rowA.move - rowB.move", **w(80)},
+         ":sort": "(a, b, rowA, rowB) => rowA.move - rowB.move", **w(100)},
         {"name": "prev_pos", "label": "Trước", "field": "prev_pos", "align": "center", "sortable": True,
          ":sort": rank_sort("prev_pos"), **w(56)},
         {"name": "best", "label": "Tốt nhất", "field": "best", "align": "center", "sortable": True,
@@ -1551,7 +1553,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
          ":sort": "(a, b, rowA, rowB) => (rowA.top_n || 999) - (rowB.top_n || 999)"},
         {"name": "checked_at", "label": "Check lúc", "field": "checked_at", "align": "center", "sortable": True,
          **w(84), ":sort": "(a, b, rowA, rowB) => (rowA.checked_iso || '').localeCompare(rowB.checked_iso || '')"},
-        {"name": "link", "label": "URL", "field": "link", "align": "left", "sortable": False, **w(150)},
+        {"name": "link", "label": "URL", "field": "link", "align": "left", "sortable": False,
+         "headerStyle": "min-width:150px"},  # cột co giãn: nhận phần rộng còn lại thay cho cột Từ khóa
         {"name": "chart", "label": "", "field": "id", "align": "center", **w(60)},
     ]
     table = ui.table(columns=cols, rows=[], row_key="id", selection="multiple" if ed else "none",

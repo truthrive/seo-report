@@ -7,7 +7,7 @@
 - Keyword đến từ: sheet cam kết, nhập tay, hoặc gắn ★ ở màn URL. URL mục tiêu và Top mục tiêu là tùy chọn.
 - Lịch: các thứ trong tuần hoặc một ngày trong tháng, kèm giờ; hoặc chỉ khi bấm "Check ngay". Lỡ lịch (máy tắt)
   thì lần chạy sau check bù.
-- Độ sâu: "auto" (lần đầu top 30; sau đó theo vị trí check lần trước: ≤ 8 → top 10, ≤ 18 → top 20, còn lại → top 30)
+- Độ sâu: "auto" (lần đầu top 30; sau đó theo vị trí check lần trước: ≤ 18 → top 20, còn lại → top 30; tối thiểu top 20)
   hoặc cố định 10/20/30/50/100. Giá tính theo từng trang 10 kết quả. Không dùng position GSC: đó là số trung bình,
   không phải rank.
 - Ngân sách tháng dùng chung: không cho thêm keyword nếu ước tính vượt 100%, cảnh báo ở 80%, không gửi task nếu tiền đã
@@ -576,9 +576,7 @@ def next_scheduled_day(s: dict, today: date) -> date | None:
 def _auto_depth(position: float | None) -> int:
     if position is None:
         return 30
-    if position <= 8:
-        return 10
-    if position <= 18:
+    if position <= 18:  # tối thiểu top 20: luôn biết từ khóa có trong top 20 hay không
         return 20
     return 30
 

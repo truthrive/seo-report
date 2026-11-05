@@ -111,11 +111,15 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
                             "khóa của phạm vi.",
                             "Vào / rời: so với lần check trước của từng từ khóa có lịch sử. Từ khóa mới kiểm tra không "
                             "tính là tăng."))
-                    with ui.row().classes("items-baseline gap-2 no-wrap"):
-                        net = t["enter"] - t["leave"]
+                    with ui.row().classes("w-full items-baseline gap-2 no-wrap"):
+                        delta = t["enter"] - t["leave"] + t["new"]  # số chính tăng: xanh, giảm: đỏ
                         ui.label(str(t["count"])).classes(
-                            "sr-rd-num" + ("" if not net else (" good" if net > 0 else " bad")))
+                            "sr-rd-num" + ("" if not delta else (" good" if delta > 0 else " bad")))
                         ui.label(f"{t['count'] / tot * 100:.0f}%" if tot else "").classes("sr-rd-pct")
+                        if delta:
+                            ui.label(f"{'▲' if delta > 0 else '▼'} {abs(delta)}").classes(
+                                "sr-kc-delta " + ("good" if delta > 0 else "bad")).tooltip(
+                                f"{'Tăng' if delta > 0 else 'Giảm'} {abs(delta)} từ khóa so với lần check trước")
                     with ui.row().classes("items-center gap-2 no-wrap sr-rd-sub"):
                         if k["history"]:
                             ui.label(f"+{t['enter']} vào").classes("good" if t["enter"] else "zero")

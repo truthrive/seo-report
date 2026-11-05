@@ -112,8 +112,8 @@ class RankTest(unittest.TestCase):
                          {("gọng kính", 30, "mobile", 2704), ("gọng kính nam", 30, "mobile", 2704)})
         run(self.con, self.s, fake, date(2026, 10, 26))  # cùng ngày: không gửi lại
         self.assertEqual(len(fake.posted), 2)
-        run(self.con, self.s, fake, TUE)  # đến ngày lịch: check lại, độ sâu theo vị trí lần trước (2 và 1)
-        self.assertEqual([t["depth"] for t in fake.posted[2:]], [10, 10])
+        run(self.con, self.s, fake, TUE)  # đến ngày lịch: check lại, độ sâu theo vị trí lần trước (2 và 1): tối thiểu 20
+        self.assertEqual([t["depth"] for t in fake.posted[2:]], [20, 20])
         kws = {k["keyword"]: k for k in R.keywords(self.con, SITE, END)}
         self.assertEqual((kws["gọng kính"]["rank"], kws["gọng kính"]["ranking_url"], kws["gọng kính"]["best"]), (2, A, 2))
         self.assertEqual((kws["gọng kính nam"]["rank"], kws["gọng kính nam"]["ranking_url"],

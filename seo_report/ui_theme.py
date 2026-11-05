@@ -62,7 +62,7 @@ HEAD = """
   .sr-bx { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
     grid-template-areas: "t3 t5 t10 o10 hit" "gr gr gr cov cov" "aio aio aio aio aio" "mov mov mov mov mov";
     /* hàng KPI và hàng biểu đồ cao cố định (bộ nào cũng cùng khung); hàng biến động theo số dòng */
-    grid-template-rows: minmax(180px, auto) auto auto auto;
+    grid-template-rows: auto auto auto auto;
     gap: 8px; padding: 8px; background: #E9E7DF; border-radius: 20px; }
   .sr-bx-cell { background: #FFFFFF; border-radius: 14px; padding: 16px 18px; min-width: 0; min-height: 0;
     overflow: auto; display: flex; flex-direction: column; }
@@ -78,6 +78,10 @@ HEAD = """
   .sr-kc-main { margin-top: 10px; }
   .sr-kc-num { font-size: 34px; font-weight: 800; line-height: 1; letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums; }
+  .sr-kc-delta { font-size: 12.5px; font-weight: 700; border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+    align-self: center; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .sr-kc-delta.good { color: #1E7C31; background: #E6F4EA; }
+  .sr-kc-delta.bad { color: #C2410C; background: #FCEBE3; }
   .sr-kc-num.good { color: #1E7C31; }
   .sr-kc-num.bad { color: #C2410C; }
   .sr-kc-of { font-size: 15px; color: #6B6A5E; font-weight: 500; white-space: nowrap; }
@@ -303,7 +307,7 @@ HEAD = """
   @media (max-width: 1100px) { .sr-bx { grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-areas: "t3 t5" "t10 o10" "hit hit" "gr gr" "cov cov" "aio aio" "mov mov";
-    grid-template-rows: minmax(180px, auto) minmax(180px, auto) auto auto auto auto auto; } }
+    grid-template-rows: auto; } }
   @media (max-width: 600px) { .sr-bx { grid-template-columns: minmax(0, 1fr); padding: 6px;
     grid-template-areas: "t3" "t5" "t10" "o10" "hit" "gr" "cov" "aio" "mov";
     grid-template-rows: auto; }
@@ -325,6 +329,11 @@ HEAD = """
   .sr-comp-grid { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 20px; align-items: center; }
   .sr-comp-grid.thin .sr-comp-table, .sr-comp-grid.thin .sr-comp-donut { opacity: .72; }
   .sr-comp-chart { width: 310px; height: 310px; }
+  .sr-comp-chartbox { position: relative; width: 310px; height: 310px; flex: none; }
+  .sr-donut-logo { position: absolute; width: 28px; height: 28px; border-radius: 7px; background: #fff;
+    border: 1px solid #E2E0D6; box-shadow: 0 1px 3px rgba(0,0,0,.08); display: flex; align-items: center;
+    justify-content: center; overflow: hidden; pointer-events: auto; }
+  .sr-donut-logo img { width: 20px; height: 20px; object-fit: contain; border-radius: 4px; display: block; }
   .sr-comp-table { display: grid; min-width: 0; overflow-x: auto; }
   .sr-comp-row { display: grid; grid-template-columns: 62px minmax(170px, 1fr) 72px 76px 68px 68px 68px 104px; align-items: center; gap: 8px; padding: 0 10px; min-height: 46px;
     border-bottom: 1px solid #F0EEE7; font-size: 14px; }
