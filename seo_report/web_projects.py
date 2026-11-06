@@ -42,6 +42,31 @@ def build_projects_page(ui, base, app_connect, user) -> None:
         except (Exception, SystemExit) as e:  # noqa: BLE001  (không lấy được danh sách thì cho gõ tay)
             return {}, {}, f"Không lấy được danh sách từ Google ({e}). Gõ tay property."
 
+    ga4_state: dict[str, dict] = {}  # property → kết quả đối chiếu luồng dữ liệu (cho danh sách dự án)
+
+    async def check_ga4(prop: str, site_url: str) -> dict | None:
+        """Đối chiếu luồng dữ liệu của property GA4 với website dự án; None khi không đọc được (thiếu quyền…)."""
+        def work():
+            from . import auth, ga4
+            admin = auth.build_ga4_admin(auth.get_credentials(base, need=auth.ALL_SCOPES))
+            return ga4.stream_check(site_url, ga4.web_streams(admin, prop))
+        try:
+            return await run.io_bound(work)
+        except (Exception, SystemExit):  # noqa: BLE001
+            return None
+
+    async def confirm_ga4(message: str) -> bool:
+        with ui.dialog() as d, ui.card().style("border-radius:14px; max-width:480px"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.icon("warning", size="22px").style(f"color:{T.AMBER}")
+                ui.label("GA4 không khớp website").classes("text-base font-semibold")
+            ui.label(message).classes("text-sm")
+            ui.label("Chọn property khác, hoặc để trống ô GA4 đến khi có property đúng.").classes("text-xs muted")
+            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                ui.button("Chọn lại", on_click=lambda: d.submit(False)).props("unelevated no-caps")
+                ui.button("Vẫn lưu", on_click=lambda: d.submit(True)).props("flat no-caps color=grey-8")
+        return bool(await d)
+
     async def edit_dialog(project: dict | None) -> None:
         """Thêm dự án (project None) hoặc sửa cấu hình một dự án."""
         s = project["settings"] if project else PJ.DEFAULTS
@@ -131,6 +156,20 @@ def build_projects_page(ui, base, app_connect, user) -> None:
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
             async def save():
+                new_ga4 = ga4.value or ""
+                if new_ga4 and new_ga4 != (project or {}).get("ga4_property") and (site.value or ""):
+                    # gắn / đổi GA4: đối chiếu luồng dữ liệu với website (tránh gắn nhầm property website khác)
+                    err.text = "Đang kiểm tra property GA4…"
+                    from .config import _ga4_property
+                    chk = await check_ga4(_ga4_property(new_ga4), site.value)
+                    err.text = ""
+                    if chk and chk["status"] in ("mismatch", "no_stream") and not await confirm_ga4(chk["message"]):
+                        return
+                    if chk and chk["status"] == "mixed":
+                        ui.notify(chk["message"], type="warning", multi_line=True, timeout=10000, close_button="Đóng")
+                    if chk is None:
+                        ui.notify("Không đọc được luồng dữ liệu của property GA4 để đối chiếu (thiếu quyền?). Vẫn lưu.",
+                                  type="info")
                 fields = {"name": name.value, "site_url": site.value or "", "ga4_property": ga4.value or "",
                           "brand_terms": brand.value or "", "rank_budget_usd": budget.value, "device": device.value,
                           "okr_sheet": okr.value or "",
@@ -304,6 +343,13 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                             ui.label(p["name"]).classes("text-sm font-semibold ellipsis")
                             if current and p["slug"] == current["slug"]:
                                 T.status_chip(ui, "Đang mở", "green")
+                            chk = ga4_state.get(p["ga4_property"]) if p["ga4_property"] else None
+                            if chk and chk["status"] != "ok":  # GA4 gắn nhầm / lẫn website khác
+                                with ui.element("span").tooltip(chk["message"]):
+                                    T.status_chip(ui, "GA4 sai website" if chk["status"] == "mismatch"
+                                                  else "GA4 lẫn website khác" if chk["status"] == "mixed"
+                                                  else "GA4 chưa có luồng web", "red" if chk["status"] == "mismatch"
+                                                  else "amber", "report")
                             if todo:  # status_chip không trả về phần tử: bọc để gắn chú thích
                                 with ui.element("span").tooltip("Còn thiếu: " + ", ".join(todo)):
                                     T.status_chip(ui, f"Cài đặt {len(steps) - len(todo)}/{len(steps)}", "amber",
@@ -383,6 +429,22 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                 "/cai-dat").classes("text-sm")
 
     body()
+
+    async def load_ga4_checks():
+        """Sau khi vẽ trang: đối chiếu GA4 của từng dự án với website, có lệch thì hiện nhãn đỏ / vàng ở dòng dự án."""
+        with app_connect() as c:
+            todo = [(p["ga4_property"], p["site_url"]) for p in PJ.list_projects(c) if p["ga4_property"]]
+        for prop, site_url in todo:
+            chk = await check_ga4(prop, site_url)
+            if chk:
+                ga4_state[prop] = chk
+        if any(v["status"] != "ok" for v in ga4_state.values()):
+            try:
+                body.refresh()
+            except Exception:  # noqa: BLE001  (người dùng đã rời trang)
+                pass
+    from nicegui import background_tasks as _bt
+    _bt.create(load_ga4_checks())
 
     async def load_email():
         from . import auth

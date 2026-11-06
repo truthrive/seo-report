@@ -66,6 +66,37 @@ class Ga4Test(unittest.TestCase):
         ])
         self.assertEqual([p["property"] for p in ga4.list_properties(admin)], ["properties/1", "properties/2"])
 
+    def test_stream_check(self):
+        """Đối chiếu luồng dữ liệu GA4 với website dự án (vụ Vinpest: property gắn nhầm thu số trang khác)."""
+        def s(*urls):
+            return [{"url": u} for u in urls]
+        site = "sc-domain:vinpest.vn"
+        self.assertEqual(ga4.stream_check(site, s("https://vinpest.vn/"))["status"], "ok")
+        self.assertEqual(ga4.stream_check("https://vinpest.vn/", s("https://www.vinpest.vn"))["status"], "ok")
+        r = ga4.stream_check(site, s("https://truongthinh-portfolio.vercel.app/"))
+        self.assertEqual(r["status"], "mismatch")
+        self.assertIn("truongthinh-portfolio.vercel.app", r["message"])
+        mixed = ga4.stream_check("https://gfcalumi.vn/", s("https://gfcalumi.vn/", "https://x.vercel.app/"))
+        self.assertEqual((mixed["status"], mixed["domains"]), ("mixed", ["gfcalumi.vn", "x.vercel.app"]))
+        self.assertEqual(ga4.stream_check(site, [])["status"], "no_stream")
+        self.assertEqual(ga4.stream_check(site, s("https://shop.vinpest.vn/"))["status"], "ok")  # tên miền con
+
+    def test_web_streams(self):
+        class Admin:
+            def properties(self):
+                return self
+
+            def dataStreams(self):
+                return self
+
+            def list(self, parent, pageSize):
+                return Req({"dataStreams": [
+                    {"type": "WEB_DATA_STREAM", "displayName": "Web", "webStreamData": {
+                        "defaultUri": "https://a.vn", "measurementId": "G-1"}},
+                    {"type": "ANDROID_APP_DATA_STREAM", "displayName": "App"}]})
+        self.assertEqual(ga4.web_streams(Admin(), "properties/1"),
+                         [{"name": "Web", "url": "https://a.vn", "measurement_id": "G-1"}])
+
     def test_explain_disabled_api(self):
         from googleapiclient.errors import HttpError
         resp = type("R", (), {"status": 403, "reason": "Forbidden"})()
