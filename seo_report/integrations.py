@@ -56,6 +56,12 @@ INTEGRATIONS = [
                  Field("api_version", "Phiên bản API", placeholder="v26",
                        hint="Chỉ đổi khi tool báo phiên bản API không còn")],
                 path_attr="google_ads_secret", required=("developer_token", "customer_id")),
+    Integration("google_api", "Google API key (Core Web Vitals)", "speed",
+                "Tốc độ trang và Core Web Vitals (miễn phí): PageSpeed Insights và Chrome UX Report. Tạo ở Google Cloud "
+                "Console > APIs & Services > Credentials > Create credentials > API key, rồi bật 2 API “PageSpeed "
+                "Insights API” và “Chrome UX Report API” trong Library. Nên giới hạn key chỉ dùng cho 2 API này.",
+                [Field("api_key", "API key", secret=True, placeholder="AIza…")],
+                default_path="secrets/google_api.toml", required=("api_key",)),
     Integration("ai", "AI (Claude)", "auto_awesome",
                 "Chuẩn bị cho các tính năng AI sau này (viết nhận xét báo cáo, gợi ý nội dung…). Lấy khóa ở "
                 "platform.claude.com > API keys.",
@@ -182,7 +188,35 @@ def _test_ai(cfg, v: dict) -> tuple[bool, str]:
     return True, "Khóa dùng được" + (f", model {model} sẵn sàng" if model else "")
 
 
-TESTS = {"dataforseo": _test_dataforseo, "google_ads": _test_google_ads, "ai": _test_ai}
+def _test_google_api(cfg, v: dict) -> tuple[bool, str]:
+    """Gọi thử CrUX (website của dự án gốc) và PageSpeed (trang chủ, nhanh: chỉ hạng mục SEO)."""
+    from . import cwv as C
+    from .projects import domain
+    c = C.Client(v["api_key"], timeout=60)
+    origin = f"https://{domain(cfg.site_url)}"
+    try:
+        c.crux_history(origin, "PHONE")
+        crux = "có số CrUX của website"
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "404" in msg:
+            crux = "CrUX chưa có số cho website này (ít lượt truy cập Chrome), key vẫn dùng được"
+        elif "403" in msg or "400" in msg:
+            return False, f"Chrome UX Report API: {msg[:200]}. Kiểm tra key và đã bật “Chrome UX Report API”"
+        else:
+            return False, f"Chrome UX Report API lỗi: {msg[:200]}"
+    try:
+        from urllib.parse import urlencode
+        from urllib.request import Request
+        c._json(Request("https://www.googleapis.com/pagespeedonline/v5/runPagespeed?" + urlencode(
+            [("url", origin + "/"), ("category", "SEO"), ("key", v["api_key"])])))
+    except Exception as e:  # noqa: BLE001
+        return False, f"PageSpeed Insights API: {str(e)[:200]}. Kiểm tra đã bật “PageSpeed Insights API”"
+    return True, f"Key dùng được: PageSpeed chạy được, {crux}"
+
+
+TESTS = {"dataforseo": _test_dataforseo, "google_ads": _test_google_ads, "ai": _test_ai,
+         "google_api": _test_google_api}
 
 
 def test(cfg, key: str, values: dict) -> tuple[bool, str]:

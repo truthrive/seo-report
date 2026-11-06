@@ -106,6 +106,9 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         if it.key == "google_ads":
             return (f"MCC {v.get('login_customer_id') or '–'} · Customer ID {v.get('customer_id') or '–'} · "
                     f"token {v.get('developer_token') or 'chưa có'}")
+        if it.key == "google_api":
+            return (f"key {v['api_key']} · PageSpeed Insights, Chrome UX Report" if v.get("api_key")
+                    else "Chưa có: trang Tốc độ & Core Web Vitals chưa lấy được số")
         if it.key == "ai":
             return (I.AI_MODELS.get(v.get("model") or "", v.get("model") or "") + f" · khóa {v['api_key']}"
                     if v.get("api_key") else "Chuẩn bị cho tính năng AI sau này")

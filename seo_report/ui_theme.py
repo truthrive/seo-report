@@ -499,6 +499,30 @@ HEAD = """
   .sr-tabs .sr-tab-badge { margin-left: 6px; font-size: 10.5px; min-height: 16px; padding: 1px 6px; }
   .sr-local-split { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; width: 100%; }
   @media (max-width: 700px) { .sr-local-split { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .sr-cwv-top { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 12px; }
+  @media (max-width: 900px) { .sr-cwv-top { grid-template-columns: 1fr; } }
+  .sr-cwv-big { font-size: 44px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .sr-cwv-part { padding: 6px 0; border-bottom: 1px solid #EEECE4; }
+  .sr-cwv-part:last-of-type { border-bottom: 0; }
+  .sr-cwv-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; width: 100%; }
+  @media (max-width: 900px) { .sr-cwv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .sr-cwv-cell { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+    padding: 10px 12px; border-radius: 12px; border: 1px solid #E7E5DC; background: #fff; }
+  .sr-cwv-cell:hover { background: #F7F6F1; }
+  .sr-cwv-cell:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }
+  .sr-cwv-cell.on { background: #EEF3FC; border-color: #C9D8F5; }
+  .sr-cwv-num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .sr-cwv-cell:not(.core) .sr-cwv-num { font-size: 18px; }
+  .sr-cwv-score { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 24px;
+    border-radius: 999px; padding: 0 8px; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sr-cwv-score.good { background: #E7F3EA; color: #1E7C31; }
+  .sr-cwv-score.ni { background: #FBF1DE; color: #8F5F14; }
+  .sr-cwv-score.poor { background: #FCEBE3; color: #C2410C; }
+  .sr-cwv-score.none { background: #F1F0EA; color: #8C8A7E; }
+  .sr-cwv-good { color: #1E7C31; } .sr-cwv-ni { color: #8F5F14; } .sr-cwv-poor { color: #C2410C; font-weight: 600; }
+  .sr-cwv-chip-good { background: #E7F3EA !important; color: #1E7C31 !important; }
+  .sr-cwv-chip-ni { background: #FBF1DE !important; color: #8F5F14 !important; }
+  .sr-cwv-chip-poor { background: #FCEBE3 !important; color: #C2410C !important; }
   .sr-au-todo { display: flex; flex-direction: column; width: 100%; }
   .sr-au-todo-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%;
     padding: 9px 6px; border-bottom: 1px solid #EEECE4; cursor: pointer; border-radius: 8px; }

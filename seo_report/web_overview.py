@@ -512,6 +512,19 @@ def todo_section(ui, cfg, connect, rep, ctx, site) -> None:
         rows.append(("swap_horiz", T.AMBER, f"{len(wrong)} từ khóa đang xếp hạng bằng trang khác trang mục tiêu", "/rank"))
     if issues:
         rows.append(("rule", T.AMBER, f"{len(issues)} việc OKR quá hạn hoặc chưa cập nhật trạng thái", "/okr"))
+    try:  # tốc độ: website chưa đạt Core Web Vitals, trang PageSpeed dưới 50
+        from . import cwv as CWV
+        with connect() as c:
+            phone = CWV.origin_series(c, "PHONE")
+            slow = [p for p in CWV.latest_pages(c) if p["perf"] is not None and p["perf"] < 50]
+        verdict = CWV.assess(phone[-1]) if phone else "none"
+        if verdict in ("poor", "ni"):
+            rows.append(("speed", T.RED if verdict == "poor" else T.AMBER,
+                         "Website chưa đạt Core Web Vitals trên điện thoại", "/toc-do"))
+        if slow:
+            rows.append(("speed", T.AMBER, f"{len(slow)} trang quan trọng có điểm tốc độ dưới 50", "/toc-do"))
+    except Exception:  # noqa: BLE001  (chưa có bảng / chưa cấu hình: bỏ qua)
+        pass
     if rep.incomplete_days:
         rows.append(("hourglass_top", T.MUTED, f"{rep.incomplete_days} ngày trong tuần chưa có dữ liệu GSC",
                      "/ai?tab=chat-luong"))

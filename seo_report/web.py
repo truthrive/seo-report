@@ -30,7 +30,8 @@ NUMBER = "val => val.toLocaleString('vi-VN')"
 NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
             ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
-    ("SEO", [("URL & Index", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
+    ("SEO", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
+             ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
              ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
              ("Local SEO", "/local", "storefront")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
@@ -727,6 +728,16 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 result = "expired" if isinstance(e, ValueError) else "fail"
         # chỉ mã ngắn, không đưa chữ từ đường dẫn lên trang
         return RedirectResponse(f"/cai-dat?google={result}", status_code=303)
+
+    @ui.page("/toc-do")
+    def speed_page(request: Request):
+        """Tốc độ & Core Web Vitals: mục riêng trên menu (CrUX + PageSpeed)."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Tốc độ trang", user, P, page_ctx(P), period=False, group=False)
+        from .web_cwv import build_cwv_page
+        build_cwv_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
     @ui.page("/index")
     def index_page(request: Request):

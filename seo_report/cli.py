@@ -290,6 +290,12 @@ def _daily_one(cfg) -> None:
                                log=lambda m: print(m, flush=True))
         except Exception:
             traceback.print_exc()
+        try:  # Tốc độ & Core Web Vitals (CrUX + PageSpeed, miễn phí): mỗi tuần một lần
+            from . import cwv
+            with db.connect(cfg.db_path) as con:
+                cwv.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
         try:  # Local SEO (Google Business Profile, miễn phí): hồ sơ đã gắn, số nối tiếp từ ngày cuối đã có
             from . import gbp
             with db.connect(cfg.db_path) as con:
