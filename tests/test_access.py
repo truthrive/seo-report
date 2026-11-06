@@ -59,6 +59,22 @@ class ToolListTest(unittest.TestCase):
         # gỡ mềm: vẫn còn dòng lịch sử
         self.assertEqual(self.con.execute("SELECT removed_by FROM access_users").fetchone()[0], "me")
 
+    def test_purge_deletes_account_and_project_access(self):
+        A.set_user(self.con, "khach@abc.vn", A.VIEWER, "me")
+        A.set_member(self.con, "khach@abc.vn", "tam-duc", A.CLIENT, "me")
+        A.set_password(self.con, S, "khach@abc.vn", "mat-khau-123", must_change=False)
+        A.remove_user(self.con, "khach@abc.vn", "me")  # gỡ trước (nằm ở mục Đã gỡ) rồi xóa vĩnh viễn
+        A.purge_user(self.con, S, "Khach@ABC.vn", "me")
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM access_users").fetchone()[0], 0)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM project_members").fetchone()[0], 0)
+        self.assertEqual(A.removed_users(self.con), [])
+        self.assertIsNone(A.login(self.con, S, "khach@abc.vn", "mat-khau-123")[0])
+        self.assertEqual(A.log_entries(self.con)[0]["action"], "Xóa vĩnh viễn tài khoản")  # nhật ký vẫn ghi lại
+        # Chủ tool / viewer khai báo trong config.toml và chính mình: không xóa ở đây
+        for email, by in (("marketing@vidushop.com", "me"), ("boss@gmail.com", "me"), ("me@abc.vn", "me@abc.vn")):
+            with self.assertRaises(ValueError, msg=email):
+                A.purge_user(self.con, S, email, by)
+
     def test_config_editor_is_authoritative_viewer_is_not(self):
         A.set_user(self.con, "marketing@vidushop.com", A.VIEWER, "me")  # quản trị trong config: không hạ được
         us = {u["email"]: u for u in A.users(self.con, S)}

@@ -291,7 +291,42 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     dlg.close()
                     ui.notify(f"Đã gỡ tài khoản {em}", type="positive")
                     body.refresh()
+                ui.button("Xóa vĩnh viễn…", on_click=lambda: (dlg.close(), ask_purge(em))).props(
+                    "flat color=negative no-caps").tooltip("Xóa hẳn tài khoản, không cấp lại được từ mục Đã gỡ")
                 ui.button("Gỡ tài khoản", on_click=go).props("unelevated color=negative no-caps")
+        dlg.open()
+
+    def ask_purge(em: str) -> None:
+        """Xóa vĩnh viễn: gõ lại email / tên đăng nhập để xác nhận (không hoàn tác được)."""
+        with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:440px; max-width:94vw"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.icon("delete_forever", size="22px").style(f"color:{T.RED}")
+                ui.label(f"Xóa vĩnh viễn {em}?").classes("text-base font-semibold")
+            ui.label("Xóa hẳn tài khoản, mật khẩu, hồ sơ và mọi quyền dự án của người này. Không hoàn tác được: muốn "
+                     "dùng lại phải thêm như người mới. Nhật ký thay đổi vẫn ghi lại lần xóa này.").classes("text-sm")
+            typed = ui.input(f"Gõ lại {em} để xác nhận").props("outlined dense").classes("w-full q-mt-sm")
+            err = ui.label().classes("text-sm").style(f"color:{T.RED}")
+            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+
+                def go():
+                    if (typed.value or "").strip().lower() != em:
+                        err.text = "Gõ đúng email / tên đăng nhập để xác nhận"
+                        return
+                    try:
+                        with connect() as c:
+                            A.purge_user(c, cfg.access, em, user)
+                    except ValueError as e:
+                        err.text = str(e)
+                        return
+                    LIVE.kick(email=em, keep=ui.context.client.id)
+                    dlg.close()
+                    ui.notify(f"Đã xóa vĩnh viễn tài khoản {em}", type="positive")
+                    body.refresh()
+                btn = ui.button("Xóa vĩnh viễn", icon="delete_forever", on_click=go).props(
+                    "unelevated color=negative no-caps")
+                btn.disable()
+                typed.on_value_change(lambda e: btn.set_enabled((e.value or "").strip().lower() == em))
         dlg.open()
 
     # ---------------- Danh sách ----------------
@@ -459,6 +494,9 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                                      + (f" · {g['note']}" if g["note"] else "")).classes("text-xs muted ellipsis")
                         ui.button("Cấp lại", icon="restart_alt",
                                   on_click=lambda _, x=g: edit_dialog(None, restore=x)).props("flat dense no-caps")
+                        b_ = ui.button(icon="delete_forever", on_click=lambda _, e=g["email"]: ask_purge(e)).props(
+                            "flat round dense color=negative").tooltip("Xóa vĩnh viễn tài khoản này")
+                        b_.props["aria-label"] = f"Xóa vĩnh viễn {g['email']}"
 
         with ui.element("div").classes("sr-card q-pa-md w-full").style(f"background:{T.TONES['amber'][0]};"
                                                                        "border-color:#EAD7AE"):

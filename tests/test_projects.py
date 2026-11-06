@@ -92,6 +92,26 @@ class ProjectTest(unittest.TestCase):
         p2 = PJ.create(self.con, self.base, {"name": "B2", "site_url": "https://www.b.vn/"}, "t")
         self.assertEqual(p2["slug"], "b-vn-2")  # cùng tên miền: slug không trùng
 
+    def test_delete_forever(self):
+        from seo_report import access as A
+        first = PJ.list_projects(self.con)[0]
+        self.assertTrue(PJ.is_root(self.base, first))
+        with self.assertRaises(ValueError):  # dự án gốc (dữ liệu chung file cấu hình tool): không xóa
+            PJ.delete(self.con, self.base, first["slug"], "t")
+        p = PJ.create(self.con, self.base, {"name": "B", "site_url": "sc-domain:b.vn"}, "t")
+        A.set_member(self.con, "khach@b.vn", p["slug"], A.CLIENT, "t")
+        path = PJ.config_for(self.base, p).db_path
+        self.assertTrue(path.exists())
+        moved = PJ.delete(self.con, self.base, p["slug"], "t")
+        self.assertFalse(path.exists())
+        self.assertTrue(moved.exists() and moved.parent.name == "da-xoa")  # bản cuối, phòng xóa nhầm
+        self.assertEqual([x["slug"] for x in PJ.list_projects(self.con, archived=True)], [first["slug"]])
+        self.assertEqual(A.members(self.con), {})  # quyền gắn với dự án cũng xóa
+        self.assertEqual(A.log_entries(self.con)[0]["action"], "Xóa vĩnh viễn dự án")
+        # tạo lại website đã xóa: được (không còn dự án lưu trữ chặn)
+        self.assertEqual(PJ.create(self.con, self.base, {"name": "B", "site_url": "sc-domain:b.vn"}, "t")["slug"],
+                         "b-vn")
+
     def test_update(self):
         p = PJ.create(self.con, self.base, {"name": "B", "site_url": "sc-domain:b.vn"}, "t")
         p = PJ.update(self.con, p["slug"], {"name": "Khách B", "site_url": "sc-domain:b.vn", "rank_budget_usd": 0},

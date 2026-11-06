@@ -364,6 +364,25 @@ def remove_user(con, email: str, by: str) -> None:
             _log(con, by, email, "Gỡ tài khoản")
 
 
+def purge_user(con, settings: AccessSettings, email: str, by: str) -> None:
+    """Xóa vĩnh viễn tài khoản: xóa dòng tài khoản (mật khẩu, hồ sơ) và mọi quyền dự án của người đó. Nhật ký thay đổi
+    vẫn giữ một dòng "Xóa vĩnh viễn" để biết ai xóa, lúc nào. Không xóa được Chủ tool trong config.toml (sửa trong
+    file) và không tự xóa chính mình (tránh bị khóa ngoài)."""
+    _ensure(con)
+    email = (email or "").strip().lower()
+    if email in _norm(settings.editors):
+        raise ValueError("Tài khoản Chủ tool khai báo trong config.toml: bỏ trong file đó, không xóa ở đây được")
+    if email in _norm(settings.viewers):  # xóa ở đây thì lần mở sau lại hiện từ config.toml
+        raise ValueError("Tài khoản này còn khai báo trong config.toml (viewers): bỏ trong file đó trước")
+    if email == str(by).strip().lower():
+        raise ValueError("Không tự xóa tài khoản của chính mình")
+    with con:
+        n = con.execute("DELETE FROM access_users WHERE email = ?", (email,)).rowcount
+        m = con.execute("DELETE FROM project_members WHERE email = ?", (email,)).rowcount
+        if n or m:
+            _log(con, by, email, "Xóa vĩnh viễn tài khoản", f"{m} quyền dự án")
+
+
 # ---- Quyền theo dự án ----
 
 def members(con) -> dict[str, dict[str, str]]:

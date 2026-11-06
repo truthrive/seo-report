@@ -812,10 +812,10 @@ HEAD = """
                    grid-template-columns: minmax(200px, 1.1fr) minmax(180px, 1.4fr) 160px 150px 76px; }
   /* Dòng dự án: logo | thông tin | người | 3 ô nút icon cố định (thẳng hàng giữa các dòng) */
   .sr-proj-row { display: grid; align-items: center; column-gap: 12px;
-                 grid-template-columns: 36px minmax(0, 1fr) 128px repeat(3, 36px); }
+                 grid-template-columns: 36px minmax(0, 1fr) 128px repeat(4, 36px); }
   .sr-proj-row .sr-link { justify-self: end; }
   .sr-icon-slot { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; }
-  @media (max-width: 700px) { .sr-proj-row { grid-template-columns: 36px minmax(0, 1fr) repeat(3, 36px); }
+  @media (max-width: 700px) { .sr-proj-row { grid-template-columns: 36px minmax(0, 1fr) repeat(4, 36px); }
                               .sr-proj-row .sr-link { grid-area: 2 / 2; justify-self: start; } }
   @media (max-width: 900px) {
     /* Điện thoại: hàng 1 website | trạng thái, hàng 2 thanh ngân sách, hàng 3 ô ngân sách | công tắc */

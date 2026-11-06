@@ -313,8 +313,82 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                     dlg.close()
                     ui.notify(f"Đã lưu trữ {p['name']}", type="positive")
                     body.refresh()
+                if not PJ.is_root(base, p):
+                    ui.button("Xóa vĩnh viễn…", on_click=lambda: (dlg.close(), ask_delete(p))).props(
+                        "flat color=negative no-caps").tooltip("Xóa hẳn dự án và dữ liệu, không khôi phục được")
                 ui.button("Lưu trữ", on_click=go).props("unelevated color=negative no-caps")
         dlg.open()
+
+    def ask_delete(p: dict) -> None:
+        """Xóa vĩnh viễn: gõ lại tên dự án để xác nhận."""
+        with ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:460px; max-width:94vw"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.icon("delete_forever", size="22px").style(f"color:{T.RED}")
+                ui.label(f"Xóa vĩnh viễn dự án {p['name']}?").classes("text-base font-semibold")
+            ui.label("Xóa hẳn dự án khỏi tool: số liệu GSC / GA4 đã lấy, từ khóa và lịch sử thứ hạng, backlink, KPI, "
+                     "báo cáo, cùng mọi quyền của người được gắn vào dự án. Không khôi phục được trên tool.").classes(
+                "text-sm")
+            ui.label("File dữ liệu được chuyển vào thư mục data/da-xoa trên máy chạy tool (bản cuối, phòng xóa nhầm); "
+                     "file trên Google Drive và sheet dự án giữ nguyên.").classes("text-xs muted")
+            typed = ui.input(f"Gõ lại tên dự án “{p['name']}” để xác nhận").props("outlined dense").classes(
+                "w-full q-mt-sm")
+            err = ui.label().classes("text-sm").style(f"color:{T.RED}")
+            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+
+                def go():
+                    if (typed.value or "").strip() != p["name"].strip():
+                        err.text = "Gõ đúng tên dự án để xác nhận"
+                        return
+                    try:
+                        with app_connect() as c:
+                            PJ.delete(c, base, p["slug"], user)
+                        LIVE.kick(project=p["slug"], keep=ui.context.client.id)
+                    except ValueError as e:
+                        err.text = str(e)
+                        return
+                    if app.storage.user.get("project") == p["slug"]:
+                        app.storage.user.pop("project", None)
+                    dlg.close()
+                    ui.notify(f"Đã xóa vĩnh viễn dự án {p['name']}", type="positive")
+                    body.refresh()
+                btn = ui.button("Xóa vĩnh viễn", icon="delete_forever", on_click=go).props(
+                    "unelevated color=negative no-caps")
+                btn.disable()
+                typed.on_value_change(lambda e: btn.set_enabled((e.value or "").strip() == p["name"].strip()))
+        dlg.open()
+
+    async def check_dialog(p: dict) -> None:
+        """Kiểm tra kết nối GSC + GA4 của một dự án (gọi Google, vài giây) và hiện từng kết quả."""
+        from . import connection_check as CC
+        icons = {"ok": ("check_circle", T.GREEN), "warn": ("warning", T.AMBER), "error": ("error", T.RED)}
+        with ui.dialog() as dlg, ui.card().style("border-radius:14px; width:560px; max-width:94vw"):
+            ui.label(f"Kiểm tra kết nối · {p['name']}").classes("text-base font-semibold")
+            ui.label(p["site_url"] + (" · " + p["ga4_property"] if p["ga4_property"] else "")).classes(
+                "text-xs muted")
+            box = ui.column().classes("w-full gap-2 q-mt-sm")
+            with box:
+                with ui.row().classes("items-center gap-2"):
+                    ui.spinner(size="20px")
+                    ui.label("Đang hỏi Search Console và Google Analytics…").classes("text-sm muted")
+            with ui.row().classes("w-full justify-end q-mt-sm"):
+                ui.button("Đóng", on_click=dlg.close).props("flat no-caps")
+        dlg.open()
+        results = await run.io_bound(CC.run, base, p)
+        box.clear()
+        with box:
+            for r in results:
+                icon, color = icons[r["status"]]
+                with ui.row().classes("items-start gap-2 no-wrap w-full"):
+                    ui.icon(icon, size="20px").style(f"color:{color}; margin-top:1px")
+                    with ui.column().classes("gap-0").style("min-width:0"):
+                        ui.label(r["title"]).classes("text-sm font-semibold")
+                        ui.label(r["message"]).classes("text-xs muted")
+            bad = sum(1 for r in results if r["status"] == "error")
+            warn = sum(1 for r in results if r["status"] == "warn")
+            ui.label("Kết nối đúng, có số." if not bad and not warn else
+                     f"{bad} lỗi cần sửa · {warn} điểm nên xem").classes("text-sm font-semibold q-mt-sm").style(
+                f"color:{T.GREEN if not bad and not warn else T.RED if bad else T.AMBER}")
 
     def open_project(slug: str) -> None:
         app.storage.user["project"] = slug
@@ -375,12 +449,15 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                             ui.button(icon="open_in_browser", on_click=lambda _, s=p["slug"]: open_project(s)).props(
                                 icon_btn).tooltip("Mở website này")
                     with ui.element("div").classes("sr-icon-slot"):
+                        ui.button(icon="fact_check", on_click=lambda _, p=p: check_dialog(p)).props(icon_btn).tooltip(
+                            "Kiểm tra kết nối: Search Console và GA4 có đúng website, đọc được số không")
+                    with ui.element("div").classes("sr-icon-slot"):
                         ui.button(icon="edit", on_click=lambda _, p=p: edit_dialog(p)).props(icon_btn).tooltip(
                             "Sửa cấu hình: GSC, GA4, ngân sách, logo, quy tắc URL")
                     with ui.element("div").classes("sr-icon-slot"):
                         if len(active) > 1:
                             ui.button(icon="inventory_2", on_click=lambda _, p=p: ask_archive(p)).props(
-                                icon_btn).tooltip("Lưu trữ: ẩn dự án, không xóa dữ liệu, khôi phục được")
+                                icon_btn).tooltip("Lưu trữ hoặc xóa vĩnh viễn dự án")
         if archived:
             with T.section(ui, f"Đã lưu trữ · {len(archived)}", "inventory_2"):
                 for p in archived:
@@ -402,6 +479,9 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                             body.refresh()
                         ui.button(icon="unarchive", on_click=restore).props("flat round dense color=grey-8").tooltip(
                             "Khôi phục dự án")
+                        if not PJ.is_root(base, p):
+                            ui.button(icon="delete_forever", on_click=lambda _, p=p: ask_delete(p)).props(
+                                "flat round dense color=negative").tooltip("Xóa vĩnh viễn dự án")
         with ui.element("div").classes("sr-card q-pa-md w-full").style(f"background:{T.TONES['amber'][0]};"
                                                                        "border-color:#EAD7AE"):
             with ui.row().classes("items-start gap-2 no-wrap"):

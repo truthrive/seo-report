@@ -219,6 +219,50 @@ def archive(con: sqlite3.Connection, slug: str, user: str) -> None:
     con.commit()
 
 
+def is_root(base: Config, project: dict) -> bool:
+    """Dự án gốc: dữ liệu nằm chung file với cấu hình của tool (không xóa vĩnh viễn được)."""
+    return db_path(base, project).resolve() == base.db_path.resolve()
+
+
+def delete(con: sqlite3.Connection, base: Config, slug: str, user: str) -> Path | None:
+    """Xóa vĩnh viễn dự án: bỏ dòng dự án, mọi quyền gắn với dự án, và file dữ liệu riêng của nó (rank, từ khóa,
+    backlink, báo cáo…). File dữ liệu được chuyển vào data/da-xoa/ (bản cuối, phòng xóa nhầm; tự xóa thư mục đó khi
+    chắc chắn) rồi trả về đường dẫn. File trên Google Drive / sheet dự án không bị đụng tới.
+    Không xóa được: dự án cuối cùng đang hoạt động, và dự án gốc (dữ liệu nằm chung file với cấu hình của tool)."""
+    import shutil
+    p = next((x for x in list_projects(con, archived=True) if x["slug"] == slug), None)
+    if not p:
+        raise ValueError("Không tìm thấy dự án")
+    if not p["archived_at"] and len(list_projects(con)) <= 1:
+        raise ValueError("Phải còn ít nhất một dự án đang hoạt động")
+    path = db_path(base, p)
+    if path.resolve() == base.db_path.resolve():
+        raise ValueError("Đây là dự án gốc: dữ liệu nằm chung file với cấu hình của tool nên không xóa được. Lưu trữ "
+                         "dự án nếu không dùng nữa.")
+    moved = None
+    if path.exists():
+        trash = base.db_path.parent / "da-xoa"
+        trash.mkdir(exist_ok=True)
+        moved = trash / f"{slug}_{datetime.now():%Y%m%d-%H%M%S}.db"
+        try:
+            shutil.move(str(path), str(moved))
+        except PermissionError as e:  # file đang mở (job đang chạy): không xóa dở dang
+            raise ValueError("File dữ liệu của dự án đang được dùng (có thể đang check rank): thử lại sau ít phút") \
+                from e
+        for extra in ("-wal", "-shm", "-journal"):
+            side = path.with_name(path.name + extra)
+            if side.exists():
+                side.unlink()
+    with con:
+        con.execute("DELETE FROM projects WHERE slug = ?", (slug,))
+        if con.execute("SELECT 1 FROM sqlite_master WHERE name = 'project_members'").fetchone():
+            con.execute("DELETE FROM project_members WHERE project = ?", (slug,))
+        if con.execute("SELECT 1 FROM sqlite_master WHERE name = 'access_log'").fetchone():
+            con.execute("INSERT INTO access_log (at, by, email, action, detail) VALUES (?, ?, '', ?, ?)",
+                        (_now(), str(user), "Xóa vĩnh viễn dự án", f"{p['name']} ({p['site_url']})"))
+    return moved
+
+
 def restore(con: sqlite3.Connection, slug: str, user: str) -> None:
     con.execute("UPDATE projects SET archived_at = NULL, archived_by = NULL, updated_at = ?, updated_by = ? "
                 "WHERE slug = ?", (_now(), user, slug))
