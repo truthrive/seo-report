@@ -451,6 +451,30 @@ HEAD = """
   .sr-pos .chip { border-radius: 6px; padding: 1px 8px; font-weight: 700; min-width: 34px; text-align: center;
     font-variant-numeric: tabular-nums; }
   .sr-pos .old { width: 6px; height: 6px; border-radius: 50%; background: #D9A441; }
+  .sr-spend-sum { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 12px 0;
+    width: 100%; }
+  @media (max-width: 760px) { .sr-spend-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .sr-spend-chip { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column;
+    gap: 1px; padding: 10px 12px; border-radius: 12px; border: 1px solid #E7E5DC; background: #fff; }
+  .sr-spend-chip:hover { background: #F7F6F1; }
+  .sr-spend-chip:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }
+  .sr-spend-chip.on { border-color: #1F221E; box-shadow: inset 0 0 0 1px #1F221E; }
+  .sr-spend-chip .lab { font-size: 12.5px; color: #6B6A5E; font-weight: 600; }
+  .sr-spend-chip .val { font-size: 18px; font-weight: 800; color: #1F221E; }
+  .sr-spend-chip .sub { font-size: 12px; color: #8C8A7E; }
+  .sr-spend-chip.k-rank .lab::before, .sr-spend-chip.k-volume .lab::before, .sr-spend-chip.k-backlinks .lab::before,
+  .sr-spend-chip.k-intent .lab::before { content: ""; display: inline-block; width: 8px; height: 8px;
+    border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+  .sr-spend-chip.k-rank .lab::before { background: #2a78d6; }
+  .sr-spend-chip.k-volume .lab::before { background: #1a9e8f; }
+  .sr-spend-chip.k-backlinks .lab::before { background: #eda100; }
+  .sr-spend-chip.k-intent .lab::before { background: #6250d6; }
+  .sr-spend-kind { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12.5px;
+    font-weight: 600; white-space: nowrap; }
+  .sr-spend-kind.k-rank { background: #E8EFFD; color: #2a5bab; }
+  .sr-spend-kind.k-volume { background: #E3F4F1; color: #136F65; }
+  .sr-spend-kind.k-backlinks { background: #FBF1DE; color: #8F5F14; }
+  .sr-spend-kind.k-intent { background: #EEEDFE; color: #4B3FB8; }
   .sr-pill { display: inline-flex; align-items: center; gap: 3px; border-radius: 999px; padding: 1px 9px;
     font-size: 12.5px; font-weight: 600; white-space: nowrap; }
   .sr-pill.grey { background: #F1F0EA; color: #6B6A5E; }

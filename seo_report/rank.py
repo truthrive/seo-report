@@ -191,6 +191,8 @@ def _add_columns(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE rank_sets ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
     if "state" not in set_cols:  # bộ đã có trước đây coi như đã chốt
         con.execute("ALTER TABLE rank_sets ADD COLUMN state TEXT NOT NULL DEFAULT 'active'")
+    if "by_user" not in {c[1] for c in con.execute("PRAGMA table_info(rank_tasks)")}:  # ai bấm check / "lịch"
+        con.execute("ALTER TABLE rank_tasks ADD COLUMN by_user TEXT")
     serp_cols = {c[1] for c in con.execute("PRAGMA table_info(rank_serp)")}
     if "aio_text" not in serp_cols:  # nội dung chữ AI Overview
         con.execute("ALTER TABLE rank_serp ADD COLUMN aio_text TEXT")
@@ -689,6 +691,49 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
             out[m]["intent"] = cost or 0.0
     for v in out.values():
         v["total"] = v["rank"] + v["volume"] + v["backlinks"] + v["intent"]
+    return out
+
+
+SPEND_KINDS = {"rank": "Check rank", "volume": "Volume từ khóa", "backlinks": "Backlink", "intent": "Ý định từ khóa"}
+
+
+def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
+    """Nhật ký chi tiền DataForSEO của một tháng ("YYYY-MM"), mới trước cũ sau. Mỗi dòng một lần gọi API:
+    {"at": ISO UTC, "kind": rank|volume|backlinks|intent, "detail", "qty" (số từ khóa / lượt), "cost", "by"}.
+    Check rank gộp theo lượt gửi (cùng phút, cùng người chạy); kết quả dùng chung giữa các bộ không tốn tiền nên
+    không có dòng riêng."""
+    ensure_tables(con)
+    from . import backlinks, intent, volume
+    volume.ensure_tables(con)
+    backlinks.ensure_tables(con)
+    intent.ensure_tables(con)
+    out: list[dict] = []
+    rows = con.execute(
+        "SELECT substr(t.posted_at, 1, 16), t.by_user, COUNT(*), SUM(t.cost), MIN(t.posted_at), "
+        "GROUP_CONCAT(DISTINCT t.depth), GROUP_CONCAT(DISTINCT COALESCE(s.name, '')) "
+        "FROM rank_tasks t LEFT JOIN rank_keywords k ON k.id = t.keyword_id "
+        "LEFT JOIN rank_sets s ON s.id = k.set_id WHERE substr(t.posted_at, 1, 7) = ? "
+        "GROUP BY 1, 2", (month,)).fetchall()
+    for _, by, n, cost, at, depths, names in rows:
+        sets_ = [x for x in (names or "").split(",") if x]
+        deleted = any(x == "" for x in (names or "").split(","))
+        where = ", ".join(sets_) + (" + bộ đã xóa" if deleted and sets_ else "bộ đã xóa" if deleted else "")
+        tops = "/".join(f"top {d}" for d in sorted({int(x) for x in (depths or "").split(",") if x}))
+        out.append({"at": at, "kind": "rank", "qty": n, "cost": cost or 0.0, "by": by or "",
+                    "detail": f"{n} từ khóa · {where} · {tops}" if where else f"{n} từ khóa · {tops}"})
+    for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM volume_runs WHERE substr(run_at, 1, 7) = ?",
+                                   (month,)):
+        out.append({"at": at, "kind": "volume", "qty": n, "cost": cost or 0.0, "by": "",
+                    "detail": f"Lượng tìm kiếm của {n} từ khóa"})
+    for at, kind, cost in con.execute("SELECT run_at, kind, cost FROM backlink_runs WHERE substr(run_at, 1, 7) = ?",
+                                      (month,)):
+        out.append({"at": at, "kind": "backlinks", "qty": 1, "cost": cost or 0.0, "by": "",
+                    "detail": "Lịch sử backlink theo tháng" if kind == "history" else "Tổng quan backlink"})
+    for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM intent_runs WHERE substr(run_at, 1, 7) = ?",
+                                   (month,)):
+        out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": "",
+                    "detail": f"Ý định tìm kiếm của {n} từ khóa"})
+    out.sort(key=lambda r: r["at"], reverse=True)
     return out
 
 
@@ -1276,7 +1321,8 @@ def _where_key(s: RankSettings, k: dict) -> tuple:
     return (k["keyword"].strip().lower(), w.se_domain, w.device, w.location_code, w.language_code)
 
 
-def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date, log=print) -> int:
+def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date, log=print,
+         by: str | None = None) -> int:
     """Gửi DataForSEO các từ khóa cần check. Cùng từ khóa + cùng nơi check: chỉ gửi một task (độ sâu lớn nhất), các
     dòng còn lại nhận chung kết quả; đã có task hôm nay ở bộ khác (đủ sâu) thì dùng lại, không trả tiền lần hai.
     Trả số dòng từ khóa đã gửi hoặc đã gắn vào task dùng chung."""
@@ -1339,8 +1385,9 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
                     errors.setdefault(t.get("status_message") or str(t.get("status_code")), []).extend(
                         k["keyword"] for k in ks)
                     continue
-                con.execute("INSERT INTO rank_tasks VALUES (?, ?, ?, ?, ?, ?, 'posted')",
-                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0)))
+                con.execute("INSERT INTO rank_tasks (task_id, keyword_id, depth, check_date, posted_at, cost, "
+                            "status, by_user) VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)",
+                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0), by))
                 for k in ks[1:]:
                     con.execute("INSERT OR REPLACE INTO rank_task_links VALUES (?, ?, ?, ?, 'posted')",
                                 (t["id"], k["id"], day, _now()))

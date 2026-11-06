@@ -2942,7 +2942,8 @@ async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: 
                     break
                 chunk_logs: list[str] = []
                 chunk = todo[i:i + CHECK_CHUNK]
-                n = R.post(c, site, cfg.rank, client, chunk, _date.today(), chunk_logs.append)
+                n = R.post(c, site, cfg.rank, client, chunk, _date.today(), chunk_logs.append,
+                           by=user or "Lịch")
                 logs.extend(m for m in chunk_logs if not m.startswith("Đã gửi"))
                 st["posted"] += n
                 if any(m.startswith("Dừng") for m in chunk_logs):  # vượt ngân sách: chưa gửi, giữ lại để Tiếp tục

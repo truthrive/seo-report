@@ -149,12 +149,48 @@ class BudgetTest(unittest.TestCase):
         con = db.connect(":memory:")
         R.ensure_tables(con)
         V.ensure_tables(con)
-        con.execute("INSERT INTO rank_tasks VALUES ('t1', 1, 10, '2026-01-05', 'x', 0.01, 'done')")
-        con.execute("INSERT INTO rank_tasks VALUES ('t2', 1, 30, '2026-02-05', 'x', 0.03, 'done')")
+        cols = "(task_id, keyword_id, depth, check_date, posted_at, cost, status)"
+        con.execute(f"INSERT INTO rank_tasks {cols} VALUES ('t1', 1, 10, '2026-01-05', 'x', 0.01, 'done')")
+        con.execute(f"INSERT INTO rank_tasks {cols} VALUES ('t2', 1, 30, '2026-02-05', 'x', 0.03, 'done')")
         con.execute("INSERT INTO volume_runs VALUES ('2026-02-01T00:00:00', 10, 0.075)")
         got = R.cost_by_month(con, ["2026-01", "2026-02"])
         self.assertEqual(got["2026-01"]["checks"], 1)
         self.assertAlmostEqual(got["2026-02"]["total"], 0.105)
+
+    def test_spend_log_splits_by_api_and_batch(self):
+        """Nhật ký chi tiền: check rank gộp theo lượt gửi (phút + người chạy), mỗi lần volume / backlink / ý định một
+        dòng; chỉ tháng được hỏi; mới trước cũ sau."""
+        from seo_report import backlinks as B
+        from seo_report import intent as IN
+        from seo_report import rank as R
+        from seo_report import volume as V
+        con = db.connect(":memory:")
+        R.ensure_tables(con)
+        V.ensure_tables(con)
+        B.ensure_tables(con)
+        IN.ensure_tables(con)
+        sid = R.create_set(con, SITE, "Cam kết", "u")
+        con.execute("INSERT INTO rank_keywords (id, site, keyword, source, added_by, added_at, set_id) "
+                    "VALUES (1, ?, 'a', 'manual', 'u', 'x', ?), (2, ?, 'b', 'manual', 'u', 'x', ?)",
+                    (SITE, sid, SITE, sid))
+        ins = ("INSERT INTO rank_tasks (task_id, keyword_id, depth, check_date, posted_at, cost, status, by_user) "
+               "VALUES (?, ?, ?, '2026-11-05', ?, ?, 'done', ?)")
+        con.execute(ins, ("t1", 1, 20, "2026-11-05T07:15:02+00:00", 0.0018, "an"))
+        con.execute(ins, ("t2", 2, 30, "2026-11-05T07:15:40+00:00", 0.0024, "an"))
+        con.execute(ins, ("t3", 0, 20, "2026-11-04T01:00:00+00:00", 0.0018, None))  # bộ đã xóa, lịch cũ
+        con.execute(ins, ("t4", 1, 20, "2026-10-30T01:00:00+00:00", 0.0018, None))  # tháng khác
+        con.execute("INSERT INTO volume_runs VALUES ('2026-11-06T01:06:43+00:00', 48, 0.09)")
+        con.execute("INSERT INTO backlink_runs VALUES ('2026-11-04T08:57:15+00:00', ?, 'history', 0.0244)", (SITE,))
+        con.execute("INSERT INTO intent_runs VALUES ('2026-11-05T07:48:31+00:00', 69, 0.0203)")
+        log = R.spend_log(con, "2026-11")
+        self.assertEqual([x["kind"] for x in log], ["volume", "intent", "rank", "backlinks", "rank"])
+        batch = log[2]
+        self.assertEqual((batch["qty"], batch["by"]), (2, "an"))
+        self.assertAlmostEqual(batch["cost"], 0.0042)
+        self.assertIn("Cam kết", batch["detail"])
+        self.assertIn("top 20/top 30", batch["detail"])
+        self.assertIn("bộ đã xóa", log[4]["detail"])
+        self.assertAlmostEqual(sum(x["cost"] for x in log), 0.0042 + 0.0018 + 0.09 + 0.0244 + 0.0203)
 
     def test_set_budget(self):
         tmp = Path(tempfile.mkdtemp())

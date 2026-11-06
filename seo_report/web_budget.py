@@ -17,6 +17,16 @@ from . import ui_theme as T
 PROJECT_COLORS = [T.GREEN, T.BLUE, "#7C3AED", "#B7791F", "#0E7C86", "#C2410C", "#5E7414", "#8C8A7E"]
 
 
+def _vn_time(iso_utc: str) -> str:
+    """Mốc lưu theo UTC → giờ Việt Nam "05/11 14:30"."""
+    from datetime import datetime, timedelta
+    try:
+        t = datetime.fromisoformat(str(iso_utc).replace("Z", "+00:00"))
+    except ValueError:
+        return str(iso_utc)
+    return (t.replace(tzinfo=None) + timedelta(hours=7) if t.tzinfo else t).strftime("%d/%m %H:%M")
+
+
 def _usd(v: float | None) -> str:
     return "–" if v is None else R.usd(v)
 
@@ -45,7 +55,9 @@ def collect(base, projects: list[dict], today: date | None = None) -> list[dict]
         status = ("paused" if cfg.rank.paused else "off" if not budget
                   else "over" if worst > budget or st["spent"] >= budget
                   else "near" if worst >= budget * R.ALERT_RATIO else "ok")
-        rows.append({"project": p, "budget": budget, "spent": st["spent"], "estimate": st["estimate"],
+        with closing(db.connect(cfg.db_path)) as c:
+            log = R.spend_log(c, today.strftime("%Y-%m"))
+        rows.append({"log": log, "project": p, "budget": budget, "spent": st["spent"], "estimate": st["estimate"],
                      "monthly": 0 if cfg.rank.paused else st["monthly"],
                      "keywords": st["stars"], "schedule": schedule, "status": status, "history": hist,
                      "paused": cfg.rank.paused})
@@ -112,9 +124,10 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                 text, tone, icon = STATUS[r["status"]]
                 # Lưới cố định cột: website | thanh ngân sách | trạng thái | ô ngân sách | nút
                 with ui.element("div").classes("sr-access-row sr-budget-row w-full"):
-                    with ui.row().classes("items-center gap-3 no-wrap").style("min-width:0"):
+                    with ui.row().classes("items-center gap-3 no-wrap").style("min-width:0; overflow:hidden"):
                         T.project_icon(ui, p, 34)
-                        with ui.column().classes("gap-0").style("min-width:0"):
+                        # lịch dài: cắt "…" trong cột, không tràn sang thanh ngân sách (đủ chữ khi rê chuột)
+                        with ui.column().classes("gap-0 no-wrap").style("min-width:0; flex:1 1 0; overflow:hidden"):
                             ui.label(p["name"]).classes("text-sm font-semibold ellipsis")
                             ui.label(f"{r['keywords']} từ khóa").classes("text-xs muted")
                             ui.label(r["schedule"]).classes("text-xs muted ellipsis").tooltip(r["schedule"])
@@ -130,6 +143,12 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                                 f'background:{color}"></div></div>').classes("w-full")
                         ui.label(f"Đã dùng {_usd(r['spent'])} · dự kiến {_usd(r['estimate'])} / "
                                  f"{r['budget']:g} USD").classes("text-xs muted num")
+                        cur = r["history"].get(today.strftime("%Y-%m"), {})
+                        short = {"rank": "Rank", "volume": "Volume", "backlinks": "Backlink", "intent": "Ý định"}
+                        parts = [f"{short[k]} {_usd(cur.get(k, 0))}" for k in R.SPEND_KINDS if cur.get(k)]
+                        if parts:
+                            ui.label(" · ".join(parts)).classes("text-xs muted num").tooltip(
+                                "Đã dùng tháng này, tách theo loại API DataForSEO (USD)")
                     T.status_chip(ui, text, tone, icon)
 
                     def save(box, s_=p["slug"], name=p["name"]):
@@ -171,6 +190,9 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         ui.button(icon="leaderboard", on_click=open_rank).props(
                             "flat round dense color=grey-8").tooltip("Mở Từ khóa & Thứ hạng của website này")
 
+        # ---- Nhật ký chi tiền ----
+        spend_log(rows)
+
         # ---- Chi phí 6 tháng ----
         labels = [f"{m[5:]}/{m[2:4]}" for m in months]
         series = [{"name": r["project"]["name"], "type": "bar", "stack": "c", "barMaxWidth": 34,
@@ -203,6 +225,83 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                          "ngân sách, cảnh báo ở 80% và ngừng gửi yêu cầu khi đã dùng chạm ngân sách. Ngân sách 0 là "
                          "tắt check rank cho website đó. Volume keyword (mỗi tháng một lần) tính chung vào ngân sách."
                          ).classes("text-sm")
+
+    log_state = {"month": today.strftime("%Y-%m"), "project": "all", "kind": "all"}
+
+    def spend_log(rows: list[dict]) -> None:
+        """Mỗi lần chi tiền DataForSEO: lúc nào, website nào, API nào (check rank / volume / backlink / ý định), cho
+        bao nhiêu từ khóa, ai chạy, bao nhiêu tiền. Lọc theo tháng, website, loại API."""
+        names = {r["project"]["slug"]: r["project"]["name"] for r in rows}
+
+        @ui.refreshable
+        def ledger():
+            m = log_state["month"]
+            items = []
+            for r in rows:
+                slug = r["project"]["slug"]
+                if log_state["project"] not in ("all", slug):
+                    continue
+                if m == today.strftime("%Y-%m"):
+                    log = r["log"]
+                else:
+                    with closing(db.connect(PJ.config_for(base, r["project"]).db_path)) as c:
+                        log = R.spend_log(c, m)
+                items += [{**x, "project": slug} for x in log]
+            items.sort(key=lambda x: x["at"], reverse=True)
+            by_kind = {k: [x for x in items if x["kind"] == k] for k in R.SPEND_KINDS}
+            # tổng theo loại API: bấm để lọc bảng
+            with ui.element("div").classes("sr-spend-sum"):
+                for k, label in [("all", "Tất cả")] + list(R.SPEND_KINDS.items()):
+                    xs = items if k == "all" else by_kind[k]
+                    chip = ui.element("button").classes(
+                        f"sr-spend-chip k-{k}" + (" on" if log_state["kind"] == k else "")).props('type="button"')
+                    chip.on("click", lambda _, k=k: (log_state.update(kind=k), ledger.refresh()))
+                    with chip:
+                        ui.label(label).classes("lab")
+                        ui.label(f"{_usd(sum(x['cost'] for x in xs))} USD").classes("val num")
+                        ui.label(f"{len(xs)} lần").classes("sub")
+            shown = items if log_state["kind"] == "all" else by_kind[log_state["kind"]]
+            if not shown:
+                ui.label("Không có khoản chi nào trong phạm vi đã chọn.").classes("text-sm muted q-py-md")
+                return
+            cols = [{"name": "at", "label": "Thời gian", "field": "at", "align": "left", "sortable": True,
+                     ":sort": "(a, b, rowA, rowB) => rowA.at_iso.localeCompare(rowB.at_iso)",
+                     "headerStyle": "width:120px"},
+                    {"name": "project", "label": "Website", "field": "project", "align": "left", "sortable": True},
+                    {"name": "kind", "label": "Loại API", "field": "kind_label", "align": "left", "sortable": True},
+                    {"name": "detail", "label": "Chi tiết", "field": "detail", "align": "left"},
+                    {"name": "by", "label": "Người chạy", "field": "by", "align": "left", "sortable": True},
+                    {"name": "cost", "label": "Chi phí (USD)", "field": "cost_txt", "align": "right",
+                     "sortable": True, ":sort": "(a, b, rowA, rowB) => rowA.cost - rowB.cost",
+                     "headerStyle": "width:110px"}]
+            data = [{"id": i, "at": _vn_time(x["at"]), "at_iso": x["at"], "project": names.get(x["project"], ""),
+                     "kind": x["kind"], "kind_label": R.SPEND_KINDS[x["kind"]], "detail": x["detail"],
+                     "by": x["by"] or "–", "cost": x["cost"], "cost_txt": R.usd(x["cost"], 4)}
+                    for i, x in enumerate(shown)]
+            tb = ui.table(columns=cols, rows=data, row_key="id", pagination=15).props(
+                "flat dense binary-state-sort").classes("w-full")
+            tb.add_slot("body-cell-at", """
+                <q-td :props="props"><span class="num">{{ props.value }}</span></q-td>""")
+            tb.add_slot("body-cell-kind", """
+                <q-td :props="props"><span :class="'sr-spend-kind k-' + props.row.kind">{{ props.value }}</span>
+                </q-td>""")
+            tb.add_slot("body-cell-cost", """
+                <q-td :props="props" class="text-right"><b class="num">{{ props.value }}</b></q-td>""")
+
+        months = R.last_months(today, 6)[::-1]
+        with T.section(ui, "Nhật ký chi tiền", "receipt_long",
+                       "Mỗi lần gọi API DataForSEO: lúc nào, website nào, loại API nào, bao nhiêu tiền. Check rank gộp "
+                       "theo từng lượt gửi; kết quả dùng chung giữa các bộ không tốn thêm nên không có dòng riêng. "
+                       "Người chạy: tên người bấm Check, hoặc “Lịch”; “–” là chưa ghi (lần chạy trước 06/11/2026, "
+                       "hoặc volume / backlink / ý định)."):
+            with ui.row().classes("items-center gap-2 w-full"):
+                ui.select({m: f"Tháng {m[5:]}/{m[:4]}" for m in months}, value=log_state["month"],
+                          on_change=lambda e: (log_state.update(month=e.value), ledger.refresh())).props(
+                    "dense outlined options-dense").classes("w-40")
+                ui.select({"all": "Mọi website", **names}, value=log_state["project"],
+                          on_change=lambda e: (log_state.update(project=e.value), ledger.refresh())).props(
+                    "dense outlined options-dense").classes("w-48")
+            ledger()
 
     async def load_balance():
         creds = R.load_credentials(base.dataforseo_secret)
