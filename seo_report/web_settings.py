@@ -30,6 +30,11 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         return
     if not local:
         T.status_chip(ui, "Đang mở qua tên miền: lưu mã API sẽ hỏi lại mật khẩu đăng nhập của bạn", "amber", "lock")
+    # Chất lượng dữ liệu (kiểm tra số GA4 / GSC của dự án đang mở) không còn trên menu: lối tắt ở đây
+    with ui.row().classes("items-center gap-1 q-mb-sm"):
+        ui.icon("verified", size="16px").classes("muted")
+        ui.link("Chất lượng dữ liệu của dự án đang mở (kiểm tra số GA4 / Search Console)",
+                "/ai?tab=chat-luong").classes("text-sm")
 
     async def confirm_identity() -> bool:
         """Sửa từ xa: hỏi lại mật khẩu đăng nhập (đếm sai như màn đăng nhập). Tại máy chạy tool thì không hỏi."""

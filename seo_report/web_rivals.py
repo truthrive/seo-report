@@ -1,4 +1,4 @@
-"""Tab Đối thủ ở màn Từ khóa & Thứ hạng: quản lý danh sách đối thủ (tối đa 10, dùng chung với AI Overview) và tổng
+"""Trang Đối thủ (/doi-thu, nhóm SEO): quản lý danh sách đối thủ (tối đa 10, dùng chung với AI Overview) và tổng
 quan đối thủ trên bộ từ khóa: thị phần hiển thị, xu hướng, so sánh theo từng từ khóa, đối thủ vừa vượt mình.
 
 Mọi số lấy từ trang kết quả Google đã lưu khi check rank (không tốn thêm phí), trong độ sâu đã check.

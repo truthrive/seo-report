@@ -718,7 +718,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         if not all_sets:
             R.default_set(c, site, str(user))
             all_sets = R.sets(c, site)
-    ids = [0, -1] + [x["id"] for x in all_sets]  # 0 = Tổng quan (mặc định), -1 = Đối thủ, rồi từng bộ
+    ids = [0] + [x["id"] for x in all_sets]  # 0 = Tổng quan (mặc định), rồi từng bộ (Đối thủ: trang /doi-thu)
     state = {"sid": set_id if set_id in ids else 0, "hooks": {}}
 
     right = T.page_header(ui, "leaderboard", "Từ khóa & Thứ hạng",
@@ -740,14 +740,6 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
             t.on("click", lambda _: select(0))
             t.on("keydown", lambda e: on_key(0, e.args.get("key")), ["key"])
             tabs[0] = t
-            t = ui.element("button").classes("sr-a11y-tab")
-            t.props.update({"role": "tab", "id": "rk-tab--1", "aria-controls": "rk-panel", "type": "button"})
-            with t:
-                ui.icon("groups", size="16px")
-                ui.label("Đối thủ")
-            t.on("click", lambda _: select(-1))
-            t.on("keydown", lambda e: on_key(-1, e.args.get("key")), ["key"])
-            tabs[-1] = t
             for x in all_sets:
                 t = ui.element("button").classes("sr-a11y-tab")
                 t.props.update({"role": "tab", "id": f"rk-tab-{x['id']}", "aria-controls": "rk-panel",
@@ -767,7 +759,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
 
     def new_set() -> None:
         if state["sid"] <= 0:  # hộp thoại tạo bộ nằm trong vùng của một bộ: mở bộ đầu rồi mở hộp thoại
-            select(ids[2])
+            select(ids[1])
         state["hooks"].get("new_set", lambda: None)()
 
     def open_set(i: int | None, filt: str | None = None) -> None:
@@ -785,9 +777,6 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         if i == 0:
             from .web_rank_dash import build_dashboard
             build_dashboard(ui, cfg, connect, user, lambda j, f=None: open_set(j, f), new_set)
-        elif i == -1:
-            from .web_rivals import build_rivals_panel
-            build_rivals_panel(ui, cfg, connect, user, open_set)
         else:
             _set_panel(ui, cfg, connect, user, on_budget_change, i, state["hooks"])
 
@@ -810,7 +799,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
         with panel:
             panel_for(i)
         with tablist:  # gọi từ nút trong vùng vừa xóa (bảng các bộ): chạy JS trong ngữ cảnh còn sống
-            q = "" if i == 0 else ("?bo=doi-thu" if i == -1 else f"?bo={i}")
+            q = "" if i == 0 else f"?bo={i}"
             ui.run_javascript(f"history.replaceState(null, '', '/rank{q}')"
                               + (f";document.getElementById('rk-tab-{i}').focus()" if focus else ""))
 
@@ -943,7 +932,7 @@ def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: b
             if header_extra:  # ví dụ nút "Tính trên: Mọi bộ / từng bộ" của tab Đối thủ
                 header_extra()
             if manage_link:
-                ui.link("Quản lý đối thủ", "/rank?bo=doi-thu").classes("text-sm")
+                ui.link("Quản lý đối thủ", "/doi-thu").classes("text-sm")
         if not rivals:
             T.empty_state(ui, "group_add", "Chưa có đối thủ nào", "Thêm tối đa 10 đối thủ ở phần bên trên.")
             return
@@ -1192,28 +1181,33 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             from .web_export import export_menu
             export_menu(ui, cfg, connect, f"check-rank_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
                         label="Xuất file", user=user, icon_only=True, category="rank")
-            more = ui.button(icon="more_horiz").props("flat round dense color=grey-8").tooltip("Thêm")
-            more.props["aria-label"] = "Thêm thao tác và thông tin của bộ"
-            with more, ui.menu().props("anchor='bottom right' self='top right'").classes("sr-more-menu"):
-                with ui.column().classes("gap-0 q-px-md q-py-sm"):
-                    ui.label("Chi phí ước tính").classes("sr-more-cap")
-                    cost_label = ui.label("…").classes("sr-more-val")
-                if ed:
-                    ui.separator()
-                    with ui.item(on_click=lambda: set_dialog(cur)).props("clickable"):
-                        with ui.item_section().props("avatar"):
-                            ui.icon("tune")
-                        with ui.item_section():
-                            ui.label("Cài đặt bộ")
-                            ui.label("Tên, loại, nơi check, lịch, độ sâu, tạm dừng").classes("text-xs muted")
-                if owner:
-                    ui.separator()
-                    with ui.item(on_click=lambda: delete_set_dialog()).props("clickable").classes(
-                            "text-negative"):
-                        with ui.item_section().props("avatar"):
-                            ui.icon("delete_forever", color="negative")
-                        with ui.item_section():
-                            ui.label("Xóa vĩnh viễn bộ này…")
+            # Chi phí và cài đặt bộ là thông tin nội bộ: người chỉ xem / khách hàng không có menu này (không gửi xuống
+            # trình duyệt của họ, ẩn thôi là chưa đủ)
+            from types import SimpleNamespace
+            cost_label = SimpleNamespace(text="")
+            if ed:
+                more = ui.button(icon="more_horiz").props("flat round dense color=grey-8").tooltip("Thêm")
+                more.props["aria-label"] = "Thêm thao tác và thông tin của bộ"
+                with more, ui.menu().props("anchor='bottom right' self='top right'").classes("sr-more-menu"):
+                    with ui.column().classes("gap-0 q-px-md q-py-sm"):
+                        ui.label("Chi phí ước tính").classes("sr-more-cap")
+                        cost_label = ui.label("…").classes("sr-more-val")
+                    if ed:
+                        ui.separator()
+                        with ui.item(on_click=lambda: set_dialog(cur)).props("clickable"):
+                            with ui.item_section().props("avatar"):
+                                ui.icon("tune")
+                            with ui.item_section():
+                                ui.label("Cài đặt bộ")
+                                ui.label("Tên, loại, nơi check, lịch, độ sâu, tạm dừng").classes("text-xs muted")
+                    if owner:
+                        ui.separator()
+                        with ui.item(on_click=lambda: delete_set_dialog()).props("clickable").classes(
+                                "text-negative"):
+                            with ui.item_section().props("avatar"):
+                                ui.icon("delete_forever", color="negative")
+                            with ui.item_section():
+                                ui.label("Xóa vĩnh viễn bộ này…")
 
         # Hàng tiến độ (chỉ khi đang check): trạng thái + số đã gửi / có kết quả bên trên, thanh mảnh rộng hết bên
         # dưới. Thanh chỉ tính từ khóa đã có kết quả thật; chưa có số thì chạy dạng chờ (không phần trăm giả).
@@ -1819,8 +1813,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
 
         if not serps:
             T.empty_state(ui, "travel_explore", "Chưa có: lần check sau sẽ có",
-                          "Tool lưu AI Overview và 10 kết quả đầu từ kết quả check rank (không tốn thêm phí, AI "
-                          "Overview hiện chậm thêm tối đa 0,0006 USD).")
+                          "Tool lưu AI Overview và 10 kết quả đầu từ kết quả check rank"
+                          + (" (không tốn thêm phí, AI Overview hiện chậm thêm tối đa 0,0006 USD)." if ed else "."))
             return
         box = ui.column().classes("w-full gap-3")
         from . import aio as AO
@@ -2131,7 +2125,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             else:
                 stat("schedule", "Chưa kiểm tra lần nào")
             stat("event_repeat", when.replace(" vào ", " · "),
-                 f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng")
+                 f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed else "Lịch check tự động")
             if cur["paused"]:
                 stat("pause_circle", "Đang tạm dừng", "Bộ không được check tự động, không tính tiền", tone="warn")
             if is_kpi:

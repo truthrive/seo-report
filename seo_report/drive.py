@@ -122,7 +122,7 @@ def set_target_folder(con, folder_id: str) -> None:
 # Số thứ tự để Drive xếp đúng thứ tự; đổi tên / di chuyển thư mục trên Drive vẫn được (tool nhớ theo id).
 CATEGORIES = {"report": "01. Báo cáo định kỳ", "rank": "02. Từ khóa & Thứ hạng", "rivals": "03. Đối thủ",
               "backlink": "04. Backlink", "aio": "05. AI Overview", "ai": "06. AI Search & GEO",
-              "url": "07. Hiệu suất URL", "budget": "08. Ngân sách DataForSEO"}
+              "url": "07. Hiệu suất URL", "budget": "08. Ngân sách DataForSEO", "local": "09. Local SEO"}
 
 
 def category_folder(con, svc, site: str, parent: str, category: str) -> tuple[str, str]:

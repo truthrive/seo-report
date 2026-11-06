@@ -497,6 +497,8 @@ HEAD = """
   .sr-au-item .q-item { padding: 10px 4px; }
   .sr-bl-tabs .q-tab__content { flex-direction: row; flex-wrap: nowrap; align-items: center; }
   .sr-tabs .sr-tab-badge { margin-left: 6px; font-size: 10.5px; min-height: 16px; padding: 1px 6px; }
+  .sr-local-split { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; width: 100%; }
+  @media (max-width: 700px) { .sr-local-split { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .sr-au-todo { display: flex; flex-direction: column; width: 100%; }
   .sr-au-todo-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%;
     padding: 9px 6px; border-bottom: 1px solid #EEECE4; cursor: pointer; border-radius: 8px; }

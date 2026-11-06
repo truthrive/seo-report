@@ -372,7 +372,7 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                     ui.label("Thêm đối thủ")
         with ui.row().classes("items-center gap-2 q-mt-sm"):
             ui.label("Danh sách dùng chung với thứ hạng. Thêm, sửa, bỏ đối thủ ở").classes("text-sm muted")
-            ui.link("Từ khóa & Thứ hạng → Đối thủ", "/rank?bo=doi-thu").classes("text-sm")
+            ui.link("Mục Đối thủ", "/doi-thu").classes("text-sm")
         if False:  # gợi ý thêm đối thủ: ở tab Đối thủ
             with ui.column().classes("w-full gap-1 q-mt-md"):
                 ui.label("Gợi ý: website AI hay trích, chưa có trong danh sách").classes("text-sm muted")

@@ -31,10 +31,10 @@ NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
             ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
     ("SEO", [("URL & Index", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
-             ("Backlink", "/backlink", "add_link")]),
-    ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates"),
-                  ("Chất lượng dữ liệu", "/ai?tab=chat-luong", "verified")]),
-    ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách check rank", "/budget", "account_balance_wallet"),
+             ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
+             ("Local SEO", "/local", "storefront")]),
+    ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
+    ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách & chi phí", "/budget", "account_balance_wallet"),
                   ("Phân quyền", "/access", "admin_panel_settings"),
                   ("Cài đặt tích hợp", "/cai-dat", "settings")]),  # chỉ Chủ tool
 ]
@@ -328,7 +328,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     ui.separator()
                     for label, to, icon in (("Phân quyền", "/access", "admin_panel_settings"),
                                             ("Dự án", "/projects", "domain"),
-                                            ("Ngân sách check rank", "/budget", "account_balance_wallet"),
+                                            ("Ngân sách & chi phí", "/budget", "account_balance_wallet"),
                                             ("Cài đặt tích hợp", "/cai-dat", "settings")):
                         with ui.menu_item(on_click=lambda _, t=to: ui.navigate.to(t)).classes("items-center gap-3"):
                             ui.icon(icon, size="18px").classes("muted")
@@ -396,13 +396,13 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 st["ratio"] = st["estimate"] / st["budget"] if st["budget"] else 0
                 warn = st["ratio"] >= R.ALERT_RATIO
                 card = ui.element("div").classes("sr-card q-pa-sm q-mt-lg w-full sr-mini-hide")
-                if A.is_admin(user):  # quản trị: bấm mở màn Ngân sách check rank (mọi website)
+                if A.is_admin(user):  # quản trị: bấm mở màn Ngân sách & chi phí (mọi website)
                     card.classes("cursor-pointer").on("click", lambda: ui.navigate.to("/budget"))
                     card.tooltip("Xem ngân sách check rank của mọi website")
                 with card:
                     with ui.row().classes("items-center gap-1 no-wrap"):
                         ui.icon("account_balance_wallet", size="16px").classes("muted")
-                        ui.label("Ngân sách check rank").classes("text-xs muted")
+                        ui.label("Ngân sách DataForSEO").classes("text-xs muted")
                     ui.label(f"Dự kiến {R.usd(st['estimate'])} / {st['budget']:.0f} USD").classes(
                         "text-sm font-semibold num")
                     ui.linear_progress(min(st["ratio"], 1), show_value=False, size="6px",
@@ -575,8 +575,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         ctx = page_ctx(P)
-        shell("Chất lượng dữ liệu" if params.get("tab") == "chat-luong" else "AI Search & GEO", user, P, ctx,
-              group=False)
+        shell("AI Search & GEO", user, P, ctx, group=False)
         build_ai_page(ui, P.cfg, P.connect, user, params, week=ctx["weeks"][ctx["week"]])
 
     @ui.page("/report")
@@ -678,7 +677,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request, admin=True)):
             return
         user, P = opened
-        shell("Ngân sách check rank", user, P, page_ctx(P), period=False, group=False)
+        shell("Ngân sách & chi phí", user, P, page_ctx(P), period=False, group=False)
         build_budget_page(ui, base, app_connect, user)
 
     @ui.page("/projects")
@@ -738,15 +737,43 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         url_tabs(user, "/index")
         build_index_page(ui, P.cfg, P.connect, user)
 
+    @ui.page("/local")
+    def local_page(request: Request):
+        """Local SEO: hồ sơ Google Business Profile của dự án. Khách hàng xem được."""
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        shell("Local SEO", user, P, page_ctx(P), period=False, group=False)
+        from .web_local import build_local_page
+        build_local_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+
+    @ui.page("/doi-thu")
+    def rivals_page(request: Request):
+        """Đối thủ: một nơi quản lý danh sách đối thủ (tối đa 10, dùng chung cho thứ hạng và AI Overview), so sánh
+        thị phần hiển thị và vị trí theo từng bộ từ khóa. Khách hàng xem được, không sửa danh sách."""
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        shell("Đối thủ", user, P, page_ctx(P), period=False, group=False)
+        T.page_header(ui, "groups", "Đối thủ", "Các website cạnh tranh trên bộ từ khóa theo dõi: thị phần hiển thị, ai "
+                      "đang vượt, vị trí từng từ khóa. Danh sách dùng chung cho Từ khóa & Thứ hạng và AI Overview.")
+        from .web_rivals import build_rivals_panel
+        build_rivals_panel(ui, P.cfg, P.connect, user,
+                           lambda i, f=None: ui.navigate.to(f"/rank?bo={i}" if i else "/rank"))
+
     @ui.page("/rank")
     def rank_page(request: Request):
-        if not (opened := open_page(request)):
+        """Khách hàng xem được (chỉ xem: không thêm / check / sửa bộ, không thấy chi phí)."""
+        if not (opened := open_page(request, client_ok=True)):
             return
         user, P = opened
         budget_card = shell("Từ khóa & Thứ hạng", user, P, page_ctx(P), period=False, group=False)
         bo = request.query_params.get("bo", "")  # bộ (tab) đang mở
+        if bo == "doi-thu":  # link cũ: Đối thủ đã thành trang riêng
+            ui.navigate.to("/doi-thu")
+            return
         build_rank_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh,
-                        set_id=int(bo) if bo.isdigit() else (-1 if bo == "doi-thu" else None))
+                        set_id=int(bo) if bo.isdigit() else None)
 
     @ui.page("/stars")
     def stars_page():

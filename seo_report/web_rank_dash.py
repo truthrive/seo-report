@@ -216,7 +216,7 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
                     "Đối thủ vừa vượt: từ khóa mà lần check trước đối thủ chưa đứng trên website dự án, lần này đứng "
                     "trên."))
                 ui.space()
-                ui.button("Tab Đối thủ →", on_click=lambda: open_set(-1)).props(
+                ui.button("Trang Đối thủ →", on_click=lambda: ui.navigate.to("/doi-thu")).props(
                     "flat dense no-caps color=primary").classes("sr-rd-link")
             if "invalid" in comp:
                 with ui.row().classes("items-start no-wrap gap-2 sr-rd-note"):

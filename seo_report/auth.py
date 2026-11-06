@@ -18,8 +18,10 @@ DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"  # copy sheet mẫu g
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"  # đọc sheet OKR / KPI
 SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets"  # ghi tab KPI cam kết vào sheet dự án
 ADS_SCOPE = "https://www.googleapis.com/auth/adwords"  # Google Ads API: chỉ đọc Keyword Planner (volume từ khóa)
+# Google Business Profile (hồ sơ GMB): Google chỉ có một quyền chung (đọc + sửa); tool chỉ đọc
+BUSINESS_SCOPE = "https://www.googleapis.com/auth/business.manage"
 ALL_SCOPES = [GSC_SCOPE, GA4_SCOPE]  # quyền cho các chức năng đọc số liệu
-SCOPES = ALL_SCOPES + [DRIVE_FULL_SCOPE, SHEETS_WRITE_SCOPE, ADS_SCOPE]  # quyền xin khi đăng nhập
+SCOPES = ALL_SCOPES + [DRIVE_FULL_SCOPE, SHEETS_WRITE_SCOPE, ADS_SCOPE, BUSINESS_SCOPE]  # quyền xin khi đăng nhập
 # Quyền rộng hơn bao luôn quyền hẹp: token đã cấp drive (đầy đủ) thì không cần drive.file, spreadsheets thì đọc được.
 COVERS = {DRIVE_SCOPE: {DRIVE_FULL_SCOPE}, SHEETS_SCOPE: {SHEETS_WRITE_SCOPE, DRIVE_FULL_SCOPE},
           SHEETS_WRITE_SCOPE: {DRIVE_FULL_SCOPE}}
@@ -60,7 +62,8 @@ def get_credentials(cfg: Config, interactive: bool = False, need=(GSC_SCOPE,)) -
     if creds and _missing(creds, need):
         if not interactive:
             miss = _missing(creds, need)
-            what = ("Google Ads (lấy volume từ khóa)" if ADS_SCOPE in miss
+            what = ("Google Business Profile (trang Local SEO)" if BUSINESS_SCOPE in miss
+                    else "Google Ads (lấy volume từ khóa)" if ADS_SCOPE in miss
                     else "Google Drive đầy đủ (copy sheet mẫu gốc)" if DRIVE_FULL_SCOPE in miss
                     else "ghi Google Sheets" if SHEETS_WRITE_SCOPE in miss
                     else "Google Drive" if DRIVE_SCOPE in miss else "đọc Google Sheets" if SHEETS_SCOPE in miss
@@ -104,6 +107,12 @@ def build_service(creds: Credentials):
 def build_ga4_data(creds: Credentials):
     """GA4 Data API (runReport, getMetadata, checkCompatibility)."""
     return build("analyticsdata", "v1beta", credentials=creds, cache_discovery=False)
+
+
+def build_gbp(creds: Credentials, api: str, version: str = "v1"):
+    """Google Business Profile: mybusinessaccountmanagement (tài khoản), mybusinessbusinessinformation (hồ sơ),
+    businessprofileperformance (lượt xem, hành động, từ khóa)."""
+    return build(api, version, credentials=creds, cache_discovery=False)
 
 
 def build_ga4_admin(creds: Credentials):
@@ -157,7 +166,8 @@ def web_login_finish(cfg: Config, state: str, callback_url: str) -> Credentials:
 
 
 SCOPE_NAMES = {GSC_SCOPE: "Search Console", GA4_SCOPE: "Google Analytics", DRIVE_FULL_SCOPE: "Google Drive",
-               SHEETS_WRITE_SCOPE: "Google Sheets", ADS_SCOPE: "Google Ads"}
+               SHEETS_WRITE_SCOPE: "Google Sheets", ADS_SCOPE: "Google Ads",
+               BUSINESS_SCOPE: "Google Business Profile"}
 
 
 def granted_status(cfg: Config) -> dict:

@@ -1,4 +1,4 @@
-"""Màn Ngân sách check rank (Quản trị): chi phí DataForSEO của mọi website trong một màn.
+"""Màn Ngân sách & chi phí (Quản trị): chi phí DataForSEO của mọi website trong một màn.
 
 Mỗi website có ngân sách riêng (USD/tháng); chi phí gồm check rank, lấy volume keyword và số backlink, tính theo tháng dương lịch.
 Tài khoản DataForSEO dùng chung: tổng ngân sách các website nên nằm trong số dư tài khoản.
@@ -72,7 +72,7 @@ STATUS = {"ok": ("Trong ngân sách", "green", "check_circle"), "near": ("Gần 
 def build_budget_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
-    T.page_header(ui, "account_balance_wallet", "Ngân sách check rank",
+    T.page_header(ui, "account_balance_wallet", "Ngân sách & chi phí",
                   "Chi phí DataForSEO (check rank, volume keyword, backlink, ý định từ khóa) của từng website, tính theo tháng dương lịch.",
                   eyebrow="Quản trị", tone="grey")
     today = date.today()
