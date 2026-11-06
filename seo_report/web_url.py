@@ -139,7 +139,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             from .web_export import export_menu
             with ui.row().classes("w-full"):
                 export_menu(ui, cfg, connect, f"du-lieu-seo_tuan-{wks[state['week']][0]:%Y-%m-%d}",
-                            lambda: export(), "Xuất dữ liệu", user=user)
+                            lambda: export(), "Xuất dữ liệu", user=user, category="url")
             url_list = ui.column().classes("w-full gap-1 no-wrap").style(
                 "flex: 1 1 auto; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 6px")
         detail = ui.column().classes("col gap-4").style("min-width: 0")

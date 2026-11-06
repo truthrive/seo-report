@@ -130,6 +130,24 @@ class DriveTest(unittest.TestCase):
         self.assertEqual(self.svc.files_[f["id"]]["parents"], [sub])
         self.assertEqual(D.export_pdf(self.svc, f["id"]), b"%PDF-fake")
 
+    def test_category_folders(self):
+        """File xuất của mỗi màn vào thư mục hạng mục trong folder dự án: tạo một lần, dùng lại, không tạo trùng."""
+        root = D.root_folder(self.con, self.svc, SITE)
+        bl, path = D.category_folder(self.con, self.svc, SITE, "", "backlink")
+        self.assertEqual((self.svc.files_[bl]["name"], self.svc.files_[bl]["parents"]), ("04. Backlink", [root]))
+        self.assertEqual(path, "SEO Report – vidushop.com / 04. Backlink")
+        self.assertEqual(D.category_folder(self.con, self.svc, SITE, "", "backlink")[0], bl)  # dùng lại
+        rank, _ = D.category_folder(self.con, self.svc, SITE, "", "rank")
+        self.assertNotEqual(rank, bl)
+        # mất bộ nhớ id (ví dụ cài lại tool) nhưng thư mục còn trên Drive: tìm theo tên, không tạo trùng
+        self.con.execute("DELETE FROM app_settings WHERE key LIKE 'drive_cat_%'")
+        self.assertEqual(D.category_folder(self.con, self.svc, SITE, "", "backlink")[0], bl)
+        # thư mục bị xóa trên Drive: tạo lại
+        del self.svc.files_[bl]
+        self.assertNotEqual(D.category_folder(self.con, self.svc, SITE, "", "backlink")[0], bl)
+        names = [f["name"] for f in D.list_folders(self.svc, root)]
+        self.assertEqual(sorted(names), ["02. Từ khóa & Thứ hạng", "04. Backlink"])
+
     def test_explain_missing_scope(self):
         self.assertIn("login", D.explain(SystemExit("Tài khoản chưa cấp quyền Google Drive")))
 

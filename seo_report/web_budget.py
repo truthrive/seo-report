@@ -342,7 +342,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                 export_menu(ui, base, lambda: closing(db.connect(base.db_path)),
                             f"nhat-ky-chi-tien_{log_state['month']}", make_xlsx,
                             label="Xuất nhật ký chi tiền (theo tháng, website, loại API đang chọn)", user=user,
-                            icon_only=True)
+                            icon_only=True, category="budget")
             ledger()
 
     async def load_balance():

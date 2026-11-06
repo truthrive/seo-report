@@ -138,7 +138,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
         from .web_export import export_menu
         host = (urlparse(site).netloc or site.split(":")[-1]).replace("www.", "")
         export_menu(ui, cfg, connect, f"backlink-{name}_{host}_{date.today():%Y-%m-%d}", make_xlsx(which),
-                    label=label, user=user, icon_only=icon_only)
+                    label=label, user=user, icon_only=icon_only, category="backlink")
 
     with right, ui.row().classes("items-center no-wrap gap-2"):
         export_btn("all", "bao-cao", "Xuất báo cáo", icon_only=False)

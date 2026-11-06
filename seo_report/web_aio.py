@@ -101,7 +101,8 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                 with connect() as c:
                     return AX.build(c, cfg, state["set"], state["weeks"])
             export_menu(ui, cfg, connect, f"ai-overview_{_d.today():%Y-%m-%d}", make_xlsx,
-                        label="Xuất AI Overview (theo tuần, từng từ khóa, thay đổi)", user=user_, icon_only=True)
+                        label="Xuất AI Overview (theo tuần, từng từ khóa, thay đổi)", user=user_, icon_only=True,
+                        category="aio")
 
     # ------------------------------------------------------------------ Tổng quan
     @ui.refreshable

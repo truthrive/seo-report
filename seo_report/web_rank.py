@@ -1191,7 +1191,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                       "rank")
             from .web_export import export_menu
             export_menu(ui, cfg, connect, f"check-rank_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
-                        label="Xuất file", user=user, icon_only=True)
+                        label="Xuất file", user=user, icon_only=True, category="rank")
             more = ui.button(icon="more_horiz").props("flat round dense color=grey-8").tooltip("Thêm")
             more.props["aria-label"] = "Thêm thao tác và thông tin của bộ"
             with more, ui.menu().props("anchor='bottom right' self='top right'").classes("sr-more-menu"):
@@ -1498,7 +1498,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         search.props["prepend-icon"] = "search"
         from .web_export import export_menu as _export_menu
         _export_menu(ui, cfg, connect, f"tu-khoa_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
-                     label="Xuất bảng (Excel)", user=user, icon_only=True)
+                     label="Xuất bảng (Excel)", user=user, icon_only=True, category="rank")
         filt = ui.select({k: v[0] for k, v in FILTERS.items()}, value="all", label="Lọc",
                          on_change=lambda: refresh()).props("dense outlined options-dense").classes("w-56")
         trash_slot = ui.row()  # nút thùng rác (có số), vẽ lại khi làm mới

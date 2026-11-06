@@ -118,6 +118,28 @@ def set_target_folder(con, folder_id: str) -> None:
     _setting(con, "drive_folder", folder_id)
 
 
+# Thư mục theo hạng mục (trong folder dự án): file xuất của mỗi màn tự vào đúng thư mục, tạo ở lần lưu đầu tiên.
+# Số thứ tự để Drive xếp đúng thứ tự; đổi tên / di chuyển thư mục trên Drive vẫn được (tool nhớ theo id).
+CATEGORIES = {"report": "01. Báo cáo định kỳ", "rank": "02. Từ khóa & Thứ hạng", "rivals": "03. Đối thủ",
+              "backlink": "04. Backlink", "aio": "05. AI Overview", "ai": "06. AI Search & GEO",
+              "url": "07. Hiệu suất URL", "budget": "08. Ngân sách DataForSEO"}
+
+
+def category_folder(con, svc, site: str, parent: str, category: str) -> tuple[str, str]:
+    """(id, đường dẫn hiển thị) thư mục của hạng mục, nằm trong folder đang chọn để lưu (mặc định folder dự án).
+    Đã có (tool nhớ id) thì dùng lại; chưa có thì tìm theo tên rồi mới tạo, để không sinh thư mục trùng."""
+    base, base_name = target_folder(con, svc, site, parent)
+    name = CATEGORIES[category]
+    key = f"drive_cat_{category}_{base}"
+    fid = _setting(con, key)
+    if not (fid and _exists(svc, fid)):
+        fid = next((f["id"] for f in list_folders(svc, base) if f["name"] == name), None) or create_folder(svc, name,
+                                                                                                          base)
+        _setting(con, key, fid)
+    shown = svc.files().get(fileId=fid, fields="name").execute()["name"]
+    return fid, f"{base_name} / {shown}"
+
+
 def upload(svc, data: bytes, name: str, src_mime: str, folder: str, convert_to: str | None = None) -> dict:
     """Tải file lên folder; convert_to = mimeType Google (Sheets/Slides) thì Drive tự chuyển đổi."""
     body = {"name": name, "parents": [folder]}

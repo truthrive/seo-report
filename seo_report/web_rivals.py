@@ -237,7 +237,8 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 ui.switch(f"Chỉ từ khóa đối thủ xếp trên {own_name}", value=state["only_ahead"],
                           on_change=lambda e: (state.update(only_ahead=e.value), matrix_view.refresh())).props("dense")
                 export_menu(ui, cfg, connect, f"vi-tri-doi-thu_tat-ca-bo_{end}", export_xlsx,
-                            label="Xuất vị trí mọi bộ (Excel)", user=user, icon_only=True)
+                            label="Xuất vị trí mọi bộ (Excel)", user=user, icon_only=True,
+                            category="rivals")
             if len(sets_) > 1:
                 ui.toggle({0: "Mọi bộ", **{x["id"]: x["name"] for x in sets_}}, value=state["mx_set"],
                           on_change=lambda e: (state.update(mx_set=e.value), matrix_view.refresh())).props(

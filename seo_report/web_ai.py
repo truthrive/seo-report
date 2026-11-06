@@ -184,6 +184,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         from .web_export import export_menu
         if not quality:
             export_menu(ui, cfg, connect, f"ai-search-geo_{state['start']}_{state['end']}", lambda: export_all(),
+                        category="ai",
                         user=user)
     with ui.row().classes("items-center gap-2"):
         filter_chips = ui.row().classes("gap-2")

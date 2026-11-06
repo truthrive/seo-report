@@ -81,7 +81,8 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 await with_ai()
                 return await run.io_bound(lambda: build_report_pptx(rep, user))
 
-            export_menu(ui, cfg, connect, slides_filename(rep), make_xlsx, make_pptx, "Xuất báo cáo", user=user)
+            export_menu(ui, cfg, connect, slides_filename(rep), make_xlsx, make_pptx, "Xuất báo cáo", user=user,
+                        category="report")
         else:
             ui.button("Bản báo cáo", icon="summarize", on_click=lambda: ui.navigate.to("/report")).props(
                 "outline no-caps").classes("sr-head-btn")
