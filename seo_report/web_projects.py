@@ -320,7 +320,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
         dlg.open()
 
     def ask_delete(p: dict) -> None:
-        """Xóa vĩnh viễn: gõ lại tên dự án để xác nhận."""
+        """Xóa vĩnh viễn (không hoàn tác được trên tool): hộp cảnh báo, bấm nút đỏ để xóa."""
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:460px; max-width:94vw"):
             with ui.row().classes("items-center gap-2 no-wrap"):
                 ui.icon("delete_forever", size="22px").style(f"color:{T.RED}")
@@ -330,16 +330,11 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                 "text-sm")
             ui.label("File dữ liệu được chuyển vào thư mục data/da-xoa trên máy chạy tool (bản cuối, phòng xóa nhầm); "
                      "file trên Google Drive và sheet dự án giữ nguyên.").classes("text-xs muted")
-            typed = ui.input(f"Gõ lại tên dự án “{p['name']}” để xác nhận").props("outlined dense").classes(
-                "w-full q-mt-sm")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
             with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
 
                 def go():
-                    if (typed.value or "").strip() != p["name"].strip():
-                        err.text = "Gõ đúng tên dự án để xác nhận"
-                        return
                     try:
                         with app_connect() as c:
                             PJ.delete(c, base, p["slug"], user)
@@ -352,10 +347,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                     dlg.close()
                     ui.notify(f"Đã xóa vĩnh viễn dự án {p['name']}", type="positive")
                     body.refresh()
-                btn = ui.button("Xóa vĩnh viễn", icon="delete_forever", on_click=go).props(
+                ui.button("Xóa vĩnh viễn", icon="delete_forever", on_click=go).props(
                     "unelevated color=negative no-caps")
-                btn.disable()
-                typed.on_value_change(lambda e: btn.set_enabled((e.value or "").strip() == p["name"].strip()))
         dlg.open()
 
     async def check_dialog(p: dict) -> None:

@@ -297,22 +297,18 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
         dlg.open()
 
     def ask_purge(em: str) -> None:
-        """Xóa vĩnh viễn: gõ lại email / tên đăng nhập để xác nhận (không hoàn tác được)."""
+        """Xóa vĩnh viễn (không hoàn tác được): hộp cảnh báo, bấm nút đỏ để xóa."""
         with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:440px; max-width:94vw"):
             with ui.row().classes("items-center gap-2 no-wrap"):
                 ui.icon("delete_forever", size="22px").style(f"color:{T.RED}")
                 ui.label(f"Xóa vĩnh viễn {em}?").classes("text-base font-semibold")
             ui.label("Xóa hẳn tài khoản, mật khẩu, hồ sơ và mọi quyền dự án của người này. Không hoàn tác được: muốn "
                      "dùng lại phải thêm như người mới. Nhật ký thay đổi vẫn ghi lại lần xóa này.").classes("text-sm")
-            typed = ui.input(f"Gõ lại {em} để xác nhận").props("outlined dense").classes("w-full q-mt-sm")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
             with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
 
                 def go():
-                    if (typed.value or "").strip().lower() != em:
-                        err.text = "Gõ đúng email / tên đăng nhập để xác nhận"
-                        return
                     try:
                         with connect() as c:
                             A.purge_user(c, cfg.access, em, user)
@@ -323,10 +319,8 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     dlg.close()
                     ui.notify(f"Đã xóa vĩnh viễn tài khoản {em}", type="positive")
                     body.refresh()
-                btn = ui.button("Xóa vĩnh viễn", icon="delete_forever", on_click=go).props(
+                ui.button("Xóa vĩnh viễn", icon="delete_forever", on_click=go).props(
                     "unelevated color=negative no-caps")
-                btn.disable()
-                typed.on_value_change(lambda e: btn.set_enabled((e.value or "").strip().lower() == em))
         dlg.open()
 
     # ---------------- Danh sách ----------------

@@ -30,16 +30,24 @@ NUMBER = "val => val.toLocaleString('vi-VN')"
 NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
             ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
-    ("SEO", [("Hiệu suất URL", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
-             ("Index", "/index", "travel_explore"), ("Backlink", "/backlink", "add_link"),
-             ("Quản lý URL", "/urls", "folder_open")]),
+    ("SEO", [("URL & Index", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
+             ("Backlink", "/backlink", "add_link")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates"),
                   ("Chất lượng dữ liệu", "/ai?tab=chat-luong", "verified")]),
     ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách check rank", "/budget", "account_balance_wallet"),
                   ("Phân quyền", "/access", "admin_panel_settings"),
                   ("Cài đặt tích hợp", "/cai-dat", "settings")]),  # chỉ Chủ tool
 ]
-EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")  # màn làm việc cần quyền sửa: người chỉ xem không thấy trên menu
+# Mục "URL & Index" (dữ liệu GSC theo URL): một mục trên menu, ba tab = ba màn (link cũ vẫn mở đúng tab)
+URL_TABS = (("Hiệu suất URL", "/url"), ("Index", "/index"), ("Quản lý URL", "/urls"))
+NAV_PARENT = {title: "URL & Index" for title, _ in URL_TABS}  # màn → mục menu được tô sáng
+EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")
+
+
+def page_href(title: str) -> str:
+    """Địa chỉ của màn theo tên (mục menu hoặc tab của URL & Index); không có thì về Tổng quan."""
+    return next((h for t, h in URL_TABS if t == title),
+                next((h for _, items in NAV for label, h, _ in items if label == title), "/"))  # màn làm việc cần quyền sửa: người chỉ xem không thấy trên menu
 
 
 def _col(name, label, align="left", number=False, sortable=True):
@@ -262,7 +270,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         with app_connect() as c:
             prof = A.profiles(c).get(str(user), {})
         name, photo = A.display_name(prof, user), prof.get("avatar", "")
-        href = next((h for _, items in NAV for label, h, _ in items if label == active), "/")
+        href = page_href(active)
         role_text = ("Chủ tool · trên máy chạy tool" if user.role == A.LOCAL else
                      "Chủ tool · toàn quyền" if A.is_admin(user) else A.PROJECT_ROLES.get(user.role, ""))
 
@@ -369,7 +377,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     if group_name:
                         ui.label(group_name).classes("sr-nav-group")
                     for label, href, icon in items:
-                        with ui.link(target=href).classes("active" if label == active else ""):
+                        on = label == active or NAV_PARENT.get(active) == label
+                        with ui.link(target=href).classes("active" if on else ""):
                             ui.icon(icon, size="19px")
                             ui.label(label).classes("sr-mini-hide")
                             if mini:
@@ -426,7 +435,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             ui.button(icon="menu_open" if not mini else "menu", on_click=on_menu).props(
                 "flat round dense color=grey-8").tooltip("Thu gọn / mở rộng menu")
             if len(P.projects) > 1:  # nhiều website: chọn dự án, mở lại đúng màn đang xem của dự án kia
-                href = next((h for _, items in NAV for label, h, _ in items if label == active), "/")
+                href = page_href(active)
 
                 def switch(slug):
                     app.storage.user["project"] = slug
@@ -581,6 +590,14 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("Báo cáo", user, P, ctx, period="report", group=False)
         build_report_page(ui, P.cfg, P.connect, user, ctx, ctx["kind"])
 
+    def url_tabs(user, current: str) -> None:
+        """Ba tab của mục URL & Index (Hiệu suất URL · Index · Quản lý URL): mỗi tab là một màn, bấm để chuyển."""
+        tabs_ = [(t, h) for t, h in URL_TABS if h not in EDIT_PAGES or A.can_edit(user)]
+        with ui.tabs(value=current, on_change=lambda e: ui.navigate.to(e.value) if e.value != current else None).props(
+                "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs q-mb-sm"):
+            for title, href in tabs_:
+                ui.tab(href, title)
+
     @ui.page("/url")
     def url_page(request: Request):
         if not (opened := open_page(request)):
@@ -588,6 +605,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         ctx = page_ctx(P)
         budget_card = shell("Hiệu suất URL", user, P, ctx)
+        url_tabs(user, "/url")
         build_url_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh, ctx=ctx)
 
     @ui.page("/okr")
@@ -717,6 +735,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Index", user, P, page_ctx(P), period=False, group=False)
+        url_tabs(user, "/index")
         build_index_page(ui, P.cfg, P.connect, user)
 
     @ui.page("/rank")
@@ -747,6 +766,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         site, connect = P.site, P.connect
         shell("Quản lý URL", user, P, page_ctx(P), period=False, group=False)
+        url_tabs(user, "/urls")
         with connect() as c:
             U.assign_urls(c, site)
             state = {"group": U.ensure_group(c, site)}
