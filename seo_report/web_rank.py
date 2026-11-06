@@ -2242,13 +2242,14 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             with connect() as c:
                 r = R.add_keywords(c, site, cfg.rank, end, items, str(user), set_id=sid)
 
-        def fetch_volume():  # keyword mới thêm: lấy volume ngay (keyword đã có số tháng này thì bỏ qua)
+        def fetch_volume():  # lấy volume một lần duy nhất khi thêm: cả lượt thêm chung một lần gọi
             with connect() as c:
                 return V.refresh(c, site, cfg, end, log=lambda m: None)
-        try:
-            await run.io_bound(fetch_volume)
-        except Exception as e:  # noqa: BLE001  (keyword vẫn được thêm, volume lấy lại ở lịch hằng ngày)
-            ui.notify(f"Chưa lấy được volume: {e}", type="warning", multi_line=True)
+        if r["added"]:
+            try:
+                await run.io_bound(fetch_volume)
+            except Exception as e:  # noqa: BLE001  (từ khóa vẫn được thêm; lượt chạy hằng ngày lấy bù)
+                ui.notify(f"Chưa lấy được volume: {e}", type="warning", multi_line=True)
         parts = [f"Đã thêm {len(r['added'])}"]
         if r["updated"]:
             parts.append(f"cập nhật URL / Top {len(r['updated'])}")

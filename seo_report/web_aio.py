@@ -77,7 +77,7 @@ def _h2(ui, text: str, cls: str = "sr-section-title"):
 SEG = "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
 
 
-def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | None = None) -> None:
+def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | None = None, user_=None) -> None:
     """Nội dung trang AI Overview: dòng phạm vi + tab (Tổng quan · Việc nên làm · Từ khóa · Thương hiệu). Nút chọn
     khoảng thời gian đặt ở đầu trang (header) vì nó áp cho cả 4 thẻ và biểu đồ. Số từ kết quả check rank (DataForSEO),
     mỗi tuần lấy lần check cuối của tuần."""
@@ -92,6 +92,16 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                            on_change=lambda e: (state.update(weeks=e.value), overview.refresh())).props(SEG).classes(
                 "sr-seg")
             t_.props["aria-label"] = "Khoảng thời gian của thẻ và biểu đồ"
+            from datetime import date as _d
+
+            from .web_export import export_menu
+
+            def make_xlsx() -> bytes:  # theo bộ và khoảng tuần đang chọn trên trang
+                from . import aio_export as AX
+                with connect() as c:
+                    return AX.build(c, cfg, state["set"], state["weeks"])
+            export_menu(ui, cfg, connect, f"ai-overview_{_d.today():%Y-%m-%d}", make_xlsx,
+                        label="Xuất AI Overview (theo tuần, từng từ khóa, thay đổi)", user=user_, icon_only=True)
 
     # ------------------------------------------------------------------ Tổng quan
     @ui.refreshable
@@ -541,4 +551,4 @@ def build_aio_page(ui, cfg, connect, user, start: str = "", set_id: int | None =
     right = T.page_header(ui, "tips_and_updates", "AI Overview",
                           "Thương hiệu trong câu trả lời AI của Google trên bộ từ khóa theo dõi. Lượt hiển thị và truy "
                           "cập từ AI (GSC, GA4) xem ở trang AI Search & GEO.")
-    tab(ui, connect, cfg, can_edit(user), header=right, start=start, set_id=set_id)
+    tab(ui, connect, cfg, can_edit(user), header=right, start=start, set_id=set_id, user_=user)

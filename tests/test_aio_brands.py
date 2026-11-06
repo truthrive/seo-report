@@ -81,6 +81,25 @@ class DashboardTest(unittest.TestCase):
         self.assertIsNone(rows["c"]["own_mentioned"])
         self.assertEqual(AO.suggestions(self.con, CFG), [])  # rival.vn đã có trong danh sách
 
+    def test_export_workbook(self):
+        import io
+
+        from openpyxl import load_workbook
+
+        from seo_report import aio_export as AX
+        AO.save_brand(self.con, SITE, "Rival", "", "rival.vn")
+        self.put("a", "2026-10-13", 1, ["rival.vn"], "Rival là lựa chọn tốt")
+        self.put("a", "2026-10-20", 1, ["vidushop.com", "rival.vn"], "Mua ở vidushop hoặc Rival")
+        self.put("b", "2026-10-20", 0)
+        wb = load_workbook(io.BytesIO(AX.build(self.con, CFG, weeks=52)))
+        self.assertEqual(wb.sheetnames, ["Theo tuần", "Từ khóa", "Thay đổi"])
+        head = [c.value for c in wb["Theo tuần"][1]]
+        self.assertIn("Rival được trích", head)
+        kw = {r[0].value: [c.value for c in r] for r in wb["Từ khóa"].iter_rows(min_row=2)}
+        self.assertEqual((kw["a"][3], kw["a"][5]), ("Có", "Có"))  # có AIO, mình được trích
+        self.assertEqual(kw["b"][3], "Không")
+        self.assertEqual([c.value for c in wb["Thay đổi"][2]][:2], ["Mới được nhắc tên", "a"])
+
 
 
     def test_aio_per_set(self):

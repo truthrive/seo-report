@@ -1,9 +1,9 @@
 """Volume tìm kiếm của keyword SEO (keyword theo dõi rank), số của Google Ads (Keyword Planner). Lấy thẳng từ Google
 Ads API khi đã cấu hình (miễn phí, xem google_ads.py); chưa cấu hình hoặc lỗi thì qua DataForSEO Keywords Data.
 
-Google Ads chỉ cập nhật volume theo tháng, nên mỗi keyword lấy một lần mỗi tháng (lịch hằng ngày tự lấy cho keyword
-chưa có số của tháng này; keyword mới thêm thì lấy ngay). Chi phí thật do DataForSEO trả về được cộng vào ngân sách
-check rank chung.
+Mỗi keyword chỉ lấy volume MỘT lần duy nhất: ngay khi thêm (cả lượt thêm đi chung một lần gọi), không lấy lại theo
+tháng. Lượt chạy hằng ngày chỉ bù cho keyword chưa từng có số (lần thêm bị lỗi, keyword đến từ sheet). Cùng từ khóa đã
+có số ở bộ khác thì chép sang, không gọi. Chi phí thật do DataForSEO trả về được cộng vào ngân sách check rank chung.
 """
 import json
 import sqlite3
@@ -59,10 +59,9 @@ def latest(con: sqlite3.Connection) -> dict[int, dict]:
 
 
 def missing(con: sqlite3.Connection, site: str, end: date, today: date, only_ids: list[int] | None = None) -> list[dict]:
-    """Keyword đang theo dõi chưa có volume của tháng này."""
+    """Keyword đang theo dõi chưa từng có volume (đã lấy một lần thì không lấy lại, kể cả sang tháng mới)."""
     ensure_tables(con)
-    month = today.strftime("%Y-%m")
-    have = {r[0] for r in con.execute("SELECT keyword_id FROM keyword_volume WHERE month = ?", (month,))}
+    have = {r[0] for r in con.execute("SELECT DISTINCT keyword_id FROM keyword_volume")}
     return [k for k in R.keywords(con, site, end)
             if k["id"] not in have and (only_ids is None or k["id"] in only_ids)]
 
@@ -94,19 +93,19 @@ def _texts(rows: list[dict]) -> list[str]:
 
 
 def _copy_known(con: sqlite3.Connection, todo: list[dict], today: date) -> list[dict]:
-    """Dòng có cùng từ khóa với dòng khác đã có volume tháng này: chép số sang, trả các dòng còn phải hỏi."""
-    month = today.strftime("%Y-%m")
+    """Dòng có cùng từ khóa với dòng khác đã có volume (bất kỳ tháng nào): chép số sang (giữ tháng đã lấy), trả các
+    dòng còn phải hỏi."""
     known = {}
-    for kw, vol, comp, at in con.execute(
-            "SELECT lower(k.keyword), v.volume, v.competition, v.fetched_at FROM keyword_volume v "
-            "JOIN rank_keywords k ON k.id = v.keyword_id WHERE v.month = ?", (month,)):
-        known[kw.strip()] = (vol, comp, at)
+    for kw, month, vol, comp, at in con.execute(
+            "SELECT lower(k.keyword), v.month, v.volume, v.competition, v.fetched_at FROM keyword_volume v "
+            "JOIN rank_keywords k ON k.id = v.keyword_id ORDER BY v.month"):
+        known[kw.strip()] = (month, vol, comp, at)  # tháng mới nhất ghi đè
     rest = []
     with con:
         for k in todo:
             hit = known.get(k["keyword"].strip().lower())
             if hit:
-                con.execute("INSERT OR REPLACE INTO keyword_volume VALUES (?, ?, ?, ?, ?)", (k["id"], month, *hit))
+                con.execute("INSERT OR REPLACE INTO keyword_volume VALUES (?, ?, ?, ?, ?)", (k["id"], *hit))
             else:
                 rest.append(k)
     return rest

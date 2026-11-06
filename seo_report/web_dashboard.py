@@ -195,9 +195,12 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         with connect() as c:
             bl = BL.latest(c, site)
         now = (bl or {}).get("now")
-        sub = (f"DataForSEO · lấy ngày {date.fromisoformat(now['day']):%d/%m}, tự lấy lại mỗi tuần" if now
-               else "Chưa lấy số lần nào")
-        with T.section(ui, "Backlink", "link", sub):
+        with connect() as c:
+            bst = BL.settings(c, site)
+        sub = (f"DataForSEO · lấy ngày {date.fromisoformat(now['day']):%d/%m}, "
+               + ("tạm ngưng tự lấy" if bst["paused"] else BL.EVERY_CHOICES[bst["every_days"]].lower() + " tự lấy lại")
+               if now else "Chưa lấy số lần nào")
+        with T.section(ui, "Backlink", "link", sub, href="/backlink", link_text="Backlink"):
             if now:
                 prev = bl["prev"]
                 with ui.element("div").classes("sr-mini-stats"):

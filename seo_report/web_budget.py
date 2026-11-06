@@ -17,14 +17,14 @@ from . import ui_theme as T
 PROJECT_COLORS = [T.GREEN, T.BLUE, "#7C3AED", "#B7791F", "#0E7C86", "#C2410C", "#5E7414", "#8C8A7E"]
 
 
-def _vn_time(iso_utc: str) -> str:
-    """Mốc lưu theo UTC → giờ Việt Nam "05/11 14:30"."""
+def _vn_time(iso_utc: str, fmt: str = "%d/%m %H:%M") -> str:
+    """Mốc lưu theo UTC → giờ Việt Nam "05/11 14:30" (fmt khác cho file xuất: "%d/%m/%Y %H:%M")."""
     from datetime import datetime, timedelta
     try:
         t = datetime.fromisoformat(str(iso_utc).replace("Z", "+00:00"))
     except ValueError:
         return str(iso_utc)
-    return (t.replace(tzinfo=None) + timedelta(hours=7) if t.tzinfo else t).strftime("%d/%m %H:%M")
+    return (t.replace(tzinfo=None) + timedelta(hours=7) if t.tzinfo else t).strftime(fmt)
 
 
 def _usd(v: float | None) -> str:
@@ -233,8 +233,8 @@ def build_budget_page(ui, base, app_connect, user) -> None:
         bao nhiêu từ khóa, ai chạy, bao nhiêu tiền. Lọc theo tháng, website, loại API."""
         names = {r["project"]["slug"]: r["project"]["name"] for r in rows}
 
-        @ui.refreshable
-        def ledger():
+        def items_for() -> list[dict]:
+            """Các khoản chi theo tháng và website đang chọn, mới trước cũ sau."""
             m = log_state["month"]
             items = []
             for r in rows:
@@ -248,6 +248,42 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         log = R.spend_log(c, m)
                 items += [{**x, "project": slug} for x in log]
             items.sort(key=lambda x: x["at"], reverse=True)
+            return items
+
+        def make_xlsx() -> bytes:
+            """Excel: tổng theo website × loại API, và từng khoản chi (theo tháng / website / loại API đang chọn)."""
+            import io
+
+            from openpyxl import Workbook
+
+            from .export import _sheet
+            items = items_for()
+            if log_state["kind"] != "all":
+                items = [x for x in items if x["kind"] == log_state["kind"]]
+            wb = Workbook()
+            wb.remove(wb.active)
+            kinds = list(R.SPEND_KINDS)
+            per: dict[str, dict[str, float]] = {}
+            for x in items:
+                per.setdefault(x["project"], {}).setdefault(x["kind"], 0.0)
+                per[x["project"]][x["kind"]] += x["cost"]
+            money = "#,##0.0000"
+            _sheet(wb, "Tổng theo website", [("Website", 26, None)] + [(R.SPEND_KINDS[k], 15, money) for k in kinds]
+                   + [("Tổng (USD)", 13, money)],
+                   [[names.get(p_, p_)] + [round(v.get(k, 0), 4) for k in kinds] + [round(sum(v.values()), 4)]
+                    for p_, v in per.items()])
+            _sheet(wb, "Từng khoản chi", [("Thời gian (giờ VN)", 17, None), ("Website", 22, None),
+                                          ("Loại API", 16, None), ("Chi tiết", 60, None), ("Số lượng", 10, "#,##0"),
+                                          ("Người chạy", 22, None), ("Chi phí (USD)", 14, money)],
+                   [[_vn_time(x["at"], "%d/%m/%Y %H:%M"), names.get(x["project"], ""), R.SPEND_KINDS[x["kind"]],
+                     x["detail"], x["qty"], x["by"] or "", round(x["cost"], 6)] for x in items])
+            buf = io.BytesIO()
+            wb.save(buf)
+            return buf.getvalue()
+
+        @ui.refreshable
+        def ledger():
+            items = items_for()
             by_kind = {k: [x for x in items if x["kind"] == k] for k in R.SPEND_KINDS}
             # tổng theo loại API: bấm để lọc bảng
             with ui.element("div").classes("sr-spend-sum"):
@@ -301,6 +337,12 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                 ui.select({"all": "Mọi website", **names}, value=log_state["project"],
                           on_change=lambda e: (log_state.update(project=e.value), ledger.refresh())).props(
                     "dense outlined options-dense").classes("w-48")
+                ui.space()
+                from .web_export import export_menu
+                export_menu(ui, base, lambda: closing(db.connect(base.db_path)),
+                            f"nhat-ky-chi-tien_{log_state['month']}", make_xlsx,
+                            label="Xuất nhật ký chi tiền (theo tháng, website, loại API đang chọn)", user=user,
+                            icon_only=True)
             ledger()
 
     async def load_balance():

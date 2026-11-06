@@ -31,7 +31,8 @@ NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
             ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
     ("SEO", [("Hiệu suất URL", "/url", "link"), ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
-             ("Index", "/index", "travel_explore"), ("Quản lý URL", "/urls", "folder_open")]),
+             ("Index", "/index", "travel_explore"), ("Backlink", "/backlink", "add_link"),
+             ("Quản lý URL", "/urls", "folder_open")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates"),
                   ("Chất lượng dữ liệu", "/ai?tab=chat-luong", "verified")]),
     ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách check rank", "/budget", "account_balance_wallet"),
@@ -531,6 +532,16 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         days = app.storage.user.get("dash_days") if app.storage.user.get("dash_days") in WINDOWS else 28
         shell("Tổng quan", user, P, ctx, period="days", group=False)
         build_dashboard_page(ui, P.cfg, P.connect, user, ctx, days)
+
+    @ui.page("/backlink")
+    def backlink_page(request: Request):
+        """Backlink của website (DataForSEO): khách hàng xem được, chỉ người sửa được mới bấm lấy số mới."""
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        shell("Backlink", user, P, page_ctx(P), period=False, group=False)
+        from .web_backlink import build_backlink_page
+        build_backlink_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
     @ui.page("/aio")
     def aio_page(request: Request):

@@ -24,7 +24,6 @@ def _vn(iso: str | None) -> str:
 
 def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
     from . import ui_theme as T
-    from .access import can_edit
     site = cfg.site_url
     with connect() as c:
         end = K.latest_date(c, site)
@@ -39,9 +38,7 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
         one = ui.select({x["id"]: x["name"] for x in all_sets}, label="Hoặc một bộ", clearable=True,
                         on_change=lambda e: pick(e.value or "all", from_select=True)).props(
             "dense outlined options-dense").classes("w-56")
-        ui.space()
-        if can_edit(user):
-            ui.button("Tạo bộ mới", icon="add", on_click=new_set).props("unelevated no-caps color=primary")
+        # tạo bộ mới: dùng nút "+" ở thanh tab (có ở mọi tab), không lặp nút ở đây
 
     def pick(value, from_select: bool = False):
         """Đổi phạm vi; đặt lại ô còn lại mà không kích hoạt đổi lần hai."""
@@ -66,7 +63,7 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
             n_sets = len(D.scope_sets(c, site, scope))
             if not n_sets:
                 T.empty_state(ui, "folder_off", "Chưa có bộ từ khóa nào trong phạm vi này",
-                              "Tạo bộ mới hoặc chọn phạm vi khác.")
+                              "Tạo bộ bằng nút + ở thanh tab, hoặc chọn phạm vi khác.")
                 return
             k = D.kpis(kws)
             try:

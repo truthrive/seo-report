@@ -437,24 +437,24 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         async def add_committed():
             if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
                 return
-            from nicegui import run as nrun
             items = [(line.split("|")[0].strip(), row["url"]) for line in (new_kw.value or "").splitlines()
                      if line.split("|")[0].strip()]
             if not items:
                 return
             with connect() as c:
                 r = R.add_keywords(c, site, cfg.rank, end, items, user)
-                ids = [k["id"] for k in R.keywords(c, site, end) if k["keyword"].lower() in {i[0] for i in items}]
-            add_btn.props("loading")
-            try:
-                def work():
-                    with connect() as c:
-                        return V.refresh(c, site, cfg, end, only_ids=ids, log=lambda m: None)
-                await nrun.io_bound(work)
-            except Exception as e:  # noqa: BLE001  (thêm keyword vẫn thành công, chỉ thiếu volume)
-                ui.notify(f"Đã thêm keyword nhưng chưa lấy được volume: {e}", type="warning", multi_line=True)
-            finally:
-                add_btn.props(remove="loading")
+            if r["added"]:  # volume lấy một lần duy nhất khi thêm (cả lượt chung một lần gọi)
+                from nicegui import run as nrun
+                add_btn.props("loading")
+                try:
+                    def work():
+                        with connect() as c:
+                            return V.refresh(c, site, cfg, end, log=lambda m: None)
+                    await nrun.io_bound(work)
+                except Exception as e:  # noqa: BLE001  (thêm keyword vẫn thành công; lượt chạy hằng ngày lấy bù)
+                    ui.notify(f"Đã thêm keyword nhưng chưa lấy được volume: {e}", type="warning", multi_line=True)
+                finally:
+                    add_btn.props(remove="loading")
             msg = f"Đã thêm {len(r['added'])} keyword"
             if r["updated"]:
                 msg += f", đổi URL mục tiêu {len(r['updated'])}"
@@ -499,7 +499,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 with connect() as c:
                     ok, msg = R.toggle_star(c, site, cfg.rank, end, rid, e.args["query"], user)
                 ui.notify(msg, type="positive" if ok else "negative", multi_line=True, timeout=6000)
-                if ok:
+                if ok:  # từ khóa vừa gắn ★: lấy volume một lần (đã có số thì không gọi)
                     from nicegui import background_tasks as bt
 
                     async def vol():
@@ -510,7 +510,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                                 return V.refresh(c, site, cfg, end, log=lambda m: None)
                         try:
                             await nrun.io_bound(work)
-                        except Exception:  # noqa: BLE001
+                        except Exception:  # noqa: BLE001  (lượt chạy hằng ngày lấy bù)
                             pass
                     bt.create(vol())
                 if on_budget_change:

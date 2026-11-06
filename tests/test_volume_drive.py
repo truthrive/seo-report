@@ -33,16 +33,23 @@ class VolumeTest(unittest.TestCase):
         self.calls.append(keywords)
         return {"cost": 0.075, "result": [{"keyword": "mắt kính", "search_volume": 33100, "competition": "MEDIUM"}]}
 
-    def test_refresh_once_per_month_and_unknown_kept(self):
+    def test_refresh_once_ever_and_unknown_kept(self):
         n = V.refresh(self.con, SITE, self.cfg, TODAY, TODAY, fetcher=self.fetcher, log=lambda m: None)
         self.assertEqual(n, 2)
         vols = {k["keyword"]: V.latest(self.con).get(k["id"]) for k in R.keywords(self.con, SITE, TODAY)}
         self.assertEqual(vols["mắt kính"]["volume"], 33100)
-        self.assertIsNone(vols["gọng kính"]["volume"])  # Google Ads không trả: lưu None, không hỏi lại trong tháng
+        self.assertIsNone(vols["gọng kính"]["volume"])  # Google Ads không trả: lưu None, không hỏi lại
         V.refresh(self.con, SITE, self.cfg, TODAY, TODAY, fetcher=self.fetcher, log=lambda m: None)
         self.assertEqual(len(self.calls), 1)
         V.refresh(self.con, SITE, self.cfg, TODAY, date(2026, 11, 2), fetcher=self.fetcher, log=lambda m: None)
-        self.assertEqual(len(self.calls), 2)  # tháng mới thì lấy lại
+        self.assertEqual(len(self.calls), 1)  # sang tháng mới cũng không lấy lại: mỗi từ khóa một lần duy nhất
+        # cùng từ khóa thêm vào bộ khác (tháng sau): chép số đã có, không gọi API
+        sid = R.create_set(self.con, SITE, "Bộ 2", "t")
+        R.add_keywords(self.con, SITE, self.cfg.rank, TODAY, [("mắt kính", None)], "t", set_id=sid)
+        V.refresh(self.con, SITE, self.cfg, TODAY, date(2026, 12, 1), fetcher=self.fetcher, log=lambda m: None)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual([V.latest(self.con).get(k["id"], {}).get("volume") for k in R.keywords(self.con, SITE, TODAY)
+                          if k["keyword"] == "mắt kính"], [33100, 33100])
 
     def test_cost_counts_in_rank_budget(self):
         V.refresh(self.con, SITE, self.cfg, TODAY, TODAY, fetcher=self.fetcher, log=lambda m: None)

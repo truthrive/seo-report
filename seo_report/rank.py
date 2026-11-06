@@ -728,7 +728,9 @@ def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
     for at, kind, cost in con.execute("SELECT run_at, kind, cost FROM backlink_runs WHERE substr(run_at, 1, 7) = ?",
                                       (month,)):
         out.append({"at": at, "kind": "backlinks", "qty": 1, "cost": cost or 0.0, "by": "",
-                    "detail": "Lịch sử backlink theo tháng" if kind == "history" else "Tổng quan backlink"})
+                    "detail": {"history": "Lịch sử backlink theo tháng", "summary": "Tổng quan backlink",
+                               "domains": "Danh sách website trỏ về", "changes": "Link mới / mất 30 ngày",
+                               "anchors": "Anchor text", "pages": "Trang được link nhiều nhất"}.get(kind, kind)})
     for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM intent_runs WHERE substr(run_at, 1, 7) = ?",
                                    (month,)):
         out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": "",

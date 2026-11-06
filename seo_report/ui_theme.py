@@ -347,7 +347,7 @@ HEAD = """
   .sr-place-move.up, .sr-top-move.up { color: #1E7C31; }
   .sr-place-move.down, .sr-top-move.down { color: #C2410C; }
   .sr-top-cell { display: inline-flex; align-items: baseline; gap: 4px; }
-  .sr-comp-row.own { background: #F3F8FD; border-bottom-color: transparent; box-shadow: inset 3px 0 0 #2a78d6; }
+  .sr-comp-row.own { background: #F3F8FD; border-bottom-color: transparent; }
   .sr-comp-row .num { font-variant-numeric: tabular-nums; }
   .sr-comp-row .num.strong { font-weight: 700; }
   .sr-comp-row .num .of { color: #8C8A7E; font-weight: 500; }
@@ -475,6 +475,51 @@ HEAD = """
   .sr-spend-kind.k-volume { background: #E3F4F1; color: #136F65; }
   .sr-spend-kind.k-backlinks { background: #FBF1DE; color: #8F5F14; }
   .sr-spend-kind.k-intent { background: #EEEDFE; color: #4B3FB8; }
+  .sr-bl-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 900px) { .sr-bl-two { grid-template-columns: 1fr; } }
+  .sr-bl-table td { vertical-align: top; }
+  .sr-bl-link { color: #1F221E; font-weight: 600; text-decoration: none; word-break: break-all; }
+  .sr-bl-link:hover { text-decoration: underline; color: #2a5bab; }
+  .sr-bl-src { max-width: 280px; min-width: 0; }
+  .sr-bl-src .sr-bl-link { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; vertical-align: bottom; word-break: normal; }
+  .sr-bl-sub { font-size: 12px; color: #8C8A7E; max-width: 280px; }
+  .sr-bl-type { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 600;
+    white-space: nowrap; background: #F1F0EA; color: #6B6A5E; }
+  .sr-bl-type.k-new { background: #E7F3EA; color: #1E7C31; }
+  .sr-bl-type.k-lost { background: #FCEBE3; color: #C2410C; }
+  .sr-bl-type.k-brand { background: #E7F3EA; color: #1E7C31; }
+  .sr-bl-type.k-url { background: #E8EFFD; color: #2a5bab; }
+  .sr-bl-type.k-kw { background: #FBF1DE; color: #8F5F14; }
+  .sr-bl-anchor { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sr-au-item { border-bottom: 1px solid #EEECE4; }
+  .sr-au-item:last-child { border-bottom: 0; }
+  .sr-au-item .q-item { padding: 10px 4px; }
+  .sr-bl-tabs .q-tab__content { flex-direction: row; flex-wrap: nowrap; align-items: center; }
+  .sr-tabs .sr-tab-badge { margin-left: 6px; font-size: 10.5px; min-height: 16px; padding: 1px 6px; }
+  .sr-au-todo { display: flex; flex-direction: column; width: 100%; }
+  .sr-au-todo-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 9px 6px; border-bottom: 1px solid #EEECE4; cursor: pointer; border-radius: 8px; }
+  .sr-au-todo-row:last-child { border-bottom: 0; }
+  .sr-au-todo-row:hover { background: #F7F6F1; }
+  .sr-au-todo-row:focus-visible { outline: 2px solid #2a78d6; outline-offset: 1px; }
+  .sr-au-filter { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 9px 8px; border-bottom: 1px solid #EEECE4; cursor: pointer; border-radius: 10px; }
+  .sr-au-filter:last-child { border-bottom: 0; }
+  .sr-au-filter:hover { background: #F7F6F1; }
+  .sr-au-filter:focus-visible { outline: 2px solid #2a78d6; outline-offset: 1px; }
+  .sr-au-filter.on { background: #EEF3FC; }
+  .sr-au-filter.off { cursor: default; opacity: .75; }
+  .sr-au-filter.off:hover { background: transparent; }
+  .sr-au-ico { color: #8C8A7E; flex: none; }
+  .sr-au-filter.on .sr-au-ico { color: #2a5bab; }
+  .sr-au-chip { all: unset; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
+    background: #E8EFFD; color: #2a5bab; border-radius: 999px; padding: 2px 10px; font-size: 12.5px; font-weight: 600; }
+  .sr-au-chip:hover { background: #DCE6FB; }
+  .sr-au-num { font-size: 14px; font-weight: 700; color: #1F221E; white-space: nowrap; }
+  .sr-au-table { margin-top: 4px; }
+  .sr-au-item .q-expansion-item__content { padding: 0 4px 12px; }
+  .sr-bl-mix { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; align-items: center; }
   .sr-pill { display: inline-flex; align-items: center; gap: 3px; border-radius: 999px; padding: 1px 9px;
     font-size: 12.5px; font-weight: 600; white-space: nowrap; }
   .sr-pill.grey { background: #F1F0EA; color: #6B6A5E; }
