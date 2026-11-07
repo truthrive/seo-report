@@ -93,11 +93,11 @@ def _tile(ui, line: dict, ch: dict, running: bool, has_ga4: bool) -> None:
         if ch["total"] and cum is not None:
             done = min(max(cum, 0) / ch["total"], 1)
             ahead = min(ch["plan_cum"] / ch["total"], 1)
-    muted_value = ch["target"] is None or value in ("chưa check", "chưa có")
-    with ui.element("div").classes("sr-card sr-kpi q-pa-md"):
-        ui.label(KP.line_label(line)).classes("text-xs muted")
-        ui.label(value).classes("sr-kpi-value num" + (" muted" if muted_value else "")).style(
-            "font-size: 22px" if value == "chưa check" else "")
+    # Số mờ chỉ khi chưa có số thật; tháng không cam kết vẫn hiện số đậm như các ô khác (không phải số "kém")
+    muted_value = value in ("chưa check", "chưa có")
+    with ui.element("div").classes("sr-card sr-kpi"):
+        ui.label(KP.line_label(line)).classes("sr-tile-label")
+        ui.label(value).classes("sr-kpi-value num" + (" muted" if muted_value else ""))
         if done is not None:  # thanh tiến độ so với cam kết (phần nhạt: dự báo / kế hoạch)
             color = T.TONES[tone][1]
             ui.html(
@@ -137,7 +137,7 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
     sub = (f"{_vn(m['from'])} – {_vn(m['to'])} · {m['rank']['total']} từ khóa cam kết"
            + (" · đang chạy, số còn thay đổi" if running else " · đã chốt")
            + (f" · tháng này không cam kết: {', '.join(free)}" if free else ""))
-    with T.section(ui, f"Tiến độ KPI · Tháng {m['n']}/{total}" + (f" · {p['project']}" if p.get("project") else ""),
+    with T.section(ui, f"Tiến độ KPI · Tháng dự án {m['n']}/{total}" + (f" · {p['project']}" if p.get("project") else ""),
                    "flag", sub, href="/kpi" if compact else None, link_text=f"Xem {total} tháng"):
         with T.kpi_row(ui):
             for line in p["lines"]:

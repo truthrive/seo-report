@@ -31,6 +31,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
     right = T.page_header(ui, "storefront", "Local SEO",
                           "Hồ sơ Google Business Profile: khách thấy hồ sơ bao nhiêu lần, gọi, chỉ đường, vào website; "
                           "từ khóa tìm thấy hồ sơ và thông tin còn thiếu. Số của Google, tự lấy mỗi ngày.")
+    right.classes("no-wrap").style("flex:none")  # hai nút không bị ép hẹp (chữ xuống dưới icon)
     state = {"tab": start if start in dict(TABS) else "overview", "loc": "all", "days": 28, "month": "", "q": ""}
     has_scope = not auth.missing_scopes(_scopes(cfg), (auth.BUSINESS_SCOPE,))
 

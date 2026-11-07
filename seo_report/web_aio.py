@@ -533,17 +533,53 @@ def dashboard_lines(ui, connect, cfg) -> None:
     rows, s = load(connect, cfg)
     if not s["checked"]:
         return
-    link = ui.link(target="/aio").classes("sr-cmp-note no-underline").style("color:inherit")
-    with link:
-        ui.html(f"AI Overview {WEEKS} tuần: website được trích <b>{_pct(s['cited_rate'])}</b> "
-                f"({s['cited']}/{s['known']}) · đã kiểm tra {s['checked']}/{s['total']} từ khóa")
-    link.tooltip(f"{where_text(connect, cfg)}. Bấm để mở trang AI Overview")
+    from . import dash_widgets as W
+    W.fact(ui, "lightbulb", "purple", f"AI Overview {WEEKS} tuần",
+           f"được trích <b>{_pct(s['cited_rate'])}</b> ({s['cited']}/{s['known']})", "/aio",
+           f"Website được trích trong câu trả lời AI Overview: {s['cited']}/{s['known']} từ khóa có AI Overview · đã "
+           f"kiểm tra {s['checked']}/{s['total']} từ khóa · {where_text(connect, cfg)}")
+    competitor_line(ui, connect, cfg)
+
+
+def competitor_line(ui, connect, cfg) -> None:
+    """Đối thủ hay gặp trong top 10 của bộ từ khóa. Đã khai báo đối thủ (màn Đối thủ) thì đếm theo danh sách đó; chưa
+    khai báo thì lấy tên miền hay gặp nhưng bỏ các nền tảng (Facebook, Shopee, YouTube…: không phải đối thủ)."""
+    from . import aio as AO
+    from .rank_overview import PLATFORMS
     with connect() as c:
-        s2 = R.aio_summary(R.serp_latest(c, cfg.site_url, K.latest_date(c, cfg.site_url)), cfg.site_url)
-    if s2["competitors"]:
-        names = [d for d, *_ in s2["competitors"]]
-        ui.html("Đối thủ hay gặp: " + ", ".join(f"<b>{d}</b>" for d in names[:2])).classes(
-            "sr-cmp-note").tooltip("Top 10 trên bộ từ khóa: " + ", ".join(names))
+        rows = R.serp_latest(c, cfg.site_url, K.latest_date(c, cfg.site_url))
+        rivals = [b for b in AO.brands(c, cfg) if not b["own"] and b["domains"]]
+    host = R.domain(cfg.site_url) if hasattr(R, "domain") else ""
+    checked = [r for r in rows if r.get("top10")]
+    if not checked:
+        return
+    if rivals:
+        count = []
+        for b in rivals:
+            n = sum(1 for r in checked if any(R._host_match(x["domain"] or "", d) for x in r["top10"]
+                                               for d in b["domains"]))
+            if n:
+                count.append((b["name"], n))
+        count.sort(key=lambda x: -x[1])
+        from . import dash_widgets as W
+        W.fact(ui, "groups", "amber", "Đối thủ trong top 10",
+               " · ".join(f"<b>{name}</b> {n}" for name, n in count[:2]) if count else "chưa có",
+               "/doi-thu", f"Số từ khóa (trên {len(checked)} từ khóa, lần check mới nhất) có đối thủ trong top 10: "
+               + (", ".join(f"{name} {n}" for name, n in count) if count
+                  else f"chưa đối thủ nào trong {len(rivals)} đối thủ đã khai báo"))
+        return
+    count: dict[str, int] = {}
+    for r in checked:
+        for d in {x["domain"] for x in r["top10"] if x["domain"]}:
+            if (host and R._host_match(d, host)) or any(R._host_match(d, p) for p in PLATFORMS):
+                continue
+            count[d] = count.get(d, 0) + 1
+    top = sorted(count.items(), key=lambda x: (-x[1], x[0]))[:3]
+    if top:
+        from . import dash_widgets as W
+        W.fact(ui, "groups", "amber", "Hay gặp trong top 10", " · ".join(f"<b>{d}</b> {n}" for d, n in top[:2]),
+               "/doi-thu", "Chưa khai báo đối thủ; đã bỏ các nền tảng (Facebook, Shopee, YouTube…). Số từ khóa có "
+               "mặt ở top 10: " + ", ".join(f"{d} {n}" for d, n in top))
 
 
 def build_aio_page(ui, cfg, connect, user, start: str = "", set_id: int | None = None) -> None:

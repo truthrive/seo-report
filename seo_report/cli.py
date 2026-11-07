@@ -290,6 +290,13 @@ def _daily_one(cfg) -> None:
                                log=lambda m: print(m, flush=True))
         except Exception:
             traceback.print_exc()
+        try:  # Search Console ngoài tìm kiếm web (Discover, hình ảnh, video, tin tức) + sitemap
+            from . import auth, gsc_types
+            with db.connect(cfg.db_path) as con:
+                gsc_types.refresh(con, cfg.site_url, auth.build_service(auth.get_credentials(cfg)),
+                                  log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
         try:  # Tốc độ & Core Web Vitals (CrUX + PageSpeed, miễn phí): mỗi tuần một lần
             from . import cwv
             with db.connect(cfg.db_path) as con:
@@ -300,6 +307,12 @@ def _daily_one(cfg) -> None:
             from . import gbp
             with db.connect(cfg.db_path) as con:
                 gbp.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Merchant Center (Merchant API, miễn phí): sản phẩm, hiệu suất 90 ngày, vấn đề tài khoản
+            from . import merchant
+            with db.connect(cfg.db_path) as con:
+                merchant.refresh(con, cfg, log=lambda m: print(m, flush=True))
         except (Exception, SystemExit):
             traceback.print_exc()
         try:  # backlink (DataForSEO): lấy lại khi lần gần nhất đã cũ hơn 7 ngày

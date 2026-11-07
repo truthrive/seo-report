@@ -169,6 +169,8 @@ def rank_summary(rep: "WeeklyReport", committed: set[str] | None = None) -> dict
         return out
 
     return {"total": len(ranks), "committed": bool(committed), "now": now, "prev": prev, "has_prev": bool(with_prev),
+            # ngày lần check trước dùng để so (mới nhất trong các từ khóa có lần trước)
+            "prev_date": max((r.get("prev_date") for r in with_prev if r.get("prev_date")), default=None),
             "dist": {"now": dist(r["rank"] for r in ranks), "prev": dist(r["prev"] for r in with_prev)},
             "up": sorted([m for m in moves if m["diff"] > 0], key=lambda m: -m["diff"])[:3],
             "down": sorted([m for m in moves if m["diff"] < 0], key=lambda m: m["diff"])[:3]}

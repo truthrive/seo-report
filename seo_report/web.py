@@ -33,14 +33,15 @@ NAV = [
     ("SEO", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
              ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
              ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
-             ("Local SEO", "/local", "storefront")]),
+             ("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
     ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách & chi phí", "/budget", "account_balance_wallet"),
                   ("Phân quyền", "/access", "admin_panel_settings"),
                   ("Cài đặt tích hợp", "/cai-dat", "settings")]),  # chỉ Chủ tool
 ]
 # Mục "URL & Index" (dữ liệu GSC theo URL): một mục trên menu, ba tab = ba màn (link cũ vẫn mở đúng tab)
-URL_TABS = (("Hiệu suất URL", "/url"), ("Index", "/index"), ("Quản lý URL", "/urls"))
+URL_TABS = (("Hiệu suất URL", "/url"), ("Nguồn tìm kiếm", "/nguon"), ("Index", "/index"),
+            ("Quản lý URL", "/urls"))
 NAV_PARENT = {title: "URL & Index" for title, _ in URL_TABS}  # màn → mục menu được tô sáng
 EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")
 
@@ -244,15 +245,23 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     with ui.column().classes("gap-0 q-px-md q-pt-md q-pb-xs"):
                         ui.label(f"Người có quyền ở {P.project['name']}").classes("text-sm font-semibold")
                         ui.label(f"{len(rows)} người · {online} đang online").classes("text-xs muted")
-                    with ui.column().classes("gap-0 w-full").style("max-height: 340px; overflow-y: auto"):
+                    # chỉ cuộn dọc; mỗi người: tên · vai trò (một dòng, cắt "…") · trạng thái (chấm màu + chữ)
+                    with ui.column().classes("gap-0 w-full").style("max-height: 340px; overflow-y: auto; "
+                                                                   "overflow-x: hidden"):
                         for r in rows:
-                            with ui.row().classes("items-center gap-3 no-wrap q-px-md").style("padding-top:6px;"
-                                                                                               "padding-bottom:6px"):
+                            with ui.row().classes("w-full items-center gap-3 no-wrap q-px-md").style(
+                                    "padding-top:7px; padding-bottom:7px; min-width:0"):
                                 T.presence_avatar(ui, r["name"], r["status"], r["status_text"], size=30,
                                                   colors=T.avatar_color(r["email"]), photo=r["photo"])
-                                with ui.column().classes("gap-0 col").style("min-width:0"):
-                                    ui.label(r["name"]).classes("text-sm ellipsis").props["title"] = r["email"]
-                                    ui.label(f"{r['who']} · {r['status_text']}").classes("text-xs muted ellipsis")
+                                with ui.column().classes("gap-0 col").style("min-width:0; overflow:hidden"):
+                                    ui.label(r["name"]).classes("text-sm font-semibold ellipsis w-full").props[
+                                        "title"] = r["email"]
+                                    ui.label(r["who"]).classes("text-xs muted ellipsis w-full").props["title"] = r["who"]
+                                    on = r["status"] == PR.AVAILABLE
+                                    with ui.row().classes("items-center no-wrap sr-acct-status w-full" + (
+                                            " on" if on else "")).style("min-width:0"):
+                                        ui.element("span").classes("sr-acct-dot").style("flex:none")
+                                        ui.label(r["status_text"]).classes("ellipsis").props["title"] = r["status_text"]
                     if A.is_admin(user):
                         ui.separator()
                         with ui.menu_item(on_click=lambda: ui.navigate.to(f"/access?project={P.project['slug']}")
@@ -299,18 +308,23 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             ui.icon("unfold_more", size="18px").classes("muted sr-mini-hide")
             with ui.menu().props('anchor="top left" self="bottom left" :offset="[0, 8]"').classes(
                     "sr-account-menu").style("width: 300px") as acc_menu:
-                with ui.row().classes("items-center gap-3 no-wrap sr-acct-head"):
-                    T.presence_avatar(ui, name, st, st_text, size=40, colors=T.avatar_color(str(user)), photo=photo)
-                    with ui.column().classes("gap-0 col").style("min-width:0"):
-                        ui.label(name).classes("text-sm font-semibold ellipsis")
-                        if name != str(user):
-                            ui.label(str(user)).classes("text-xs muted ellipsis")
-                        with ui.row().classes("items-center gap-1").style("row-gap:0"):  # dài thì xuống dòng
-                            ui.label(role_text).classes("text-xs muted")
-                            ui.label("·").classes("text-xs muted")
-                            ui.label(st_text).classes("text-xs").style(
-                                f"color:{T.GREEN if st == PR.AVAILABLE else T.MUTED}; white-space:nowrap")
-                ui.separator()
+                with ui.element("div").classes("sr-acct-head"):
+                    with ui.row().classes("items-center gap-3 no-wrap"):
+                        T.presence_avatar(ui, name, st, st_text, size=40, colors=T.avatar_color(str(user)),
+                                          photo=photo)
+                        with ui.column().classes("gap-0 col").style("min-width:0"):
+                            ui.label(name).classes("sr-acct-name ellipsis")
+                            if name != str(user):
+                                ui.label(str(user)).classes("text-xs muted ellipsis").props["title"] = str(user)
+                    with ui.row().classes("items-center gap-2 no-wrap sr-acct-chips"):
+                        role_short, _, role_more = role_text.partition(" · ")
+                        chip = ui.label(role_short).classes("sr-acct-chip")
+                        if role_more:
+                            chip.tooltip(role_text)
+                        on = st == PR.AVAILABLE
+                        with ui.row().classes("items-center no-wrap sr-acct-status" + (" on" if on else "")):
+                            ui.element("span").classes("sr-acct-dot")
+                            ui.label(st_text)
                 ui.label(f"Website của tôi · {len(P.projects)}").classes("sr-nav-group sr-acct-group")
                 with ui.column().classes("gap-0 w-full").style("max-height: 260px; overflow-y: auto"):
                     for p in P.projects:
@@ -327,6 +341,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                                 ui.icon("check", size="16px").style(f"color:{T.GREEN}")
                 if A.is_admin(user):
                     ui.separator()
+                    ui.label("Quản trị").classes("sr-nav-group sr-acct-group")
                     for label, to, icon in (("Phân quyền", "/access", "admin_panel_settings"),
                                             ("Dự án", "/projects", "domain"),
                                             ("Ngân sách & chi phí", "/budget", "account_balance_wallet"),
@@ -355,8 +370,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         drawer = ui.left_drawer(value=None, fixed=True, top_corner=True, bottom_corner=True).props(
             "width=232 mini-width=64" + (" mini" if mini else "")).style(
             f"background:{T.CREAM}; border-right:1px solid #E7E5DC; padding:0")
-        with drawer, ui.column().classes("w-full no-wrap gap-0").style(
-                "height:100%; padding:12px 8px; overflow-y:auto; overflow-x:hidden"):
+        with drawer, ui.column().classes("w-full no-wrap gap-0 sr-nav-scroll").style(
+                "height:100%; box-sizing:border-box; padding:12px 8px; overflow-y:auto; overflow-x:hidden"):
             # Logo + tên website của dự án đang mở (menu thu gọn: chỉ logo)
             with ui.row().classes("items-center gap-2 no-wrap q-px-sm sr-mini-hide").style("min-width:0"):
                 T.project_icon(ui, P.project, 36)
@@ -739,6 +754,17 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         from .web_cwv import build_cwv_page
         build_cwv_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
+    @ui.page("/nguon")
+    def sources_page(request: Request):
+        """Nguồn tìm kiếm: web, hình ảnh, video, tab Tin tức, Discover, Google News (tab của URL & Index)."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Nguồn tìm kiếm", user, P, page_ctx(P), period=False, group=False)
+        url_tabs(user, "/nguon")
+        from .web_sources import build_sources_page
+        build_sources_page(ui, P.cfg, P.connect, user)
+
     @ui.page("/index")
     def index_page(request: Request):
         if not (opened := open_page(request)):
@@ -757,6 +783,16 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("Local SEO", user, P, page_ctx(P), period=False, group=False)
         from .web_local import build_local_page
         build_local_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+
+    @ui.page("/merchant")
+    def merchant_page(request: Request):
+        """Merchant Center: sản phẩm trên Google Shopping / hiển thị miễn phí và kiểm tra. Khách hàng xem được."""
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        shell("Merchant Center", user, P, page_ctx(P), period=False, group=False)
+        from .web_merchant import build_merchant_page
+        build_merchant_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
     @ui.page("/doi-thu")
     def rivals_page(request: Request):

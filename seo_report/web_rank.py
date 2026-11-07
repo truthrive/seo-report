@@ -950,53 +950,7 @@ def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: b
         with ui.element("div").classes("sr-comp-grid w-full" + (" thin" if thin else "")):
             # ---- donut thị phần hiển thị ----
             with ui.element("div").classes("sr-comp-donut"):
-                slices, logos, other = [], [], 0.0
-                for r in rows_c:
-                    b = r["brand"]
-                    if not r["vis"]:
-                        continue
-                    if b["own"] or b["charted"]:
-                        pct = round(r["vis"] / vis_sum * 100, 1)
-                        slices.append({"name": b["name"], "value": pct, "itemStyle": {"color": b["color"]}})
-                        logos.append(b.get("logo") or "")
-                    else:
-                        other += r["vis"]
-                if other:
-                    slices.append({"name": "Đối thủ khác", "value": round(other / vis_sum * 100, 1),
-                                   "itemStyle": {"color": "#A9A79B"}})
-                    logos.append("")
-                own = next((r for r in rows_c if r["brand"]["own"]), None)
-                share = (own["vis"] / vis_sum * 100) if own and vis_sum else 0
-                with ui.element("div").classes("sr-comp-chartbox"):
-                    ui.echart({
-                        "tooltip": {"trigger": "item", "formatter": "{b}: {c}%"},
-                        "series": [{"type": "pie", "radius": ["50%", "74%"], "center": ["50%", "50%"],
-                                    "label": {"show": False}, "labelLine": {"show": False},
-                                    "itemStyle": {"borderColor": "#fff", "borderWidth": 2},
-                                    "emphasis": {"scale": True, "scaleSize": 5}, "data": slices}],
-                        "graphic": [{"type": "text", "left": "center", "top": "41%",
-                                     "style": {"text": f"{share:.0f}%", "fontSize": 28, "fontWeight": 700,
-                                               "fill": "#1F221E", "textAlign": "center"}},
-                                    {"type": "text", "left": "center", "top": "54%",
-                                     "style": {"text": f"thị phần {own_name}", "fontSize": 12, "fill": "#6B6A5E",
-                                               "textAlign": "center", "width": 130, "overflow": "truncate"}}]}
-                    ).classes("sr-comp-chart")
-                    # Logo đặt bằng HTML ở giữa cung của từng phần (ECharts không chắc vẽ được ảnh trong nhãn):
-                    # vòng ngoài 74% của bán kính 155px, chip logo cách mép vòng 20px. Phần quá nhỏ (< 12°) bỏ logo
-                    # để các chip không đè nhau; bảng bên cạnh vẫn có logo.
-                    tot = sum(x["value"] for x in slices) or 1
-                    cum = 0.0
-                    for x, logo in zip(slices, logos):
-                        deg = x["value"] / tot * 360
-                        mid = math.radians(90 - (cum + deg / 2))
-                        cum += deg
-                        if not logo or deg < 12:
-                            continue
-                        cx, cy = 155 + 135 * math.cos(mid), 155 - 135 * math.sin(mid)
-                        with ui.element("span").classes("sr-donut-logo").style(
-                                f"left:{cx - 14:.0f}px;top:{cy - 14:.0f}px"):
-                            ui.html(f'<img src="{logo}" alt="">')
-                        ui.tooltip(f"{x['name']}: {x['value']:g}%")
+                share_donut(ui, rows_c, vis_sum, own_name)
             # ---- bảng số ----
             with ui.element("div").classes("sr-comp-table"):
                 with ui.element("div").classes("sr-comp-row head"):
@@ -3029,3 +2983,57 @@ async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: 
                     fn()
             except Exception:  # noqa: BLE001  (trang vừa đóng)
                 pass
+
+
+def share_donut(ui, rows_c: list[dict], vis_sum: float, own_name: str, size: int = 310) -> None:
+    """Donut thị phần hiển thị (màn Đối thủ, Tổng quan): mỗi thương hiệu một lát cùng màu, logo ở giữa cung, thị phần
+    của dự án ở giữa vòng. size: cạnh khung (px); logo và chữ co theo."""
+    slices, logos, other = [], [], 0.0
+    for r in rows_c:
+        b = r["brand"]
+        if not r["vis"]:
+            continue
+        if b["own"] or b["charted"]:
+            slices.append({"name": b["name"], "value": round(r["vis"] / vis_sum * 100, 1),
+                           "itemStyle": {"color": b["color"]}})
+            logos.append(b.get("logo") or "")
+        else:
+            other += r["vis"]
+    if other:
+        slices.append({"name": "Đối thủ khác", "value": round(other / vis_sum * 100, 1),
+                       "itemStyle": {"color": "#A9A79B"}})
+        logos.append("")
+    own = next((r for r in rows_c if r["brand"]["own"]), None)
+    share = (own["vis"] / vis_sum * 100) if own and vis_sum else 0
+    half = size / 2
+    with ui.element("div").classes("sr-comp-chartbox").style(f"width:{size}px; height:{size}px"):
+        ui.echart({
+            "tooltip": {"trigger": "item", "formatter": "{b}: {c}%"},
+            "series": [{"type": "pie", "radius": ["50%", "74%"], "center": ["50%", "50%"],
+                        "label": {"show": False}, "labelLine": {"show": False},
+                        "itemStyle": {"borderColor": "#fff", "borderWidth": 2},
+                        "emphasis": {"scale": True, "scaleSize": 5}, "data": slices}],
+            "graphic": [{"type": "text", "left": "center", "top": "41%",
+                         "style": {"text": f"{share:.0f}%", "fontSize": round(size * 0.09), "fontWeight": 700,
+                                   "fill": "#1F221E", "textAlign": "center"}},
+                        {"type": "text", "left": "center", "top": "54%",
+                         "style": {"text": f"thị phần {own_name}", "fontSize": 12 if size >= 260 else 11,
+                                   "fill": "#6B6A5E", "textAlign": "center", "width": round(size * 0.42),
+                                   "overflow": "truncate"}}]}
+        ).classes("sr-comp-chart").style(f"width:{size}px; height:{size}px").props["aria-label"] = (
+            "Thị phần hiển thị: " + "; ".join(f"{x['name']} {x['value']:g}%" for x in slices))
+        # Logo đặt bằng HTML ở giữa cung của từng phần (ECharts không chắc vẽ được ảnh trong nhãn): vòng ngoài 74%
+        # của bán kính, chip logo cách mép vòng một khoảng. Phần quá nhỏ (< 12°) bỏ logo để các chip không đè nhau.
+        ring = half * 135 / 155
+        tot = sum(x["value"] for x in slices) or 1
+        cum = 0.0
+        for x, logo in zip(slices, logos):
+            deg = x["value"] / tot * 360
+            mid = math.radians(90 - (cum + deg / 2))
+            cum += deg
+            if not logo or deg < 12:
+                continue
+            cx, cy = half + ring * math.cos(mid), half - ring * math.sin(mid)
+            with ui.element("span").classes("sr-donut-logo").style(f"left:{cx - 14:.0f}px;top:{cy - 14:.0f}px"):
+                ui.html(f'<img src="{logo}" alt="">')
+            ui.tooltip(f"{x['name']}: {x['value']:g}%")

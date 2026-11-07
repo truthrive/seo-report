@@ -42,11 +42,12 @@ def query_day(service, site: str, day: str, dimensions: list[str], sleep=time.sl
 
 
 def query_site_totals(service, site: str, start: str, end: str, sleep=time.sleep,
-                      meta: dict | None = None) -> list[dict]:
+                      meta: dict | None = None, search_type: str = "web") -> list[dict]:
     """Tổng theo property từng ngày (chỉ chiều date). Khác tổng cộng từ các dòng page: impression theo page đếm
     mỗi URL hiển thị một lần nên lớn hơn; số của GSC UI là số này. meta: nhận metadata của Google, trong đó
-    firstIncompleteDate là ngày đầu tiên còn sơ bộ (chưa chốt)."""
-    body = {"startDate": start, "endDate": end, "dimensions": ["date"], "type": "web", "dataState": "all",
+    firstIncompleteDate là ngày đầu tiên còn sơ bộ (chưa chốt). search_type: web | image | video | news | discover
+    | googleNews."""
+    body = {"startDate": start, "endDate": end, "dimensions": ["date"], "type": search_type, "dataState": "all",
             "rowLimit": ROW_LIMIT, "startRow": 0}  # tối đa ~480 dòng (16 tháng), không cần lật trang
     resp = _execute(service.searchanalytics().query(siteUrl=site, body=body), sleep=sleep)
     if meta is not None:

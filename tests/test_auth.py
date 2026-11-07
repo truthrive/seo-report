@@ -44,4 +44,4 @@ class WebLoginTest(unittest.TestCase):
                                             "scopes": [auth.GSC_SCOPE, auth.GA4_SCOPE, auth.DRIVE_FULL_SCOPE,
                                                        auth.SHEETS_WRITE_SCOPE]}), encoding="utf-8")
         st = auth.granted_status(c)
-        self.assertEqual((st["connected"], st["missing"]), (True, ["Google Ads", "Google Business Profile"]))
+        self.assertEqual((st["connected"], st["missing"]), (True, ["Google Ads", "Google Business Profile", "Google Merchant Center"]))

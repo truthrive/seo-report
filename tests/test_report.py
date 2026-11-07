@@ -216,7 +216,8 @@ class DashboardWindowTest(unittest.TestCase):
         self.assertEqual(len(buckets(cur, 28)), 28)  # 28 ngày: từng ngày
         cur90, _ = windows(date(2026, 10, 31), 90)
         b = buckets(cur90, 90)
-        self.assertEqual((len(b), b[0][0], b[-1][1]), (13, cur90[0], cur90[1]))  # 90 ngày: theo tuần, phủ đủ
+        # 90 ngày: biểu đồ phủ đủ 90 ngày như số tổng của ô (mỗi ngày một điểm, không bỏ ngày nào)
+        self.assertEqual((len(b), b[0][0], b[-1][1]), (90, cur90[0], cur90[1]))
 
 
 class FinalDateTest(unittest.TestCase):

@@ -20,8 +20,9 @@ SHEETS_WRITE_SCOPE = "https://www.googleapis.com/auth/spreadsheets"  # ghi tab K
 ADS_SCOPE = "https://www.googleapis.com/auth/adwords"  # Google Ads API: chỉ đọc Keyword Planner (volume từ khóa)
 # Google Business Profile (hồ sơ GMB): Google chỉ có một quyền chung (đọc + sửa); tool chỉ đọc
 BUSINESS_SCOPE = "https://www.googleapis.com/auth/business.manage"
+CONTENT_SCOPE = "https://www.googleapis.com/auth/content"  # Merchant API (sản phẩm Merchant Center)
 ALL_SCOPES = [GSC_SCOPE, GA4_SCOPE]  # quyền cho các chức năng đọc số liệu
-SCOPES = ALL_SCOPES + [DRIVE_FULL_SCOPE, SHEETS_WRITE_SCOPE, ADS_SCOPE, BUSINESS_SCOPE]  # quyền xin khi đăng nhập
+SCOPES = ALL_SCOPES + [DRIVE_FULL_SCOPE, SHEETS_WRITE_SCOPE, ADS_SCOPE, BUSINESS_SCOPE, CONTENT_SCOPE]  # quyền xin khi đăng nhập
 # Quyền rộng hơn bao luôn quyền hẹp: token đã cấp drive (đầy đủ) thì không cần drive.file, spreadsheets thì đọc được.
 COVERS = {DRIVE_SCOPE: {DRIVE_FULL_SCOPE}, SHEETS_SCOPE: {SHEETS_WRITE_SCOPE, DRIVE_FULL_SCOPE},
           SHEETS_WRITE_SCOPE: {DRIVE_FULL_SCOPE}}
@@ -63,6 +64,7 @@ def get_credentials(cfg: Config, interactive: bool = False, need=(GSC_SCOPE,)) -
         if not interactive:
             miss = _missing(creds, need)
             what = ("Google Business Profile (trang Local SEO)" if BUSINESS_SCOPE in miss
+                    else "Google Merchant Center (trang Merchant Center)" if CONTENT_SCOPE in miss
                     else "Google Ads (lấy volume từ khóa)" if ADS_SCOPE in miss
                     else "Google Drive đầy đủ (copy sheet mẫu gốc)" if DRIVE_FULL_SCOPE in miss
                     else "ghi Google Sheets" if SHEETS_WRITE_SCOPE in miss
@@ -167,7 +169,7 @@ def web_login_finish(cfg: Config, state: str, callback_url: str) -> Credentials:
 
 SCOPE_NAMES = {GSC_SCOPE: "Search Console", GA4_SCOPE: "Google Analytics", DRIVE_FULL_SCOPE: "Google Drive",
                SHEETS_WRITE_SCOPE: "Google Sheets", ADS_SCOPE: "Google Ads",
-               BUSINESS_SCOPE: "Google Business Profile"}
+               BUSINESS_SCOPE: "Google Business Profile", CONTENT_SCOPE: "Google Merchant Center"}
 
 
 def granted_status(cfg: Config) -> dict:

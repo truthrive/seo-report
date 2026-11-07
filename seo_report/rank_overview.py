@@ -328,12 +328,17 @@ def visibility_trend(con, cfg, end: date, set_id: int | None = None, limit: int 
     return out
 
 
+# Nền tảng (mạng xã hội, sàn TMĐT, bách khoa, video…) hay có mặt trong top 10 nhưng không phải đối thủ cạnh tranh
+PLATFORMS = ("facebook.com", "youtube.com", "tiktok.com", "shopee.vn", "lazada.vn", "tiki.vn", "wikipedia.org",
+             "instagram.com", "google.com", "reddit.com", "pinterest.com", "sendo.vn", "zalo.me", "twitter.com",
+             "x.com", "linkedin.com", "threads.net", "quora.com", "amazon.com")
+
+
 def rank_suggestions(con, cfg, end: date, limit: int = 8) -> list[tuple[str, int]]:
     """Website hay có mặt trong top 10 của bộ từ khóa mà chưa có trong danh sách: (tên miền, số từ khóa)."""
     kws = active_keywords(con, cfg.site_url, end)
     have = {d for b in AO.brands(con, cfg) for d in b["domains"]}
-    skip = ("facebook.com", "youtube.com", "tiktok.com", "shopee.vn", "lazada.vn", "tiki.vn", "wikipedia.org",
-            "instagram.com", "google.com", "reddit.com", "pinterest.com")
+    skip = PLATFORMS
     count: dict[str, int] = {}
     for organic, _, _ in _latest_serps(con, kws).values():
         for d in {x["domain"] for x in organic if x["rank"] <= 10}:

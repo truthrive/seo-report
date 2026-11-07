@@ -214,3 +214,51 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
         refresh()
 
     refresh()
+    sitemap_section(ui, connect, site)
+
+
+def sitemap_section(ui, connect, site: str) -> None:
+    """Sitemap đã gửi cho Search Console (lấy cùng lượt Nguồn tìm kiếm): lần gửi / Google đọc, số URL, lỗi."""
+    from datetime import date
+
+    from . import gsc_types as GT
+    from . import ui_theme as T
+    with connect() as c:
+        maps = GT.sitemaps(c, site)
+        fetched = GT.last_date(c, site)
+    if not maps and not fetched:
+        return  # chưa lấy lần nào (lượt chạy sáng mai sẽ lấy)
+    checks = GT.sitemap_checks(maps)
+    levels = {"high": ("Cần sửa", "red", "error"), "medium": ("Nên xem", "amber", "warning"),
+              "info": ("Tham khảo", "blue", "info")}
+    with T.section(ui, f"Sitemap · {len(maps)}", "account_tree",
+                   "Sitemap đã gửi cho Search Console: Google đọc lần cuối khi nào, có lỗi không"):
+        for ch in checks:
+            label, tone, icon = levels[ch["level"]]
+            with ui.row().classes("items-center gap-2 no-wrap w-full q-mb-xs"):
+                T.status_chip(ui, label, tone, icon)
+                ui.label((ch["path"].replace(site.rstrip("/"), "") + ": " if ch["path"] else "") + ch["text"])                     .classes("text-sm")
+        if not maps:
+            return
+
+        def d(v):
+            return f"{date.fromisoformat(v[:10]):%d/%m/%Y}" if v else "–"
+        rows = []
+        for i, m in enumerate(maps):
+            sub = sum(int(x.get("submitted") or 0) for x in m.get("contents") or [])
+            rows.append({"id": i, "path": m.get("path", "").replace(site.rstrip("/"), "") or m.get("path", ""),
+                         "url": m.get("path", ""), "kind": "Sitemap index" if m.get("isSitemapsIndex") else "Sitemap",
+                         "submitted": d(m.get("lastSubmitted")), "read": d(m.get("lastDownloaded")),
+                         "urls": sub or "–", "errors": int(m.get("errors") or 0),
+                         "warnings": int(m.get("warnings") or 0)})
+        cols = [{"name": "path", "label": "Sitemap", "field": "path", "align": "left"},
+                {"name": "kind", "label": "Loại", "field": "kind", "align": "left"},
+                {"name": "submitted", "label": "Gửi lúc", "field": "submitted", "align": "left"},
+                {"name": "read", "label": "Google đọc lúc", "field": "read", "align": "left"},
+                {"name": "urls", "label": "URL đã gửi", "field": "urls", "align": "right"},
+                {"name": "errors", "label": "Lỗi", "field": "errors", "align": "right"},
+                {"name": "warnings", "label": "Cảnh báo", "field": "warnings", "align": "right"}]
+        tb = ui.table(columns=cols, rows=rows, row_key="id").props("flat dense").classes("w-full")
+        tb.add_slot("body-cell-path", """
+            <q-td :props="props"><a :href="props.row.url" target="_blank" rel="noopener" class="sr-bl-link">
+              {{ props.value }}</a></q-td>""")

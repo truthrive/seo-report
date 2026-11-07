@@ -139,7 +139,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                     aio_block(c, site, (ps, pe), (ps, pe), [(d, d) for d in days_prev]))
     gsc_clicks = {d: v[0] for d, v in g.items()}
     gsc_impr = {d: v[1] for d, v in g.items()}
-    cmp_label = (f"Tháng {ps:%m/%Y}" if month else f"Tuần {ps:%d/%m}" + (f"/{ps:%Y}" if ps.year != ws.year else ""))
+    cmp_label = (f"T{ps.month}/{ps:%y}" if month else f"Tuần {ps:%d/%m}" + (f"/{ps:%Y}" if ps.year != ws.year else ""))
     # ↑ dòng so sánh trong ô (gọn cho vừa ô): "Tuần 14/09: 73 · +15"; đủ ngày ở tiêu đề "So với tuần 14/09 – 20/09"
     trend_note = (f"Biểu đồ: từng ngày {ws:%d/%m} – {we:%d/%m} (nét liền) so với {ps:%d/%m} – {pe:%d/%m} (nét đứt). ")
     prev_label = period_text(kind, (ps, pe), ws.year)
@@ -195,12 +195,12 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 o_metric = {"value": "…", "data": None, "hint": "Đang tải…"}
             elif not o or o.get("error"):
                 o_metric = {"value": "chưa có", "data": None,
-                            "hint": "Chưa kết nối GA4" if not o else "Không lấy được số GA4"}
+                            "hint": "Chưa kết nối GA4" if not o else "Lỗi lấy số GA4"}
             else:
                 o_metric = {"value": F.n(o["sessions"]), "delta": F.delta_pct(o["change"], o["prev"]),
                             "prev": F.vs_parts(o["sessions"], o["prev"], label=cmp_label),
                             "good": T.good_of(o["change"]), "data": o.get("cur_days"),
-                            "compare": o.get("prev_days"), "hint": "Kênh Organic Search"}
+                            "compare": o.get("prev_days"), "hint": "Kênh Organic"}
             dc, di = change(sk.clicks, sp.clicks), change(sk.impressions, sp.impressions)
             T.trend_chart(ui, [
                 {"key": "sessions", "label": "Lượt truy cập", "color": T.GREEN, "icon": "groups", "on": True,
@@ -209,13 +209,13 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                  "prev": F.vs_parts(sk.clicks, sp.clicks, label=cmp_label),
                  "good": T.good_of(dc), "data": [gsc_clicks.get(d) for d in days_cur],
                  "compare": [gsc_clicks.get(d) for d in days_prev], "on": True,
-                 "axis": "traffic", "zero": True, "hint": "Lượt bấm vào site trên Google",
+                 "axis": "traffic", "zero": True, "hint": "Click từ Google",
                  "source": "Nguồn: Google Search Console"},
                 {"key": "impr", "label": "Lượt hiển thị", "color": "#0E7C86", "value": F.n(sk.impressions),
                  "delta": F.delta_pct(di), "good": T.good_of(di), "data": [gsc_impr.get(d) for d in days_cur],
                  "compare": [gsc_impr.get(d) for d in days_prev],
                  "prev": F.vs_parts(sk.impressions, sp.impressions, label=cmp_label),
-                 "zero": True, "hint": "Số lần site hiện trên Google", "source": "Nguồn: Google Search Console"},
+                 "zero": True, "hint": "Lần hiện trên Google", "source": "Nguồn: Google Search Console"},
             ], wl, compare_labels=cl)
             ui.label(trend_note + "Bấm ô để bật / tắt đường. Lượt truy cập và click đo bằng hai công cụ khác nhau nên "
                      "số không bằng nhau.").classes("text-xs muted")
@@ -231,7 +231,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 ai_metric = {"value": "…", "data": None, "hint": "Đang tải…"}
             elif not a or a.get("error"):
                 ai_metric = {"value": "chưa có", "data": None,
-                             "hint": "Chưa kết nối GA4" if not a else "Không lấy được số GA4"}
+                             "hint": "Chưa kết nối GA4" if not a else "Lỗi lấy số GA4"}
             else:
                 k, dl, pv = a["kpi"], a["deltas"], a["prev"]
                 top = a["sources"][0] if a["sources"] else None
@@ -240,27 +240,27 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                              "prev": F.vs_parts(k["sessions"], pv.get("sessions"), label=cmp_label),
                              "good": T.good_of(dl.get("sessions")), "data": (state["ai_trend"] or (None, None))[0],
                              "compare": (state["ai_trend"] or (None, None))[1],
-                             "hint": (f"Nhiều nhất: {F.SOURCE_NAMES.get(top['source'], top['source'])} "
-                                      f"{top['sessions'] / total * 100:.0f}%" if top else "ChatGPT, Gemini, Perplexity…")}
+                             "hint": (f"Chủ yếu {F.SOURCE_NAMES.get(top['source'], top['source'])} "
+                                      f"{top['sessions'] / total * 100:.0f}%" if top else "ChatGPT, Gemini…")}
             if aio is None:
                 aio_metric = {"value": "chưa có", "data": None, "hint": "Chưa có số"}
                 share_metric = {"value": "chưa có", "data": None, "hint": "Chưa có số"}
             elif aio["impressions"] is None:
                 aio_metric = {"value": "chưa có", "data": ad.get("spark"), "compare": ap.get("spark"),
-                              "hint": f"Google mới có số tới {_vn_iso(aio['data_until'])}"}
+                              "hint": f"Số tới {_vn_iso(aio['data_until'])}"}
                 share_metric = {"value": "chưa có", "data": ad.get("share_spark"), "compare": ap.get("share_spark"),
-                                "hint": "Phần lượt hiển thị Google nằm trong câu trả lời AI"}
+                                "hint": "Hiển thị trong trả lời AI"}
             else:
                 dp = (aio["share"] - aio["prev_share"]) if aio["share"] is not None and \
                     aio.get("prev_share") is not None else None
                 aio_metric = {"value": F.n(aio["impressions"]), "delta": F.delta_pct(aio["change"], aio["prev"]),
                               "prev": F.vs_parts(aio["impressions"], aio["prev"], label=cmp_label),
                               "good": T.good_of(aio["change"]), "data": ad.get("spark"), "compare": ap.get("spark"),
-                              "hint": "AI Overviews và AI Mode"}
+                              "hint": "AI Overviews + AI Mode"}
                 share_metric = {"value": F.pct(aio["share"], 1), "delta": F.delta_points(dp), "good": T.good_of(dp),
                                 "prev": F.vs_parts(aio["share"], aio.get("prev_share"), "pct", label=cmp_label),
                                 "data": ad.get("share_spark"), "compare": ap.get("share_spark"),
-                                "hint": "Phần lượt hiển thị Google nằm trong câu trả lời AI"}
+                                "hint": "Hiển thị trong trả lời AI"}
             T.trend_chart(ui, [
                 {"key": "ai", "label": "Truy cập từ AI", "color": "#7C3AED", "icon": "smart_toy", "on": True,
                  "kind": "bar", "source": "ChatGPT, Gemini, Perplexity… · Nguồn: Google Analytics (GA4)", **ai_metric},
@@ -376,6 +376,9 @@ def _rank_goal(p: dict | None) -> dict | None:
     return {"m": m, "months": later, "running": m["status"] != "closed", "label": label}
 
 
+RANK_ICONS = {3: "emoji_events", 5: "workspace_premium", 10: "military_tech"}
+
+
 def rank_overview(ui, rs: dict, unit: str, kpi: dict | None = None) -> None:
     """Thứ hạng cho người đọc: số từ khóa trong top 3/5/10 (so với lần đo trước, so với cam kết KPI) và 3 từ tăng /
     giảm mạnh nhất."""
@@ -403,12 +406,33 @@ def rank_overview(ui, rs: dict, unit: str, kpi: dict | None = None) -> None:
                 ratio = now / need if need else None
                 tone = "" if ratio is None else ("good" if ratio >= 1 else
                                                  ("warn" if goal["running"] or gm is not goal["m"] else "bad"))
+                # Ô kiểu thẻ xếp hạng: tên + % bộ từ khóa (trên) · số từ khóa / tổng + mức tăng giảm (giữa) ·
+                # vạch kẻ · ngày lần check đem so và số lần đó (dưới) · mức cam kết (nếu có)
                 with ui.element("div").classes(f"sr-rank-tile {tone}"):
-                    ui.label(f"Top {n}").classes("sr-rank-name")
-                    ui.html(f'<div class="sr-rank-num num">{now}<span>/{rs["total"]}</span></div>')
-                    ui.label(f"{now / rs['total'] * 100:.0f}% bộ từ khóa · " + (
-                        "lần đo đầu tiên" if diff is None else f"lần trước {prev} ({diff:+d})" if diff
-                        else f"lần trước {prev} (không đổi)")).classes("sr-rank-sub")
+                    with ui.element("div").classes("sr-rank-head"):
+                        with ui.row().classes("items-center gap-2 no-wrap"):
+                            ui.icon(RANK_ICONS[n], size="18px").classes(f"sr-rank-ico t{n}").props(
+                                'aria-hidden="true"')
+                            ui.label(f"Top {n}").classes("sr-rank-name")
+                            T.info_icon(ui, f"Top {n}", (
+                                f"Số từ khóa trong bộ đang ở vị trí 1–{n} trên Google.",
+                                "Từ khóa càng lên cao càng nhiều click; vào top 3 thường lấy phần lớn click.",
+                                "Lần check thứ hạng mới nhất trong kỳ, Google điện thoại tại Việt Nam. % là phần của "
+                                "cả bộ từ khóa."))
+                        ui.label(f"{now / rs['total'] * 100:.0f}%").classes("sr-rank-share num").props[
+                            "title"] = "Phần của cả bộ từ khóa"
+                    with ui.element("div").classes("sr-rank-main"):
+                        ui.html(f'<div class="sr-rank-num num">{now}<span>/ {rs["total"]} từ khóa</span></div>')
+                        if diff is not None:  # lần đo đầu tiên: dòng dưới đã ghi, không thêm nhãn "mới" trùng ý
+                            ui.label(f"▲ {diff}" if diff > 0 else f"▼ {-diff}" if diff < 0 else "= 0").classes(
+                                "sr-rank-move num " + ("up" if diff > 0 else "down" if diff < 0 else "flat")
+                            ).props["title"] = f"So với lần trước: {diff:+d} từ khóa"
+                    with ui.element("div").classes("sr-rank-foot"):
+                        pd = rs.get("prev_date")
+                        ui.label(f"So với {date.fromisoformat(pd):%d/%m}" if pd and diff is not None
+                                 else "Lần đo đầu tiên")
+                        if diff is not None:
+                            ui.html(f'Trước đó <b class="num">{prev}</b>')
                     if need:
                         when = "" if gm is goal["m"] else f" tháng {gm['n']}"
                         pct = f"{target * 100:.0f}% " if target is not None else ""
@@ -487,8 +511,8 @@ def notes_section(ui, rep) -> None:
                 ui.label(n["long"]).classes("text-sm")
 
 
-def todo_section(ui, cfg, connect, rep, ctx, site) -> None:
-    """Tổng quan (nội bộ): việc cần xử lý. Không đưa vào báo cáo gửi đi."""
+def todo_rows(cfg, connect, rep, ctx) -> list[tuple]:
+    """Việc cần xử lý của team: [(icon, màu, chữ, link)]."""
     from . import indexing as IX
     from . import okr as O
     from . import urls as U
@@ -528,7 +552,14 @@ def todo_section(ui, cfg, connect, rep, ctx, site) -> None:
     if rep.incomplete_days:
         rows.append(("hourglass_top", T.MUTED, f"{rep.incomplete_days} ngày trong tuần chưa có dữ liệu GSC",
                      "/ai?tab=chat-luong"))
-    with T.section(ui, "Cần xử lý", "checklist", "Việc của team · không có trong báo cáo gửi đi"):
+    return rows
+
+
+def todo_section(ui, cfg, connect, rep, ctx, site, rows: list | None = None) -> None:
+    """Tổng quan (nội bộ): việc cần xử lý. Không đưa vào báo cáo gửi đi. rows: kết quả todo_rows nếu đã tính."""
+    if rows is None:
+        rows = todo_rows(cfg, connect, rep, ctx)
+    with ui.element("div").classes("w-full").props('id="can-xu-ly"'),             T.section(ui, "Cần xử lý", "checklist", "Việc của team · không có trong báo cáo gửi đi"):
         if not rows:
             with ui.row().classes("items-center gap-2"):
                 ui.icon("check_circle", size="18px").style(f"color:{T.GREEN}")
