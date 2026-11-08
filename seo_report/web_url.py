@@ -213,6 +213,12 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.label(row["path"]).classes("text-xl font-semibold")
                     with ui.link(target=row["url"], new_tab=True).props('aria-label="Mở trang trên site"'):
                         ui.icon("open_in_new", color="grey-7")
+                    from urllib.parse import quote
+                    ui.button("Mọi từ khóa của URL", icon="manage_search",
+                              on_click=lambda u=row["url"]: ui.navigate.to(f"/research?tra={quote(u, safe='')}")
+                              ).props("flat dense no-caps size=sm color=primary").tooltip(
+                        "Mở ở trang Research: mọi từ khóa trang này đang có hạng, kèm volume, CPC, mục đích; lọc, "
+                        "sao chép, xuất file")
                 with ui.row().classes("gap-2"):
                     T.tag(ui, row["type"] or "Chưa phân loại", "grey")
                     if groups.get(state["group"]):

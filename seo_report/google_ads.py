@@ -95,6 +95,8 @@ def historical_metrics(creds, settings: dict, keywords: list[str], location: int
         headers["login-customer-id"] = settings["login_customer_id"]
     url = (f"https://googleads.googleapis.com/{settings.get('api_version') or API_VERSION}/customers/"
            f"{settings['customer_id']}:generateKeywordHistoricalMetrics")
+    if opener is urlopen:  # test truyền opener giả: không đếm vào hạn mức thật
+        _guard("volume")
     try:
         resp = json.loads(opener(Request(url, data=json.dumps(body).encode(), headers=headers, method="POST"),
                                  timeout=timeout).read() or b"{}")
@@ -132,6 +134,8 @@ def _call(creds, settings: dict, path: str, body: dict, timeout: int = 120, open
         headers["login-customer-id"] = settings["login_customer_id"]
     url = (f"https://googleads.googleapis.com/{settings.get('api_version') or API_VERSION}/customers/"
            f"{settings['customer_id']}{path}")
+    if opener is urlopen:
+        _guard({":generateKeywordIdeas": "ideas", ":generateKeywordHistoricalMetrics": "metrics"}.get(path, "search"))
     try:
         return json.loads(opener(Request(url, data=json.dumps(body).encode(), headers=headers, method="POST"),
                                  timeout=timeout).read() or b"{}")
@@ -163,8 +167,11 @@ def parse_metrics(m: dict) -> dict:
             "monthly": monthly[-12:]}
 
 
-def _geo_lang(location: int, language: str) -> dict:
-    body = {"geoTargetConstants": [f"geoTargetConstants/{int(location)}"], "keywordPlanNetwork": "GOOGLE_SEARCH"}
+def _geo_lang(location: int | None, language: str) -> dict:
+    """location None = toàn cầu (mọi quốc gia); language rỗng = mọi ngôn ngữ."""
+    body = {"keywordPlanNetwork": "GOOGLE_SEARCH"}
+    if location is not None:
+        body["geoTargetConstants"] = [f"geoTargetConstants/{int(location)}"]
     if language in LANGUAGES:
         body["language"] = f"languageConstants/{LANGUAGES[language]}"
     return body
@@ -220,3 +227,91 @@ def currency(creds, settings: dict, opener=urlopen) -> str:
                  timeout=30, opener=opener)
     rows = resp.get("results") or []
     return ((rows[0].get("customer") or {}).get("currencyCode") if rows else None) or "VND"
+
+
+# ---- Hạn mức (quota) Google Ads API ----
+# Mức Basic: 15.000 lượt (operation) mỗi ngày cho cả developer token, tức chung mọi website của tool. Mỗi lần gọi
+# Keyword Planner / tìm kiếm tính là một lượt (mỗi trang kết quả ý tưởng là một lần gọi). Google tính ngày theo giờ
+# Thái Bình Dương (Mỹ). Tool tự đếm và dừng ở mức trần đặt ở trang Ngân sách (mặc định 14.000) để còn chừa.
+
+OPS_DB = Path(__file__).resolve().parents[1] / "data" / "google_ads_ops.sqlite"
+DAILY_LIMIT = 15000
+DEFAULT_CAP = 14000
+KINDS = {"volume": "Lấy volume từ khóa", "ideas": "Research từ khóa", "metrics": "Giá thầu / số đầy đủ",
+         "search": "Thông tin tài khoản"}
+
+
+class QuotaExceeded(RuntimeError):
+    """Đã chạm mức trần lượt gọi Google Ads hôm nay: không gọi tiếp (và không chuyển sang nguồn tốn tiền)."""
+
+
+def quota_day(now=None) -> str:
+    """Ngày tính quota của Google: giờ Thái Bình Dương (UTC-8; mùa hè UTC-7, từ Chủ nhật thứ 2 tháng 3 tới Chủ nhật
+    đầu tháng 11)."""
+    from datetime import datetime, timedelta, timezone
+    now = now or datetime.now(timezone.utc)
+
+    def sunday(year, month, nth):
+        d = datetime(year, month, 1, 10, tzinfo=timezone.utc)  # 2 giờ sáng PST = 10 giờ UTC
+        d += timedelta(days=(6 - d.weekday()) % 7)
+        return d + timedelta(weeks=nth - 1)
+    dst = sunday(now.year, 3, 2) - timedelta(hours=1) <= now < sunday(now.year, 11, 1) - timedelta(hours=1)
+    return (now - timedelta(hours=7 if dst else 8)).date().isoformat()
+
+
+def _ops():
+    import sqlite3
+    OPS_DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(OPS_DB, timeout=10)
+    con.executescript("""CREATE TABLE IF NOT EXISTS ops (day TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL,
+                         PRIMARY KEY (day, kind));
+                         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);""")
+    return con
+
+
+def cap() -> int:
+    from contextlib import closing
+    with closing(_ops()) as con:
+        r = con.execute("SELECT value FROM meta WHERE key = 'daily_cap'").fetchone()
+    return int(r[0]) if r else DEFAULT_CAP
+
+
+def set_cap(n: int) -> int:
+    from contextlib import closing
+    n = max(0, min(int(n), DAILY_LIMIT))
+    with closing(_ops()) as con, con:
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('daily_cap', ?)", (str(n),))
+    return n
+
+
+def used(day: str | None = None) -> int:
+    from contextlib import closing
+    with closing(_ops()) as con:
+        return con.execute("SELECT COALESCE(SUM(n), 0) FROM ops WHERE day = ?", (day or quota_day(),)).fetchone()[0]
+
+
+def usage(days: int = 14) -> list[dict]:
+    """Lượt gọi theo ngày (cũ trước) và theo loại: [{"day", "total", "kinds": {kind: n}}]."""
+    from contextlib import closing
+    from datetime import date, timedelta
+    last = date.fromisoformat(quota_day())
+    out = {(last - timedelta(days=i)).isoformat(): {} for i in range(days - 1, -1, -1)}
+    with closing(_ops()) as con:
+        for day, kind, n in con.execute("SELECT day, kind, n FROM ops WHERE day >= ?", (min(out),)):
+            if day in out:
+                out[day][kind] = n
+    return [{"day": d, "kinds": k, "total": sum(k.values())} for d, k in out.items()]
+
+
+def _guard(kind: str, n: int = 1) -> None:
+    """Chặn trước khi gọi nếu đã chạm mức trần; không thì ghi thêm n lượt."""
+    from contextlib import closing
+    day, limit = quota_day(), cap()
+    with closing(_ops()) as con, con:
+        now = con.execute("SELECT COALESCE(SUM(n), 0) FROM ops WHERE day = ?", (day,)).fetchone()[0]
+        if now + n > limit:
+            raise QuotaExceeded(f"Google Ads: hôm nay đã dùng {now:,}/{limit:,} lượt gọi (mức trần ở trang Ngân sách); "
+                                "tự chạy lại sau khi Google sang ngày mới (khoảng 14–15 giờ chiều giờ Việt Nam)."
+                                .replace(",", "."))
+        con.execute("INSERT INTO ops VALUES (?, ?, ?) ON CONFLICT (day, kind) DO UPDATE SET n = n + excluded.n",
+                    (day, kind, n))

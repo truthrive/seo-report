@@ -6,10 +6,11 @@ from . import access as A
 from . import brand_entity as BE
 from . import keywords as K
 from . import opportunities as O
+from . import seo_value as SVL
 from . import site_audit as SA
 from . import ui_theme as T
 
-TABS = (("audit", "Audit kỹ thuật"), ("len-top", "Sắp lên top"), ("giam", "Trang tụt traffic"),
+TABS = (("audit", "Audit kỹ thuật"), ("du-bao", "Dự báo từ khóa"), ("len-top", "Sắp lên top"), ("giam", "Trang tụt traffic"),
         ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"), ("thuc-the", "Thực thể thương hiệu"))
 NUM = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
 POS = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})"
@@ -56,6 +57,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         counts = {"len-top": len(data["striking"]), "giam": len(data["decay"]),
                   "tranh": sum(1 for g in data["cannibal"] if g["serious"]),
                   "moi": sum(1 for r in data["new"] if r["impressions"] >= O.NEW_SIGNAL),
+                  "du-bao": len(data["forecast"]["rows"]),
                   "thuc-the": sum(1 for c in data["kg"]["checks"] if c["ok"] is False),
                   "audit": len({p["url_id"] for c in data["audit"]["checks"] if c["level"] != "info"
                                 for p in c["pages"]})}
@@ -74,6 +76,8 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                 new_tab(data["new"])
             with ui.tab_panel("audit").classes("q-px-none"):
                 audit_tab(data["audit"])
+            with ui.tab_panel("du-bao").classes("q-px-none"):
+                forecast_tab(data["forecast"])
             with ui.tab_panel("thuc-the").classes("q-px-none"):
                 kg_tab(data["kg"])
 
@@ -569,6 +573,55 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             ui.label("Điểm: mức Google chắc chắn thực thể khớp tên tìm (càng cao càng nổi). Thực thể “Chưa có” nghĩa "
                      "là Google chưa có thực thể khớp tên và website của thương hiệu.").classes("text-xs muted q-mt-xs")
 
+
+    # ---- Dự báo từ khóa theo dõi ----
+    def forecast_tab(fc: dict) -> None:
+        from . import keyword_research as KR
+        cur = fc["currency"]
+        explain(f"Từ khóa đang theo dõi hạng chưa vào top {fc['target']}: lên được top {fc['target']} thì có thêm bao "
+                "nhiêu click và tiền mỗi tháng (volume × tỷ lệ nhấp theo vị trí, × giá thầu Google Ads).", [
+                    "Nhiều tiền trước: nên đẩy các từ khóa đầu danh sách. “Sắp vào mùa”: 2 tháng tới người tìm "
+                    "nhiều hơn trung bình năm từ 20%, nên đẩy ngay.",
+                    f"Không tính {fc['no_volume']} từ khóa gần như không ai tìm (Google Ads không có số)."
+                    if fc["no_volume"] else "Ước tính, dùng để xếp thứ tự ưu tiên."])
+        if not fc["rows"]:
+            T.empty_state(ui, "emoji_events", "Không có từ khóa nào cần đẩy",
+                          "Mọi từ khóa có volume đã ở top 3, hoặc chưa có volume / chưa check hạng.")
+            return
+        with ui.element("div").classes("sr-op-audit-sum"):
+            for num, lab in ((f"+{fc['gain']:,}".replace(",", "."), "click / tháng nếu mọi từ khóa lên top 3"),
+                             (KR.money(fc["value"], cur), "giá trị / tháng (theo giá thầu Google Ads)"),
+                             (f"{len(fc['rows'])}", "từ khóa chưa vào top 3"),
+                             (f"{sum(1 for r in fc['rows'] if r['soon'])}", "từ khóa sắp vào mùa")):
+                with ui.element("div").classes("sr-op-stat"):
+                    ui.label(num).classes("sr-op-stat-num")
+                    ui.label(lab).classes("text-sm muted")
+        months = "Th1 Th2 Th3 Th4 Th5 Th6 Th7 Th8 Th9 Th10 Th11 Th12".split()
+        data = [{**r, "id": i, "peak_t": months[r["peak"] - 1] if r["peak"] else "",
+                 "value_t": KR.money(r["value"], cur) if r["value"] is not None else "–",
+                 "path": _path(r["url"], site) if r["url"] else ""} for i, r in enumerate(fc["rows"])]
+        tb = ui.table(columns=[
+            {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left"},
+            {"name": "rank", "label": "Vị trí", "field": "rank", "align": "right",
+             ":format": "v => v === null || v === undefined ? 'chưa thấy' : v"},
+            {"name": "volume", "label": "Volume / tháng", "field": "volume", "align": "right", ":format": NUM},
+            {"name": "gain", "label": "+ Click / tháng", "field": "gain", "align": "right"},
+            {"name": "value", "label": "+ Giá trị / tháng", "field": "value", "align": "right"},
+            {"name": "season", "label": "Mùa", "field": "peak", "align": "left"},
+        ], rows=data, row_key="id", pagination=20).props("flat dense binary-state-sort").classes(
+            "w-full sr-bl-table")
+        tb.add_slot("body-cell-keyword", """
+            <q-td :props="props"><div class="sr-op-kw">{{ props.value }}</div>
+              <div class="sr-bl-sub">{{ props.row.set }}<span v-if="props.row.path"> · {{ props.row.path }}</span>
+              </div></q-td>""")
+        T.bar_slot(tb, "gain", max(r["gain"] for r in data))
+        tb.add_slot("body-cell-value", """
+            <q-td :props="props"><span class="num">{{ props.row.value_t }}</span></q-td>""")
+        tb.add_slot("body-cell-season", """
+            <q-td :props="props"><span v-if="props.row.soon" class="sr-bl-type k-lost">sắp vào mùa</span>
+              <span v-if="props.row.peak_t" class="muted text-xs q-ml-xs">cao điểm {{ props.row.peak_t }}</span>
+              <span v-if="!props.row.soon && !props.row.peak_t" class="muted">–</span></q-td>""")
+
     body()
 
     async def load() -> None:
@@ -578,14 +631,17 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             from . import db
             with closing(db.connect(cfg.db_path)) as c:
                 return {**O.summary(c, site, end, cfg.keywords), "audit": SA.cached_findings(c, cfg),
-                        "kg": BE.latest(c, cfg)}
+                        "kg": BE.latest(c, cfg),
+                        "forecast": SVL.forecast(c, cfg, end)}
         try:
             state["data"] = await run.io_bound(work)
         except Exception as ex:  # noqa: BLE001
             state["data"] = {"striking": [], "decay": [], "cannibal": [], "new": [],
                              "audit": {"checks": [], "pages": 0, "healthy": 0, "run": None},
                              "kg": {"at": None, "error": None, "brands": [], "schema": None, "schema_error": None,
-                                    "home": site, "checks": []}}
+                                    "home": site, "checks": []},
+                             "forecast": {"rows": [], "gain": 0, "value": 0, "target": 3, "no_volume": 0,
+                                          "currency": "VND"}}
             ui.notify(f"Chưa tính được cơ hội SEO: {ex}", type="warning")
         body.refresh()
 

@@ -79,6 +79,122 @@ def build_budget_page(ui, base, app_connect, user) -> None:
     months = R.last_months(today, 6)
     state = {"balance": None, "balance_err": "", "loading": True}
 
+    def cost_advice(projects: list[dict]) -> None:
+        """Từ khóa có thể check hằng tháng thay vì hằng tuần (đứng yên top 3 / ngoài top 50 nhiều lần liền / gần như
+        không ai tìm): tiền check rank tiết kiệm mỗi tháng; bấm chuyển sang bộ "Check thưa (hằng tháng)"."""
+        from . import seo_value as SV
+        found = []
+        for p in projects:
+            cfg = PJ.config_for(base, p)
+            try:
+                with closing(db.connect(cfg.db_path)) as c:
+                    adv = SV.check_advice(c, cfg, K.latest_date(c, cfg.site_url))
+            except Exception:  # noqa: BLE001  (dự án chưa có dữ liệu rank)
+                continue
+            for st in adv["sets"]:
+                found.append((p, cfg, st))
+        total = sum(st["saving"] for _, _, st in found)
+        with T.section(ui, "Gợi ý giảm chi phí check rank", "savings",
+                       (f"Có thể tiết kiệm khoảng {_usd(total)} USD/tháng mà không mất thông tin" if found else
+                        "Chưa có gợi ý") + " · chỉ xét bộ team tạo đang check hằng tuần (bộ Cam kết giữ theo cam kết)"):
+            if not found:
+                ui.label("Chưa có từ khóa nào nên check thưa hơn: cần ít nhất 4 lần check để biết từ khóa đứng yên, "
+                         "hoặc các bộ đang tạm dừng (không tốn tiền).").classes("text-sm muted")
+                return
+            for p, cfg, st in found:
+                items = st["items"]
+                why = " · ".join(f"{n} {SV.WHY[w].lower()}" for w, n in st["by_why"].items() if n)
+                with ui.expansion().classes("w-full sr-op-check").props("dense") as ex:
+                    with ex.add_slot("header"):
+                        with ui.row().classes("w-full items-center no-wrap gap-3"):
+                            with ui.column().classes("gap-0 col").style("min-width:0"):
+                                ui.label(f"{p['name']} · bộ “{st['set']['name']}”: {len(items)} từ khóa có thể check "
+                                         "hằng tháng").classes("text-sm font-semibold")
+                                ui.label(why).classes("text-xs muted")
+                            ui.label(f"−{_usd(st['saving'])} USD/tháng").classes("text-sm num font-semibold").style(
+                                f"color:{T.GREEN}")
+                    ui.table(columns=[
+                        {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left"},
+                        {"name": "rank", "label": "Vị trí", "field": "rank", "align": "right",
+                         ":format": "v => v === null || v === undefined ? 'không thấy' : v"},
+                        {"name": "volume", "label": "Volume", "field": "volume", "align": "right",
+                         ":format": "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"},
+                        {"name": "why", "label": "Lý do", "field": "why_t", "align": "left"},
+                    ], rows=[{**i, "why_t": SV.WHY[i["why"]]} for i in items], row_key="id", pagination=10).props(
+                        "flat dense").classes("w-full sr-bl-table")
+
+                    def apply(p=p, cfg=cfg, st=st):
+                        with ui.dialog() as d, ui.card().style("max-width: 480px; border-radius: 14px"):
+                            ui.label(f"Chuyển {len(st['items'])} từ khóa sang check hằng tháng?").classes(
+                                "text-lg font-semibold")
+                            ui.label(f"Từ khóa được chuyển sang bộ “{SV.MONTHLY_SET}” của {p['name']} (tạo nếu chưa có),"
+                                     " giữ nguyên lịch sử thứ hạng. Chuyển lại bộ cũ được ở trang Từ khóa & Thứ hạng."
+                                     ).classes("text-sm")
+
+                            def go():
+                                with closing(db.connect(cfg.db_path)) as c:
+                                    res = SV.apply_advice(c, cfg, [i["id"] for i in st["items"]], str(user))
+                                d.close()
+                                ui.notify(f"Đã chuyển {len(res['moved'])} từ khóa", type="positive")
+                                body.refresh()
+                            with ui.row().classes("w-full justify-end gap-2"):
+                                ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                                ui.button("Chuyển", on_click=go).props("unelevated no-caps")
+                        d.open()
+                    with ui.row().classes("w-full justify-end q-mt-sm"):
+                        ui.button("Chuyển sang check hằng tháng", icon="event_repeat", on_click=apply).props(
+                            "unelevated no-caps")
+
+    def ads_quota() -> None:
+        """Hạn mức Google Ads API: lượt đã dùng hôm nay / mức trần tool tự dừng / hạn mức Basic; 14 ngày theo loại."""
+        from . import google_ads as GA
+        try:
+            hist, limit = GA.usage(14), GA.cap()
+        except Exception:  # noqa: BLE001  (không đọc được file đếm)
+            return
+        today_n = hist[-1]["total"]
+        ratio = today_n / limit if limit else 1
+        tone = "red" if ratio >= 1 else "amber" if ratio >= 0.8 else "green"
+        with T.section(ui, "Google Ads API (miễn phí)", "ads_click",
+                       f"Volume từ khóa, research từ khóa, giá thầu. Mức Basic: {GA.DAILY_LIMIT:,} lượt gọi mỗi ngày "
+                       "cho cả tool (mọi website). Google sang ngày mới khoảng 14–15 giờ chiều giờ Việt Nam."
+                       .replace(",", ".")):
+            with T.kpi_row(ui):
+                T.kpi(ui, "bolt", "Đã dùng hôm nay", f"{today_n:,}".replace(",", "."),
+                      hint=f"{ratio * 100:.1f}% mức trần".replace(".", ","), tone=tone)
+                T.kpi(ui, "front_hand", "Tool tự dừng ở", f"{limit:,} lượt/ngày".replace(",", "."),
+                      hint=f"còn {max(0, limit - today_n):,} lượt hôm nay".replace(",", "."), tone="blue")
+                T.kpi(ui, "verified", "Hạn mức Google (Basic)", f"{GA.DAILY_LIMIT:,} lượt/ngày".replace(",", "."),
+                      hint="không tốn tiền", tone="lime")
+            with ui.row().classes("items-end gap-2 q-mt-sm"):
+                box = ui.number("Mức trần mỗi ngày", value=limit, min=0, max=GA.DAILY_LIMIT, step=500,
+                                format="%.0f").props("outlined dense").classes("w-48")
+
+                def save_cap():
+                    n = GA.set_cap(int(box.value or 0))
+                    ui.notify(f"Tool sẽ dừng gọi Google Ads khi đạt {n:,} lượt/ngày".replace(",", "."),
+                              type="positive")
+                    body.refresh()
+                ui.button("Lưu", on_click=save_cap).props("unelevated no-caps")
+                ui.label("Chạm mức trần: research tạm khóa, lấy volume để hôm sau (không chuyển sang DataForSEO "
+                         "tốn tiền).").classes("text-xs muted col")
+            kinds = list(GA.KINDS)
+            colors = [T.GREEN, T.BLUE, "#7C3AED", "#8C8A7E"]
+            ui.echart({
+                "animation": False, "legend": {"bottom": 0, "icon": "roundRect", "itemWidth": 12, "itemHeight": 10,
+                                               "textStyle": {"fontSize": 12, "color": "#4A4A40"}},
+                "grid": {"left": 48, "right": 12, "top": 14, "bottom": 40},
+                "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+                "xAxis": {"type": "category", "data": [f"{h['day'][8:]}/{h['day'][5:7]}" for h in hist],
+                          "axisTick": {"show": False}, "axisLine": {"lineStyle": {"color": "#E7E5DC"}},
+                          "axisLabel": {"color": "#8C8A7E", "fontSize": 11}},
+                "yAxis": {"type": "value", "splitNumber": 3, "minInterval": 1,
+                          "splitLine": {"lineStyle": {"color": "#EEECE4"}},
+                          "axisLabel": {"color": "#8C8A7E", "fontSize": 11}},
+                "series": [{"name": GA.KINDS[k], "type": "bar", "stack": "a", "barMaxWidth": 26,
+                            "itemStyle": {"color": colors[i]}, "data": [h["kinds"].get(k, 0) for h in hist]}
+                           for i, k in enumerate(kinds)]}).classes("w-full").style("height: 200px")
+
     @ui.refreshable
     def body():
         with app_connect() as c:
@@ -144,7 +260,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         ui.label(f"Đã dùng {_usd(r['spent'])} · dự kiến {_usd(r['estimate'])} / "
                                  f"{r['budget']:g} USD").classes("text-xs muted num")
                         cur = r["history"].get(today.strftime("%Y-%m"), {})
-                        short = {"rank": "Rank", "volume": "Volume", "backlinks": "Backlink", "intent": "Ý định"}
+                        short = {"rank": "Rank", "volume": "Volume", "backlinks": "Backlink", "intent": "Ý định", "serp": "Xem SERP"}
                         parts = [f"{short[k]} {_usd(cur.get(k, 0))}" for k in R.SPEND_KINDS if cur.get(k)]
                         if parts:
                             ui.label(" · ".join(parts)).classes("text-xs muted num").tooltip(
@@ -192,6 +308,10 @@ def build_budget_page(ui, base, app_connect, user) -> None:
 
         # ---- Nhật ký chi tiền ----
         spend_log(rows)
+
+        # ---- Google Ads API (miễn phí, giới hạn lượt gọi mỗi ngày) ----
+        cost_advice(projects)
+        ads_quota()
 
         # ---- Chi phí 6 tháng ----
         labels = [f"{m[5:]}/{m[2:4]}" for m in months]

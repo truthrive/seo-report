@@ -33,7 +33,7 @@ NAV = [
             ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
     ("SEO", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
              ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
-             ("Cơ hội SEO", "/co-hoi", "insights"), ("Research từ khóa", "/research", "manage_search"),
+             ("Cơ hội SEO", "/co-hoi", "insights"), ("Research từ khóa", "/tu-khoa", "manage_search"),
              ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
              ("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
@@ -44,7 +44,9 @@ NAV = [
 # Mục "URL & Index" (dữ liệu GSC theo URL): một mục trên menu, ba tab = ba màn (link cũ vẫn mở đúng tab)
 URL_TABS = (("Hiệu suất URL", "/url"), ("Nguồn tìm kiếm", "/nguon"), ("Index", "/index"),
             ("Quản lý URL", "/urls"))
+RESEARCH_TABS = (("Tổng quan từ khóa", "/tu-khoa"), ("Ý tưởng từ khóa", "/research"))
 NAV_PARENT = {title: "URL & Index" for title, _ in URL_TABS}  # màn → mục menu được tô sáng
+NAV_PARENT["Tổng quan từ khóa"] = NAV_PARENT["Ý tưởng từ khóa"] = "Research từ khóa"
 EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")
 
 
@@ -691,6 +693,13 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             for title, href in tabs_:
                 ui.tab(href, title)
 
+    def research_tabs(current: str) -> None:
+        """Hai tab của mục Research từ khóa: Tổng quan từ khóa (/tu-khoa, tab đầu) · Ý tưởng từ khóa (/research)."""
+        with ui.tabs(value=current, on_change=lambda e: ui.navigate.to(e.value) if e.value != current else None).props(
+                "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs q-mb-sm"):
+            for title, href in RESEARCH_TABS:
+                ui.tab(href, title)
+
     @ui.page("/url")
     def url_page(request: Request):
         if not (opened := open_page(request)):
@@ -882,16 +891,37 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         from .web_opps import build_opps_page
         build_opps_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
+    @ui.page("/research/tu-khoa")
+    def keyword_overview_old(request: Request):
+        from urllib.parse import quote
+        return RedirectResponse("/tu-khoa?kw=" + quote(request.query_params.get("kw", "")))
+
+    @ui.page("/tu-khoa")
+    def keyword_overview_page(request: Request):
+        """Tổng quan một từ khóa (giống Keyword Overview của Semrush): mục riêng trên menu. Chỉ team."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Tổng quan từ khóa", user, P, page_ctx(P), period=False, group=False)
+        research_tabs("/tu-khoa")
+        from .web_kw_overview import build_overview_page
+        build_overview_page(ui, P.cfg, P.connect, user, request.query_params.get("kw", ""))
+
     @ui.page("/research")
     def research_page(request: Request):
         """Research từ khóa (Google Keyword Planner qua Google Ads API, miễn phí). Chỉ team."""
         if not (opened := open_page(request)):
             return
         user, P = opened
-        shell("Research từ khóa", user, P, page_ctx(P), period=False, group=False)
+        shell("Ý tưởng từ khóa", user, P, page_ctx(P), period=False, group=False)
+        research_tabs("/research")
         from .web_research import build_research_page
         rid = request.query_params.get("id", "")
-        build_research_page(ui, P.cfg, P.connect, user, int(rid) if rid.isdigit() else None)
+        qp = request.query_params
+        preset = next(((mode, qp[k]) for k, mode in (("kw", "keywords"), ("site", "site"), ("url", "url"))
+                       if qp.get(k)), None)
+        build_research_page(ui, P.cfg, P.connect, user, int(rid) if rid.isdigit() else None, qp.get("tra", ""),
+                            preset, view={k: qp[k] for k in ("match", "kind", "view") if qp.get(k)})
 
     @ui.page("/nguon")
     def sources_page(request: Request):

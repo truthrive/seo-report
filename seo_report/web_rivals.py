@@ -259,8 +259,78 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                            "Danh sách đối thủ sẽ hiện ở đây khi được thêm.")
         if len([r for r in comp["rows"] if not r["brand"]["own"]]) == 0:
             return
+        sov_card(sid)
         trend_card(trend, comp)
         matrix_view()
+
+    def sov_card(sid) -> None:
+        """Thị phần lượt click ước tính (volume × CTR theo vị trí) và giá trị quy ra tiền Google Ads."""
+        from . import keyword_research as KR
+        from . import seo_value as SV
+        with connect() as c:
+            sov = SV.share_of_voice(c, cfg, end, set_id=sid)
+            trend = SV.sov_trend(c, cfg, end, set_id=sid)
+        if not sov["keywords"]:
+            return
+        cur = sov["currency"]
+        with ui.element("div").classes("sr-card q-pa-md w-full q-mt-md"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-xs"):
+                with ui.element("span").classes("sr-bx-icon").style("background:#EEF6EF"):
+                    ui.icon("pie_chart", size="16px").style("color:#1E7C31").props('aria-hidden="true"')
+                ui.label("Thị phần lượt click ước tính").classes("sr-bx-title")
+                T.info_icon(ui, "Thị phần lượt click ước tính", (
+                    "Phần lượt click (từ kết quả tự nhiên trang 1) mỗi thương hiệu nhận được trên bộ từ khóa.",
+                    "Khác độ hiển thị ở trên: từ khóa nhiều người tìm nặng ký hơn từ khóa ít người tìm.",
+                    "Click ước tính = volume tháng (Google Ads) × tỷ lệ nhấp theo vị trí ở lần check gần nhất. "
+                    "Giá trị = click × giá thầu Google Ads của từ khóa."))
+            ui.label(f"Tính trên {sov['keywords']}/{sov['total']} từ khóa có volume · tổng khoảng "
+                     f"{sov['market']:,} click trang 1 mỗi tháng".replace(",", ".")
+                     + (f" · {sov['no_volume']} từ khóa gần như không ai tìm nên không tính" if sov["no_volume"]
+                        else "")).classes("text-xs muted q-mb-sm")
+            rows = [{"id": i, "name": r["brand"]["name"], "own": r["brand"]["own"], "clicks": r["clicks"],
+                     "share": round(r["share"] * 100, 1), "value": r["value"], "value_t": KR.money(r["value"], cur),
+                     "kws": r["keywords"], "chg": None if r["change"] is None else round(r["change"] * 100, 1),
+                     "color": r["brand"]["color"]} for i, r in enumerate(sov["rows"])]
+            mx = max((r["share"] for r in rows), default=1) or 1
+            tb = ui.table(columns=[
+                {"name": "name", "label": "Thương hiệu", "field": "name", "align": "left"},
+                {"name": "share", "label": "Thị phần click", "field": "share", "align": "left"},
+                {"name": "clicks", "label": "Click ước tính / tháng", "field": "clicks", "align": "right",
+                 ":format": "v => v.toLocaleString('vi-VN')"},
+                {"name": "value", "label": "Giá trị / tháng", "field": "value", "align": "right"},
+                {"name": "kws", "label": "Số từ khóa có mặt", "field": "kws", "align": "right"},
+            ], rows=rows, row_key="id").props("flat dense").classes("w-full sr-bl-table")
+            tb.add_slot("body-cell-name", """
+                <q-td :props="props"><span class="sr-kr-dot" :style="{background: props.row.color}"></span>
+                  <b v-if="props.row.own">{{ props.value }}</b><span v-else>{{ props.value }}</span></q-td>""")
+            tb.add_slot("body-cell-share", """
+                <q-td :props="props"><div class="sr-bar"><div class="sr-bar-fill"
+                  :style="{width: Math.max(2, 120 * props.value / %s) + 'px', background: props.row.color}"></div>
+                  <span class="num">{{ props.value.toLocaleString('vi-VN') }}%%</span>
+                  <span v-if="props.row.chg !== null && Math.abs(props.row.chg) >= 0.1" class="sr-op-move"
+                    :class="props.row.chg > 0 ? 'up' : 'down'">{{ props.row.chg > 0 ? '▲' : '▼' }}{{
+                    Math.abs(props.row.chg).toLocaleString('vi-VN') }}<q-tooltip>So với lần check trước, cùng tập từ
+                    khóa (điểm phần trăm)</q-tooltip></span></div></q-td>""" % mx)
+            tb.add_slot("body-cell-value", """
+                <q-td :props="props"><span class="num">{{ props.row.value_t }}</span></q-td>""")
+            most = max((p["n"] for p in trend), default=0)
+            trend = [p for p in trend if p["n"] * 2 >= most]
+            if len(trend) >= 2:
+                brands = [r["brand"] for r in sov["rows"]]
+                ui.echart({
+                    "tooltip": {"trigger": "axis", "valueFormatter": None},
+                    "legend": {"type": "scroll", "bottom": 0},
+                    "grid": {"left": 40, "right": 16, "top": 16, "bottom": 48},
+                    "xAxis": {"type": "category", "data": [_vn(p["date"])[:5] for p in trend],
+                              "axisLabel": {"color": "#6B6A5E"}},
+                    "yAxis": {"type": "value", "axisLabel": {"formatter": "{value}%", "color": "#6B6A5E"},
+                              "splitLine": {"lineStyle": {"color": "#EEECE4"}}},
+                    "series": [{"name": b["name"], "type": "line", "symbol": "circle", "symbolSize": 6,
+                                "lineStyle": {"width": 3 if b["own"] else 2,
+                                              "type": "solid" if b["own"] else DASHES[i % len(DASHES)],
+                                              "color": b["color"]}, "itemStyle": {"color": b["color"]},
+                                "data": [round(p["share"].get(b["id"], 0) * 100, 1) for p in trend]}
+                               for i, b in enumerate(brands)]}).classes("w-full q-mt-sm").style("height: 260px")
 
     def trend_card(trend: list[dict], comp: dict):
         with ui.element("div").classes("sr-card q-pa-md w-full q-mt-md"):

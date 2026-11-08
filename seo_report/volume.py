@@ -177,6 +177,9 @@ def _refresh(con, site, cfg, end, today, only_ids, log, fetcher) -> int:
                 saved += save(con, chunk, res, today)
             log(f"Đã lấy volume cho {saved} keyword (Google Ads, miễn phí).")
             return saved
+        except GA.QuotaExceeded as e:  # hết lượt miễn phí hôm nay: để mai lấy tiếp, không chuyển sang nguồn tốn tiền
+            log(str(e))
+            return saved
         except Exception as e:  # noqa: BLE001
             log(f"Không lấy được volume từ Google Ads ({e}); dùng DataForSEO.")
             todo = missing(con, site, end, today, only_ids)

@@ -663,7 +663,19 @@ def spent_this_month(con: sqlite3.Connection, today: date | None = None) -> floa
     from . import backlinks, intent, volume  # volume, backlink, ý định từ khóa: chung ngân sách DataForSEO
     return (con.execute("SELECT COALESCE(SUM(cost), 0) FROM rank_tasks WHERE substr(check_date, 1, 7) = ?",
                         (month,)).fetchone()[0] + volume.spent_this_month(con, today)
-            + backlinks.spent_this_month(con, today) + intent.spent_this_month(con, today))
+            + backlinks.spent_this_month(con, today) + intent.spent_this_month(con, today)
+            + serp_lookup_spent(con, month))
+
+
+SERP_LOOKUP_SCHEMA = """CREATE TABLE IF NOT EXISTS serp_lookups (run_at TEXT NOT NULL, keyword TEXT NOT NULL,
+    cost REAL NOT NULL, by_user TEXT NOT NULL DEFAULT '')"""
+
+
+def serp_lookup_spent(con, month: str) -> float:
+    """Tiền xem trang kết quả Google một lần (trang Tổng quan từ khóa) trong tháng "YYYY-MM"."""
+    con.execute(SERP_LOOKUP_SCHEMA)
+    return con.execute("SELECT COALESCE(SUM(cost), 0) FROM serp_lookups WHERE substr(run_at, 1, 7) = ?",
+                       (month,)).fetchone()[0]
 
 
 def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]:
@@ -674,8 +686,12 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
     volume.ensure_tables(con)
     backlinks.ensure_tables(con)
     intent.ensure_tables(con)
-    out = {m: {"rank": 0.0, "volume": 0.0, "backlinks": 0.0, "intent": 0.0, "checks": 0, "total": 0.0}
+    out = {m: {"rank": 0.0, "volume": 0.0, "backlinks": 0.0, "intent": 0.0, "serp": 0.0, "checks": 0, "total": 0.0}
            for m in months}
+    con.execute(SERP_LOOKUP_SCHEMA)
+    for m, cost in con.execute("SELECT substr(run_at, 1, 7), SUM(cost) FROM serp_lookups GROUP BY 1"):
+        if m in out:
+            out[m]["serp"] = cost or 0.0
     for m, cost, n in con.execute("SELECT substr(check_date, 1, 7), SUM(cost), COUNT(*) FROM rank_tasks "
                                   "GROUP BY 1"):
         if m in out:
@@ -690,11 +706,12 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
         if m in out:
             out[m]["intent"] = cost or 0.0
     for v in out.values():
-        v["total"] = v["rank"] + v["volume"] + v["backlinks"] + v["intent"]
+        v["total"] = v["rank"] + v["volume"] + v["backlinks"] + v["intent"] + v["serp"]
     return out
 
 
-SPEND_KINDS = {"rank": "Check rank", "volume": "Volume từ khóa", "backlinks": "Backlink", "intent": "Ý định từ khóa"}
+SPEND_KINDS = {"rank": "Check rank", "volume": "Volume từ khóa", "backlinks": "Backlink", "intent": "Ý định từ khóa",
+               "serp": "Xem kết quả Google"}
 
 
 def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
@@ -735,6 +752,11 @@ def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
                                    (month,)):
         out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": "",
                     "detail": f"Ý định tìm kiếm của {n} từ khóa"})
+    con.execute(SERP_LOOKUP_SCHEMA)
+    for at, kw, cost, by in con.execute("SELECT run_at, keyword, cost, by_user FROM serp_lookups "
+                                        "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        out.append({"at": at, "kind": "serp", "qty": 1, "cost": cost or 0.0, "by": by or "",
+                    "detail": f"Trang kết quả Google của “{kw}” (Tổng quan từ khóa)"})
     out.sort(key=lambda r: r["at"], reverse=True)
     return out
 
@@ -1271,6 +1293,10 @@ class DataForSEO:
 
     def ready_ids(self) -> set[str]:
         return {r["id"] for t in self._call("GET", "tasks_ready")["tasks"] or [] for r in t.get("result") or []}
+
+    def live(self, task: dict) -> dict:
+        """Trang kết quả Google lấy ngay (live, bản đầy đủ: có AI Overview và ô đặc biệt). Tính tiền mỗi lần gọi."""
+        return self._call("POST", "live/advanced", [task])["tasks"][0]
 
     def get(self, task_id: str) -> dict:
         """Kết quả bản đầy đủ (advanced): có AI Overview và các ô đặc biệt bên cạnh kết quả tự nhiên. DataForSEO chỉ
