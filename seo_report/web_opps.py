@@ -3,13 +3,14 @@ Không gọi API, không tốn tiền. Team xem (người sửa và người ch�
 from datetime import date
 
 from . import access as A
+from . import brand_entity as BE
 from . import keywords as K
 from . import opportunities as O
 from . import site_audit as SA
 from . import ui_theme as T
 
 TABS = (("audit", "Audit kỹ thuật"), ("len-top", "Sắp lên top"), ("giam", "Trang tụt traffic"),
-        ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"))
+        ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"), ("thuc-the", "Thực thể thương hiệu"))
 NUM = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
 POS = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})"
 CAUSES = {"rank": ("Rớt hạng", "k-lost"), "demand": ("Ít người tìm hơn", "k-kw"), "ctr": ("CTR giảm", "k-url"),
@@ -55,6 +56,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         counts = {"len-top": len(data["striking"]), "giam": len(data["decay"]),
                   "tranh": sum(1 for g in data["cannibal"] if g["serious"]),
                   "moi": sum(1 for r in data["new"] if r["impressions"] >= O.NEW_SIGNAL),
+                  "thuc-the": sum(1 for c in data["kg"]["checks"] if c["ok"] is False),
                   "audit": len({p["url_id"] for c in data["audit"]["checks"] if c["level"] != "info"
                                 for p in c["pages"]})}
         with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
@@ -72,6 +74,8 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                 new_tab(data["new"])
             with ui.tab_panel("audit").classes("q-px-none"):
                 audit_tab(data["audit"])
+            with ui.tab_panel("thuc-the").classes("q-px-none"):
+                kg_tab(data["kg"])
 
     def explain(title: str, lines: list[str]) -> None:
         with ui.element("div").classes("sr-op-explain"):
@@ -463,6 +467,108 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                 tb.add_slot("body-cell-detail", """
                     <q-td :props="props"><div class="sr-op-detail">{{ props.value || '–' }}</div></q-td>""")
 
+    # ---- Thực thể thương hiệu (Knowledge Graph) ----
+    async def kg_now(btn) -> None:
+        from contextlib import closing
+
+        from . import db
+        from .cwv import load_key
+        if not ed:
+            return
+        btn.props("loading")
+
+        def work():
+            with closing(db.connect(cfg.db_path)) as c:
+                return BE.run(c, cfg, load_key(cfg))
+        try:
+            r = await run.io_bound(work)
+            if r["error"]:
+                ui.notify("Đã kiểm tra schema; Knowledge Graph chưa gọi được (xem hướng dẫn trên trang)",
+                          type="warning", position="bottom-right")
+            else:
+                ui.notify(f"{r['found']}/{r['brands']} thương hiệu có thực thể trên Google", type="positive",
+                          position="bottom-right")
+        except Exception as ex:  # noqa: BLE001
+            ui.notify(f"Chưa kiểm tra được: {ex}", type="warning", position="bottom-right")
+        with connect() as c:
+            state["data"] = {**state["data"], "kg": BE.latest(c, cfg)}
+        body.refresh()
+
+    def kg_tab(kg: dict) -> None:
+        explain("Google hiểu thương hiệu là một “thực thể” (Knowledge Graph) thì dễ hiện Knowledge Panel, được AI "
+                "Overview / ChatGPT nhắc đúng tên, và tìm tên thương hiệu ra đúng website.", [
+                    "Tool hỏi Google Knowledge Graph về thương hiệu của mình và các đối thủ (danh sách ở trang AI "
+                    "Overview), và đọc schema thương hiệu ở trang chủ. Tự kiểm tra mỗi tuần, miễn phí."])
+        with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
+            if kg["at"]:
+                from datetime import datetime
+                at = datetime.fromisoformat(kg["at"]).astimezone()
+                ui.label(f"Kiểm tra lần gần nhất {at:%H:%M %d/%m/%Y}").classes("text-sm muted")
+            else:
+                ui.label("Chưa kiểm tra lần nào.").classes("text-sm muted")
+            ui.space()
+            if ed:
+                btn = ui.button("Kiểm tra ngay", icon="hub").props("unelevated no-caps")
+                btn.on_click(lambda: kg_now(btn))
+        if kg["error"]:
+            with ui.element("div").classes("sr-op-warn"):
+                ui.icon("warning", size="18px").props('aria-hidden="true"')
+                ui.label(kg["error"]).classes("text-sm")
+        if not kg["at"]:
+            T.empty_state(ui, "hub", "Chưa có kết quả", "Bấm “Kiểm tra ngay” (người có quyền sửa) hoặc chờ lịch hằng "
+                          "tuần.")
+            return
+        icons = {True: ("check_circle", "#1E7C31", "Đạt"), False: ("cancel", "#C2410C", "Chưa đạt"),
+                 None: ("help_outline", "#8C8A7E", "Chưa biết")}
+        with ui.element("div").classes("sr-card q-pa-md w-full q-mb-md"):
+            ok = sum(1 for c in kg["checks"] if c["ok"])
+            known = sum(1 for c in kg["checks"] if c["ok"] is not None)
+            ui.label(f"Việc nên làm · đạt {ok}/{known}").classes("text-base font-semibold q-mb-sm")
+            for c in sorted(kg["checks"], key=lambda c: {False: 0, None: 1, True: 2}[c["ok"]]):
+                icon, color, word = icons[c["ok"]]
+                with ui.row().classes("w-full no-wrap items-start gap-3 sr-op-kgrow"):
+                    ui.icon(icon, size="20px").style(f"color:{color}").props(f'aria-label="{word}"')
+                    with ui.column().classes("gap-0 col").style("min-width:0"):
+                        ui.label(c["title"]).classes("text-sm font-semibold")
+                        if c["detail"]:
+                            ui.label(c["detail"]).classes("text-sm muted sr-op-detail")
+                        if c["ok"] is False:
+                            ui.label("Cách làm: " + c["fix"]).classes("text-sm sr-op-fix")
+        sch = kg["schema"] or {}
+        if sch.get("same_as"):
+            with ui.element("div").classes("sr-card q-pa-md w-full q-mb-md"):
+                ui.label("Hồ sơ khai báo trong schema (sameAs)").classes("text-base font-semibold q-mb-xs")
+                for u in sch["same_as"]:
+                    ui.link(u, u, new_tab=True).classes("sr-bl-link text-sm")
+        if kg["brands"]:
+            ui.label("Thương hiệu và đối thủ trên Knowledge Graph").classes("text-base font-semibold q-mb-xs")
+            rows = [{"id": i, "brand": b["name"], "own": b["own"], "found": b["found"],
+                     "kg_name": b.get("name") if b["found"] else "", "types": ", ".join(b.get("types", [])[:3]),
+                     "desc": (b.get("description") or "") + (" · " + b["detail"][:120] if b.get("detail") else ""),
+                     "url": b.get("url", ""), "score": b.get("score")} for i, b in enumerate(kg["brands"])]
+            tb = ui.table(columns=[
+                {"name": "brand", "label": "Thương hiệu", "field": "brand", "align": "left"},
+                {"name": "found", "label": "Thực thể", "field": "found", "align": "left"},
+                {"name": "types", "label": "Google hiểu là", "field": "types", "align": "left"},
+                {"name": "desc", "label": "Mô tả", "field": "desc", "align": "left"},
+                {"name": "url", "label": "Website", "field": "url", "align": "left"},
+                {"name": "score", "label": "Điểm", "field": "score", "align": "right"},
+            ], rows=rows, row_key="id").props("flat dense").classes("w-full sr-bl-table")
+            tb.add_slot("body-cell-brand", """
+                <q-td :props="props"><div class="sr-op-kw">{{ props.value }}
+                  <span v-if="props.row.own" class="sr-bl-type k-url q-ml-xs">của mình</span></div></q-td>""")
+            tb.add_slot("body-cell-found", """
+                <q-td :props="props"><span class="sr-bl-type" :class="props.value ? 'k-new' : 'k-lost'">{{
+                  props.value ? 'Có' : 'Chưa có' }}</span></q-td>""")
+            tb.add_slot("body-cell-desc", """
+                <q-td :props="props"><div class="sr-op-detail">{{ props.value || '–' }}</div></q-td>""")
+            tb.add_slot("body-cell-url", """
+                <q-td :props="props"><a v-if="props.value" :href="props.value" target="_blank" rel="noopener"
+                  class="sr-bl-link">{{ props.value.replace(/^https?:\\/\\/(www\\.)?/, '') }}</a>
+                  <span v-else class="muted">–</span></q-td>""")
+            ui.label("Điểm: mức Google chắc chắn thực thể khớp tên tìm (càng cao càng nổi). Thực thể “Chưa có” nghĩa "
+                     "là Google chưa có thực thể khớp tên và website của thương hiệu.").classes("text-xs muted q-mt-xs")
+
     body()
 
     async def load() -> None:
@@ -471,12 +577,15 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
 
             from . import db
             with closing(db.connect(cfg.db_path)) as c:
-                return {**O.summary(c, site, end, cfg.keywords), "audit": SA.cached_findings(c, cfg)}
+                return {**O.summary(c, site, end, cfg.keywords), "audit": SA.cached_findings(c, cfg),
+                        "kg": BE.latest(c, cfg)}
         try:
             state["data"] = await run.io_bound(work)
         except Exception as ex:  # noqa: BLE001
             state["data"] = {"striking": [], "decay": [], "cannibal": [], "new": [],
-                             "audit": {"checks": [], "pages": 0, "healthy": 0, "run": None}}
+                             "audit": {"checks": [], "pages": 0, "healthy": 0, "run": None},
+                             "kg": {"at": None, "error": None, "brands": [], "schema": None, "schema_error": None,
+                                    "home": site, "checks": []}}
             ui.notify(f"Chưa tính được cơ hội SEO: {ex}", type="warning")
         body.refresh()
 

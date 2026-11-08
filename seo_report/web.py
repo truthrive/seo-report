@@ -33,7 +33,7 @@ NAV = [
             ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
     ("SEO", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
              ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
-             ("Cơ hội SEO", "/co-hoi", "insights"),
+             ("Cơ hội SEO", "/co-hoi", "insights"), ("Research từ khóa", "/research", "manage_search"),
              ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
              ("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
@@ -881,6 +881,17 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("Cơ hội SEO", user, P, page_ctx(P), period=False, group=False)
         from .web_opps import build_opps_page
         build_opps_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+
+    @ui.page("/research")
+    def research_page(request: Request):
+        """Research từ khóa (Google Keyword Planner qua Google Ads API, miễn phí). Chỉ team."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Research từ khóa", user, P, page_ctx(P), period=False, group=False)
+        from .web_research import build_research_page
+        rid = request.query_params.get("id", "")
+        build_research_page(ui, P.cfg, P.connect, user, int(rid) if rid.isdigit() else None)
 
     @ui.page("/nguon")
     def sources_page(request: Request):

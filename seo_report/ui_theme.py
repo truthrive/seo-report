@@ -566,6 +566,21 @@ HEAD = """
   .sr-op-check { background: #fff; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
   .sr-op-check .q-expansion-item__content { padding: 0 14px 12px; }
   .sr-op-detail { white-space: normal; max-width: 520px; font-size: 13px; color: #4A4A40; }
+  .sr-op-warn { display: flex; gap: 10px; align-items: flex-start; background: #FBF1DE; color: #8F5F14;
+    border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; }
+  .sr-op-kgrow { padding: 8px 0; border-bottom: 1px solid #EEECE4; }
+  .sr-op-kgrow:last-child { border-bottom: 0; }
+  .sr-op-fix { color: #8F5F14; }
+  /* Research từ khóa (/research) */
+  .sr-kr-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 900px) { .sr-kr-top { grid-template-columns: 1fr; } }
+  .sr-kr-hist { max-height: 300px; overflow-y: auto; }
+  .sr-kr-hrow { padding: 6px 8px; border-radius: 8px; }
+  .sr-kr-hrow:hover { background: #F6F6F1; }
+  .sr-kr-hrow.on { background: #EEF3E6; }
+  .sr-kr-spark { display: flex; align-items: flex-end; gap: 2px; height: 24px; width: 84px; }
+  .sr-kr-bar { flex: 1; background: #9DB6DA; border-radius: 2px 2px 0 0; min-height: 2px; }
+  .sr-kr-min { width: 140px; }
   @media (max-width: 600px) { .sr-op-search { width: 100%; } .sr-op-path { max-width: 220px; } }
   .sr-bl-anchor { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sr-au-item { border-bottom: 1px solid #EEECE4; }
@@ -1352,6 +1367,8 @@ HEAD = """
   .sr-db-quad { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-content: stretch; }
   .sr-db-quad > .sr-db-card { min-height: 112px; }
   .sr-db-chartcard { min-height: 250px; }
+  .sr-db-valrow { margin-top: 10px; }
+  .sr-db-valrow > .sr-db-card { min-height: 0; }
   .sr-db-stack { display: flex; flex-direction: column; gap: 10px; }
   a.sr-db-card { color: inherit; text-decoration: none; }
   a.sr-db-card:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

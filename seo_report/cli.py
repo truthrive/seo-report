@@ -309,6 +309,18 @@ def _daily_one(cfg) -> None:
                 site_audit.refresh(con, cfg, log=lambda m: print(m, flush=True))
         except (Exception, SystemExit):
             traceback.print_exc()
+        try:  # Thực thể thương hiệu (Knowledge Graph Search API + schema trang chủ, miễn phí): mỗi tuần một lần
+            from . import brand_entity
+            with db.connect(cfg.db_path) as con:
+                brand_entity.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Giá thầu Google Ads của từ khóa mang click SEO về (giá trị traffic SEO, miễn phí)
+            from . import keyword_research
+            with db.connect(cfg.db_path) as con:
+                keyword_research.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
         try:  # Local SEO (Google Business Profile, miễn phí): hồ sơ đã gắn, số nối tiếp từ ngày cuối đã có
             from . import gbp
             with db.connect(cfg.db_path) as con:

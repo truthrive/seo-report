@@ -392,6 +392,23 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                   on_click=lambda: EV.events_dialog(ui, connect, site, user, ed, reload_events)).props(
                             "flat dense no-caps size=sm color=deep-purple-7").tooltip(
                             "Ghi mốc (Google update, sửa web, đăng bài…) để thấy trên biểu đồ")
+        v = g.get("value")
+        if state["loading"] or v:
+            from . import keyword_research as KR
+            with ui.element("div").classes("sr-db-valrow"):
+                if state["loading"]:
+                    W.stat(ui, "Giá trị traffic SEO", "", "payments", loading=True, tone="green")
+                else:
+                    dl, good = delta(v["value"], v["prev"])
+                    W.stat(ui, "Giá trị traffic SEO", KR.money(v["value"], v["currency"]), "payments", dl, good,
+                           sub=f"Phải trả chừng này nếu mua {F.n(v['priced_clicks'])} click SEO bằng Google Ads · "
+                               f"{prev_label}: {KR.money(v['prev'], v['currency'])}",
+                           info=("Click SEO (không tính từ khóa thương hiệu) nhân với giá thầu Google Ads ước tính "
+                                 "của từng từ khóa.",
+                                 "SEO đang mang về lượng khách tương đương bao nhiêu tiền quảng cáo.",
+                                 "CPC = trung bình giá thầu đầu trang thấp / cao của Keyword Planner, cập nhật mỗi "
+                                 "tháng. Chỉ tính từ khóa Google cho biết và có giá thầu: là mức tối thiểu."),
+                           tone="green")
 
     @ui.refreshable
     def ga_row():
@@ -615,6 +632,13 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     pa = aio_block(c, site, p2, p2, buckets(p2, days))
                     out["aio"]["share_spark_prev"] = (pa or {}).get("share_spark")
                     out["aio"]["prev_labels"] = [f"{s_:%d/%m}" for s_, _ in buckets(p2, days)]
+                try:  # giá trị traffic SEO: click × CPC Google Ads đã lưu (không gọi API lúc mở trang)
+                    from . import keyword_research as KR
+                    now_v = KR.traffic_value(c, cfg, *cur)
+                    if now_v["has_prices"]:
+                        out["value"] = {**now_v, "prev": KR.traffic_value(c, cfg, *prev)["value"]}
+                except Exception:  # noqa: BLE001  (chưa có bảng / dữ liệu)
+                    pass
                 if not cfg.ga4_property:
                     return out
                 try:

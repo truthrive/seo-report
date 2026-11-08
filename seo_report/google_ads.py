@@ -113,3 +113,110 @@ def historical_metrics(creds, settings: dict, keywords: list[str], location: int
             if text:
                 out.append({"keyword": text, "search_volume": vol, "competition": comp})
     return {"cost": 0.0, "result": out}
+
+
+# ---- Keyword Planner đầy đủ: ý tưởng từ khóa, giá thầu, volume từng tháng ----
+
+MONTHS = {m: i for i, m in enumerate(("JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST",
+                                       "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"), 1)}
+
+
+def _call(creds, settings: dict, path: str, body: dict, timeout: int = 120, opener=urlopen) -> dict:
+    """POST tới customers/{customer_id}{path}; lỗi thành RuntimeError có câu dễ hiểu."""
+    if not creds.valid:
+        from google.auth.transport.requests import Request as _Req
+        creds.refresh(_Req())
+    headers = {"Authorization": f"Bearer {creds.token}", "developer-token": settings["developer_token"],
+               "Content-Type": "application/json"}
+    if settings.get("login_customer_id"):
+        headers["login-customer-id"] = settings["login_customer_id"]
+    url = (f"https://googleads.googleapis.com/{settings.get('api_version') or API_VERSION}/customers/"
+           f"{settings['customer_id']}{path}")
+    try:
+        return json.loads(opener(Request(url, data=json.dumps(body).encode(), headers=headers, method="POST"),
+                                 timeout=timeout).read() or b"{}")
+    except HTTPError as e:
+        try:
+            err = json.loads(e.read() or b"{}")
+        except ValueError:
+            err = {}
+        raise RuntimeError(f"Google Ads: {_error_text(err, e.code)}") from e
+
+
+def parse_metrics(m: dict) -> dict:
+    """keywordMetrics / keywordIdeaMetrics → volume, cạnh tranh (LOW/MEDIUM/HIGH + chỉ số 0–100), giá thầu đầu trang
+    thấp / cao (đơn vị tiền của tài khoản), volume 12 tháng [("2026-01", n), …] cũ trước."""
+    def money(k):
+        v = m.get(k)
+        return round(int(v) / 1_000_000, 2) if v not in (None, "") else None
+    monthly = []
+    for x in m.get("monthlySearchVolumes") or []:
+        mo = MONTHS.get(x.get("month"))
+        if mo and x.get("year"):
+            monthly.append((f"{int(x['year']):04d}-{mo:02d}", int(x.get("monthlySearches") or 0)))
+    monthly.sort()
+    vol = m.get("avgMonthlySearches")
+    return {"volume": int(vol) if vol not in (None, "") else None,
+            "competition": COMPETITION.get(m.get("competition") or ""),
+            "competition_index": int(m["competitionIndex"]) if m.get("competitionIndex") not in (None, "") else None,
+            "low_bid": money("lowTopOfPageBidMicros"), "high_bid": money("highTopOfPageBidMicros"),
+            "monthly": monthly[-12:]}
+
+
+def _geo_lang(location: int, language: str) -> dict:
+    body = {"geoTargetConstants": [f"geoTargetConstants/{int(location)}"], "keywordPlanNetwork": "GOOGLE_SEARCH"}
+    if language in LANGUAGES:
+        body["language"] = f"languageConstants/{LANGUAGES[language]}"
+    return body
+
+
+def keyword_ideas(creds, settings: dict, location: int, language: str, keywords: list[str] = (),
+                  url: str | None = None, site: str | None = None, limit: int = 1000, opener=urlopen) -> list[dict]:
+    """Ý tưởng từ khóa của Keyword Planner từ từ khóa gốc (tối đa 20), một URL, từ khóa + URL, hoặc cả website
+    (site: tên miền, ví dụ doi-thu.vn). Mỗi dòng: {"keyword", **parse_metrics}. Nhiều volume trước."""
+    body = {**_geo_lang(location, language), "includeAdultKeywords": False, "pageSize": min(limit, 1000)}
+    kws = [k.strip() for k in keywords if k and k.strip()][:20]
+    if site:
+        body["siteSeed"] = {"site": site}
+    elif kws and url:
+        body["keywordAndUrlSeed"] = {"url": url, "keywords": kws}
+    elif url:
+        body["urlSeed"] = {"url": url}
+    elif kws:
+        body["keywordSeed"] = {"keywords": kws}
+    else:
+        raise ValueError("Cần ít nhất một từ khóa, URL hoặc website")
+    out: list[dict] = []
+    while True:
+        resp = _call(creds, settings, ":generateKeywordIdeas", body, opener=opener)
+        for r in resp.get("results") or []:
+            if r.get("text"):
+                out.append({"keyword": r["text"], **parse_metrics(r.get("keywordIdeaMetrics") or {})})
+        token = resp.get("nextPageToken")
+        if not token or len(out) >= limit:
+            break
+        body["pageToken"] = token
+    out.sort(key=lambda r: -(r["volume"] or 0))
+    return out[:limit]
+
+
+def metrics(creds, settings: dict, keywords: list[str], location: int, language: str, opener=urlopen) -> list[dict]:
+    """Số đầy đủ (volume, giá thầu, 12 tháng) của các từ khóa có sẵn (tối đa 10.000 / lần). Biến thể gần giống
+    (closeVariants) nhận cùng số."""
+    resp = _call(creds, settings, ":generateKeywordHistoricalMetrics",
+                 {**_geo_lang(location, language), "keywords": list(keywords)}, opener=opener)
+    out = []
+    for r in resp.get("results") or []:
+        m = parse_metrics(r.get("keywordMetrics") or {})
+        for text in [r.get("text")] + list(r.get("closeVariants") or []):
+            if text:
+                out.append({"keyword": text, **m})
+    return out
+
+
+def currency(creds, settings: dict, opener=urlopen) -> str:
+    """Đơn vị tiền của tài khoản Google Ads (giá thầu tính theo đơn vị này), ví dụ VND."""
+    resp = _call(creds, settings, "/googleAds:search", {"query": "SELECT customer.currency_code FROM customer"},
+                 timeout=30, opener=opener)
+    rows = resp.get("results") or []
+    return ((rows[0].get("customer") or {}).get("currencyCode") if rows else None) or "VND"
