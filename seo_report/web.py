@@ -407,6 +407,34 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         else:
             FloatGroup([])
 
+    def sub_nav(user, P) -> dict[str, list[tuple[str, str]]]:
+        """Tab con của từng mục menu (đúng tab có trên trang, theo quyền): mục → [(tên tab, địa chỉ)].
+        Tab đầu là tab mặc định của trang nên không cần ?tab=."""
+        from . import web_backlink as WB, web_cwv as WC, web_local as WL, web_merchant as WM, web_opps as WO
+        cl = A.is_client(user)
+
+        def q(path, tabs):
+            return [(name, path if i == 0 else f"{path}?tab={key}") for i, (key, name, *_) in enumerate(tabs)]
+        out = {
+            "/url": [(t, h) for t, h in URL_TABS if (h not in EDIT_PAGES or A.can_edit(user))
+                     and (not cl or h in A.CLIENT_PAGES)],
+            "/tu-khoa": list(RESEARCH_TABS),
+            "/toc-do": q("/toc-do", WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS),
+            "/backlink": q("/backlink", WB.PAGE_TABS), "/local": q("/local", WL.TABS),
+            "/merchant": q("/merchant", WM.TABS),
+            "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"), ("trang-dich", "Trang đích"),
+                             ("ai-google", "AI trên Google"), *([] if cl else [("co-hoi", "Cơ hội SEO/GEO")])]),
+            "/aio": q("/aio", [("tong-quan", "Tổng quan"), *([] if cl else [("viec", "Việc nên làm")]),
+                               ("tu-khoa", "Từ khóa")]),
+        }
+        try:
+            with P.connect() as c:
+                sets_ = [x for x in R.sets(c, P.site) if not x["draft"]]
+            out["/rank"] = [("Tổng quan", "/rank")] + [(x["name"], f"/rank?bo={x['id']}") for x in sets_]
+        except Exception:  # noqa: BLE001 (dự án mới chưa có bảng bộ từ khóa)
+            pass
+        return {k: v for k, v in out.items() if len(v) > 1}
+
     def shell(active: str, user, P, ctx: dict | None = None, period: bool | str = True, group: bool = True):
         ui.add_head_html(T.HEAD)
         ui.add_body_html(T.BODY)
@@ -437,6 +465,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     from . import feedback as FB
                     with P.connect() as c:
                         fb_new = FB.count_new(c)
+                subs_of = sub_nav(user, P)
                 for group_name, items in NAV:
                     if A.is_client(user):
                         items = [("Nguồn tìm kiếm", "/nguon", "travel_explore") if h == "/url" else (lb, h, ic)
@@ -452,13 +481,26 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         ui.label(group_name).classes("sr-nav-group")
                     for label, href, icon in items:
                         on = label == active or NAV_PARENT.get(active) == label
-                        with ui.link(target=href).classes("active" if on else ""):
-                            ui.icon(icon, size="19px")
-                            ui.label(label).classes("sr-mini-hide")
-                            if href == "/ho-tro" and fb_new:
-                                T.count_badge(ui, fb_new, f"{fb_new} yêu cầu mới").classes("sr-nav-badge")
-                            if mini:
-                                ui.tooltip(label).props("anchor='center right' self='center left'")
+                        subs = subs_of.get(href) or []
+                        item = ui.element("div").classes("sr-nav-item" + (" has-subs" if subs else "")
+                                                          + (" is-open" if on and subs else ""))
+                        item._props["data-label"] = label
+                        with item:
+                            with ui.link(target=href).classes("active" if on else ""):
+                                ui.icon(icon, size="19px")
+                                ui.label(label).classes("sr-mini-hide")
+                                if href == "/ho-tro" and fb_new:
+                                    T.count_badge(ui, fb_new, f"{fb_new} yêu cầu mới").classes("sr-nav-badge")
+                                if subs:
+                                    ui.icon("expand_more" if on else "chevron_right", size="16px").classes(
+                                        "sr-nav-caret sr-mini-hide").props('aria-hidden="true"')
+                                if mini and not subs:
+                                    ui.tooltip(label).props("anchor='center right' self='center left'")
+                            if subs:  # tab con: hiện ngay dưới mục đang mở; mục khác thì hiện khi rê chuột
+                                with ui.element("div").classes("sr-nav-subs").props(
+                                        f'aria-label="Các tab của {label}"'):
+                                    for t_, u_ in subs:
+                                        ui.link(t_, u_).classes("sr-nav-sub")
             ui.space()
 
             def budget_state() -> dict:

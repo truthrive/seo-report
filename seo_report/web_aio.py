@@ -359,7 +359,9 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
             s_todo.set_visibility(False)
         s_kw = ui.tab("Từ khóa")
     # Thương hiệu & đối thủ (tên, cách gọi, tên miền) quản lý ở trang Đối thủ, dùng chung với thứ hạng
-    with ui.tab_panels(sub, value=s_over).classes("w-full").props("animated=false"):
+    first = {"viec": None if cl else s_todo, "tu-khoa": s_kw}.get(start) or s_over  # ?tab= (từ menu trái)
+    sub.set_value(first)
+    with ui.tab_panels(sub, value=first).classes("w-full").props("animated=false"):
         with ui.tab_panel(s_over).classes("q-px-none"):
             overview()
         with ui.tab_panel(s_todo).classes("q-px-none"):

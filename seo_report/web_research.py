@@ -33,7 +33,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
              "f": json.loads(json.dumps(KR.FILTER_DEFAULT)),
              "view": "list", "shown_groups": 30, "sel": [], "kind": "all", "match": "all", "word": None,
              "wsort": "count", "word_label": "",
-             "busy": False, "hidden": _hidden_cols()}
+             "busy": False, "hidden": _hidden_cols(), "words": not _words_hidden()}
     if lookup:  # mở từ màn Hiệu suất URL / Tổng quan từ khóa: Tra URL
         preset = ("rank_url", lookup)
     for k, v in (view or {}).items():  # từ tab Tổng quan: "Xem tất cả" biến thể (khớp rộng) / câu hỏi
@@ -563,21 +563,31 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         ui.label("Nhóm theo trang site đang lên cho từ khóa (Search Console), phần còn lại theo độ giống của từ khóa. "
                  "Mỗi nhóm nên có một trang đích; nhóm “Cần trang mới” là gợi ý bài / danh mục nên làm.").classes(
             "text-xs muted q-mb-sm")
-        tone = {True: "amber", False: "blue"}
+        def n_(v) -> str:
+            return f"{v:,}".replace(",", ".")
+        # Bảng nhóm: các cột thẳng hàng (Nhóm · Từ khóa · Vị trí tốt nhất · Volume · Việc nên làm), có hàng tiêu đề
+        with ui.element("div").classes("sr-kr-grid sr-kr-ghead"):
+            for lab, cls in (("Nhóm / trang đích", ""), ("Từ khóa", "r c-n"), ("Vị trí tốt nhất", "r c-pos"),
+                             ("Volume / tháng", "r"), ("Việc nên làm", "c-act")):
+                ui.label(lab).classes(cls)
         for g in groups[:state["shown_groups"]]:
-            with ui.expansion().classes("w-full sr-op-check").props("dense") as ex:
+            with ui.expansion().classes("w-full sr-op-check sr-kr-gitem").props("dense") as ex:
                 with ex.add_slot("header"):
-                    with ui.row().classes("w-full items-center no-wrap gap-3"):
-                        with ui.column().classes("gap-0 col").style("min-width:0"):
-                            ui.label(g["name"]).classes("text-sm font-semibold ellipsis")
-                            ui.label((g["path"] or "chưa có trang") + f" · {len(g['rows'])} từ khóa"
-                                     + (f" · vị trí tốt nhất {g['best']:.1f}".replace(".", ",") if g["best"] else "")
-                                     ).classes("text-xs muted ellipsis")
-                        T.pill(ui, g["action"], "amber" if g["new"] else "green" if g["action"].startswith("Đang")
-                               else "blue")
-                        with ui.column().classes("gap-0 items-end").style("min-width:96px"):
-                            ui.label(f"{g['volume']:,}".replace(",", ".")).classes("text-sm num font-semibold")
-                            ui.label("lượt tìm / tháng").classes("text-xs muted")
+                    with ui.element("div").classes("sr-kr-grid w-full"):
+                        with ui.column().classes("gap-0").style("min-width:0"):
+                            ui.label(g["name"]).classes("sr-kr-gname ellipsis")
+                            ui.label(g["path"] or "chưa có trang").classes(
+                                "text-xs ellipsis " + ("muted" if g["path"] else "sr-kr-gnone"))
+                            ui.label(f"{len(g['rows'])} từ khóa"
+                                     + (f" · vị trí {g['best']:.1f}".replace(".", ",") if g["best"] else "")
+                                     ).classes("text-xs muted sr-kr-gmeta-m")
+                        ui.label(n_(len(g["rows"]))).classes("num text-sm r c-n")
+                        ui.label(f"{g['best']:.1f}".replace(".", ",") if g["best"] else "–").classes(
+                            "num text-sm r c-pos" + ("" if g["best"] else " muted"))
+                        ui.label(n_(g["volume"])).classes("num text-sm r sr-kr-gvol")
+                        with ui.element("div").classes("c-act"):
+                            T.pill(ui, g["action"], "amber" if g["new"] else "green" if g["action"].startswith(
+                                "Đang") else "blue")
                 with ui.row().classes("w-full items-center gap-2 q-mb-xs"):
                     if g["page"]:
                         ui.link(g["page"], g["page"], new_tab=True).classes("sr-bl-link text-sm col")
@@ -931,13 +941,26 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         words_panel.refresh()
         table.refresh()
 
+    def set_words(show: bool) -> None:
+        """Ẩn / hiện cột Nhóm theo từ (nhớ theo trình duyệt)."""
+        state["words"] = show
+        try:
+            from nicegui import app
+            app.storage.user["kr_words_hidden"] = not show
+        except Exception:  # noqa: BLE001
+            pass
+        results.refresh()
+
     @ui.refreshable
     def words_panel() -> None:
         """Cột trái kiểu Semrush: nhóm từ khóa theo từ xuất hiện nhiều (bấm để lọc)."""
         rows = base_rows()
         groups = KR.word_groups(rows, state["rec"]["seed"], by=state["wsort"])
-        with ui.column().classes("w-full gap-1 q-mb-xs"):
-            ui.label("Nhóm theo từ").classes("text-sm font-semibold")
+        with ui.column().classes("w-full gap-1 q-mb-xs sr-kr-whead"):
+            with ui.row().classes("w-full items-center no-wrap gap-1"):
+                ui.label("Nhóm theo từ").classes("text-sm font-semibold col")
+                ui.button(icon="first_page", on_click=lambda: set_words(False)).props(
+                    'flat round dense size=sm aria-label="Ẩn cột Nhóm theo từ"').tooltip("Ẩn cột để bảng rộng hơn")
             ui.toggle({"count": "Số lượng", "volume": "Volume"}, value=state["wsort"],
                       on_change=lambda e: (state.update(wsort=e.value), words_panel.refresh())).props(
                 "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
@@ -961,7 +984,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
     def results() -> None:
         rec = state["rec"]
         if state["busy"]:
-            with ui.element("div").classes("sr-card sr-kr-panel sr-busy").props(
+            with ui.element("div").classes("sr-card sr-kr-panel sr-busy w-full").props(
                     'aria-busy="true" aria-label="Đang tìm ý tưởng từ khóa"'):
                 T.bone(ui, "32px", "60%", "8px")
                 T.bone(ui, "28px", "90%", "8px").classes("q-mt-sm")
@@ -987,8 +1010,11 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                         opt.on("keydown.enter", lambda m=mode: set_mode(m))
             return
         seg = "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
-        with ui.element("div").classes("sr-card sr-kr-panel"):
+        with ui.element("div").classes("sr-card sr-kr-panel w-full"):
             with ui.row().classes("w-full items-center gap-2 sr-kr-toolbar"):
+                if not state["words"]:
+                    ui.button(icon="view_sidebar", on_click=lambda: set_words(True)).props(
+                        'flat round dense aria-label="Hiện cột Nhóm theo từ"').tooltip("Hiện cột Nhóm theo từ")
                 ui.toggle({"all": "Tất cả", "questions": "Câu hỏi"}, value=state["kind"],
                           on_change=lambda e: (state.update(kind=e.value, word=None, word_label=""), fbar.refresh(),
                                                words_panel.refresh(), table.refresh())).props(seg).classes("sr-seg")
@@ -1021,9 +1047,10 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 from .web_export import export_menu
                 export_menu(ui, cfg, connect, file_name(), make_xlsx, user=user, category="research")
             fbar()
-            with ui.element("div").classes("sr-kr-magic"):
-                with ui.element("div").classes("sr-kr-words"):
-                    words_panel()
+            with ui.element("div").classes("sr-kr-magic" + ("" if state["words"] else " nowords")):
+                if state["words"]:
+                    with ui.element("div").classes("sr-kr-words"):
+                        words_panel()
                 with ui.element("div").classes("sr-kr-main"):
                     table()
 
@@ -1059,6 +1086,14 @@ def _hidden_cols() -> set[str]:
         return set(app.storage.user.get("kr_hidden_cols", ["cpc"]))
     except Exception:  # noqa: BLE001
         return {"cpc"}
+
+
+def _words_hidden() -> bool:
+    try:
+        from nicegui import app
+        return bool(app.storage.user.get("kr_words_hidden"))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def short_url(u: str, keep: int = 48) -> str:

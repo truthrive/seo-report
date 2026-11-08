@@ -14,6 +14,8 @@ TABS = (("audit", "Audit kỹ thuật"), ("du-bao", "Dự báo từ khóa"), ("l
         ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"), ("thuc-the", "Thực thể thương hiệu"))
 NUM = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
 POS = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})"
+TAB_ICON = {"audit": "fact_check", "du-bao": "query_stats", "len-top": "trending_up", "giam": "trending_down",
+            "tranh": "call_split", "moi": "fiber_new", "thuc-the": "hub"}
 CAUSES = {"rank": ("Rớt hạng", "k-lost"), "demand": ("Ít người tìm hơn", "k-kw"), "ctr": ("CTR giảm", "k-url"),
           "mixed": ("Giảm chung", "")}
 NEW_CAP = 3000  # tab Trang mới, chế độ Tất cả: chỉ gửi bấy nhiêu dòng mới nhất (site bán hàng có hàng nghìn sản phẩm)
@@ -41,51 +43,108 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
              "q": ""}
 
     def pick(v: str) -> None:
+        if v == state["tab"]:
+            return
         state["tab"] = v
         ui.run_javascript(f"history.replaceState(null, '', '/co-hoi' + ('{v}' === 'audit' ? '' : '?tab={v}'))")
+        cards.refresh()
+        panel.refresh()
+
+    def _n(v) -> str:
+        return f"{v:,.0f}".replace(",", ".")
+
+    def summary(data: dict) -> dict[str, tuple[int, str, str]]:
+        """Mỗi thẻ: (số chính, dòng phụ, tông: bad/warn/good/neutral)."""
+        au = data["audit"]
+        issues = len({p["url_id"] for c in au["checks"] if c["level"] != "info" for p in c["pages"]})
+        fc = data["forecast"]
+        st = data["striking"]
+        dc = data["decay"]
+        serious = sum(1 for g in data["cannibal"] if g["serious"])
+        new_sig = sum(1 for r in data["new"] if r["impressions"] >= O.NEW_SIGNAL)
+        kg_bad = sum(1 for c in data["kg"]["checks"] if c["ok"] is False)
+        return {
+            "audit": (issues, f"trang cần sửa / {_n(au['pages'])} trang đã quét" if au["pages"] else "chưa quét",
+                      "bad" if issues else "good"),
+            "du-bao": (len(fc["rows"]), f"+{_n(fc['gain'])} click / tháng nếu lên top {fc['target']}"
+                       if fc["rows"] else "từ khóa chưa vào top 3", "neutral"),
+            "len-top": (len(st), f"+{_n(sum(r['potential'] for r in st))} click / 28 ngày" if st
+                        else "từ khóa vị trí 4–15", "neutral"),
+            "giam": (len(dc), f"−{_n(sum(r['lost'] for r in dc))} click so với 28 ngày trước" if dc
+                     else "không trang nào tụt", "warn" if dc else "good"),
+            "tranh": (serious, "từ khóa nên xử lý" + (f" / {len(data['cannibal'])}" if data["cannibal"] else ""),
+                      "warn" if serious else "good"),
+            "moi": (new_sig, "trang mới đã có tín hiệu", "neutral"),
+            "thuc-the": (kg_bad, "việc chưa đạt" if data["kg"]["at"] else "chưa kiểm tra",
+                         "warn" if kg_bad else "good" if data["kg"]["at"] else "neutral"),
+        }
+
+    @ui.refreshable
+    def cards() -> None:
+        sm = summary(state["data"])
+        with ui.element("div").classes("sr-op-nav").props('role="tablist" aria-label="Loại cơ hội"'):
+            for k, name in TABS:
+                n, sub, tone = sm[k]
+                on = k == state["tab"]
+                c = ui.element("div").classes("sr-op-card" + (" on" if on else "")).props(
+                    f'role="tab" tabindex="0" aria-selected="{str(on).lower()}"')
+                c.on("click", lambda _, k=k: pick(k))
+                c.on("keydown.enter", lambda _, k=k: pick(k))
+                with c:
+                    with ui.row().classes("items-center no-wrap gap-2 w-full"):
+                        ui.icon(TAB_ICON[k], size="18px").classes("sr-op-card-ico").props('aria-hidden="true"')
+                        ui.label(name).classes("sr-op-card-name col")
+                    with ui.row().classes("items-baseline no-wrap gap-2 q-mt-xs"):
+                        ui.label(_n(n)).classes(f"sr-op-card-num t-{tone}")
+                        if tone == "good" and n == 0:
+                            ui.icon("check_circle", size="16px").classes("sr-op-card-ok").props(
+                                'aria-label="Ổn"')
+                    ui.label(sub).classes("sr-op-card-sub")
+
+    @ui.refreshable
+    def panel() -> None:
+        data = state["data"]
+        with ui.element("div").classes("sr-card sr-op-panel w-full"):
+            {"len-top": lambda: striking_tab(data["striking"]), "giam": lambda: decay_tab(data["decay"]),
+             "tranh": lambda: cannibal_tab(data["cannibal"]), "moi": lambda: new_tab(data["new"]),
+             "audit": lambda: audit_tab(data["audit"]), "du-bao": lambda: forecast_tab(data["forecast"]),
+             "thuc-the": lambda: kg_tab(data["kg"])}[state["tab"]]()
 
     @ui.refreshable
     def body() -> None:
         data = state["data"]
         if data is None:
             with ui.element("div").classes("w-full sr-busy").props('aria-busy="true" aria-label="Đang tính"'):
-                with ui.row().classes("gap-2 q-mb-md"):
+                with ui.element("div").classes("sr-op-nav"):
                     for _ in TABS:
-                        T.bone(ui, "32px", "150px", "8px")
+                        T.bone(ui, "96px", radius="12px")
                 T.bone(ui, "420px", radius="14px")
             return
-        counts = {"len-top": len(data["striking"]), "giam": len(data["decay"]),
-                  "tranh": sum(1 for g in data["cannibal"] if g["serious"]),
-                  "moi": sum(1 for r in data["new"] if r["impressions"] >= O.NEW_SIGNAL),
-                  "du-bao": len(data["forecast"]["rows"]),
-                  "thuc-the": sum(1 for c in data["kg"]["checks"] if c["ok"] is False),
-                  "audit": len({p["url_id"] for c in data["audit"]["checks"] if c["level"] != "info"
-                                for p in c["pages"]})}
-        with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
-                "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
-            for k, name in TABS:
-                ui.tab(k, f"{name} · {counts[k]:,}".replace(",", "."))
-        with ui.tab_panels(tabs, value=state["tab"]).classes("w-full").props("animated=false"):
-            with ui.tab_panel("len-top").classes("q-px-none"):
-                striking_tab(data["striking"])
-            with ui.tab_panel("giam").classes("q-px-none"):
-                decay_tab(data["decay"])
-            with ui.tab_panel("tranh").classes("q-px-none"):
-                cannibal_tab(data["cannibal"])
-            with ui.tab_panel("moi").classes("q-px-none"):
-                new_tab(data["new"])
-            with ui.tab_panel("audit").classes("q-px-none"):
-                audit_tab(data["audit"])
-            with ui.tab_panel("du-bao").classes("q-px-none"):
-                forecast_tab(data["forecast"])
-            with ui.tab_panel("thuc-the").classes("q-px-none"):
-                kg_tab(data["kg"])
+        cards()
+        panel()
 
     def explain(title: str, lines: list[str]) -> None:
-        with ui.element("div").classes("sr-op-explain"):
-            ui.label(title).classes("text-sm font-semibold")
+        """Đầu tab: tên tab + một câu mô tả; cách đọc / việc nên làm gấp lại, bấm "Cách đọc" để mở."""
+        name = dict(TABS)[state["tab"]]
+        with ui.row().classes("w-full items-start no-wrap gap-3 sr-op-head"):
+            ui.icon(TAB_ICON[state["tab"]], size="22px").classes("sr-op-head-ico").props('aria-hidden="true"')
+            with ui.column().classes("gap-0 col").style("min-width:0"):
+                ui.label(name).classes("sr-op-head-title")
+                ui.label(title).classes("text-sm muted")
+            btn = ui.button("Cách đọc", icon="help_outline").props(
+                'flat dense no-caps size=sm aria-expanded="false"').classes("sr-op-howbtn")
+        box = ui.element("div").classes("sr-op-explain")
+        box.set_visibility(False)
+        with box:
             for t in lines:
-                ui.label(t).classes("text-sm muted")
+                with ui.row().classes("items-start no-wrap gap-2"):
+                    ui.icon("arrow_right", size="18px").classes("muted").props('aria-hidden="true"')
+                    ui.label(t).classes("text-sm")
+
+        def toggle():
+            box.set_visibility(not box.visible)
+            btn.props(f'aria-expanded="{str(box.visible).lower()}"')
+        btn.on_click(toggle)
 
     # ---- Sắp lên top ----
     @ui.refreshable
@@ -209,7 +268,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
               props.value }}</span></div></q-td>""")
         tb.add_slot("body-cell-clicks", """
             <q-td :props="props"><span class="num">{{ props.row.prev_clicks.toLocaleString('vi-VN') }} →
-              <b>{{ props.value.toLocaleString('vi-VN') }}</b></span></q-td>""")
+              {{ props.value.toLocaleString('vi-VN') }}</span></q-td>""")
         tb.add_slot("body-cell-lost", """
             <q-td :props="props"><span class="sr-op-move down">−{{ props.value.toLocaleString('vi-VN') }}
               ({{ props.row.pct }}%)</span></q-td>""")
@@ -339,7 +398,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         for n in (7, 30, 90):
             tb.add_slot(f"body-cell-p{n}", """
             <q-td :props="props"><template v-if="props.row.p%(n)s">
-              <div class="num" :class="props.row.p%(n)s.done ? '' : 'muted'"><b>{{ props.row.p%(n)s.c.toLocaleString('vi-VN') }}</b>
+              <div class="num" :class="props.row.p%(n)s.done ? '' : 'muted'">{{ props.row.p%(n)s.c.toLocaleString('vi-VN') }}
                 click</div>
               <div class="sr-bl-sub">{{ props.row.p%(n)s.i.toLocaleString('vi-VN') }} hiển thị<span
                 v-if="props.row.p%(n)s.pos"> · vị trí {{ props.row.p%(n)s.pos.toLocaleString('vi-VN') }}</span></div>
@@ -434,6 +493,11 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             elif ed:
                 btn = ui.button("Quét ngay", icon="travel_explore").props("unelevated no-caps")
                 btn.on_click(lambda: scan_now(btn))
+            if au["pages"]:
+                from .web_export import export_menu
+                stamp = (last["finished_at"] or "")[:10] if last else ""
+                export_menu(ui, cfg, connect, f"audit-ky-thuat_{stamp or end}", lambda: audit_xlsx(au, site), user=user,
+                            category="audit")
         if not au["pages"]:
             T.empty_state(ui, "fact_check", "Chưa có kết quả audit",
                           "Bấm “Quét ngay” (người có quyền sửa) hoặc chờ lịch quét hằng tuần.")
@@ -646,6 +710,82 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         body.refresh()
 
     background_tasks.create(load())
+
+
+def audit_xlsx(au: dict, site: str) -> bytes:
+    """File audit: Tóm tắt (lần quét, số theo mức, từng lỗi + cách sửa) · Lỗi theo trang (mỗi dòng một lỗi của
+    một trang, lọc được) · Theo trang (mỗi trang một dòng, đếm lỗi theo mức)."""
+    import io
+    from datetime import datetime
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    bold = Font(bold=True)
+    head_fill = PatternFill("solid", fgColor="EEF3E6")
+    fills = {"high": "FCE4D6", "medium": "FFF2CC", "info": "DDEBF7"}
+    wb = Workbook()
+
+    def table(ws, head, rows, widths, level_col=None):
+        ws.append(head)
+        for c in ws[ws.max_row]:
+            c.font, c.fill = bold, head_fill
+        start = ws.max_row
+        for r in rows:
+            ws.append(r)
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        for row in ws.iter_rows(min_row=start + 1):
+            for c in row:
+                c.alignment = Alignment(vertical="top", wrap_text=True)
+            if level_col is not None:
+                key = next((k for k, (n, _) in SA.LEVELS.items() if n == row[level_col].value), None)
+                if key:
+                    row[level_col].fill = PatternFill("solid", fgColor=fills[key])
+        ws.auto_filter.ref = f"A{start}:{get_column_letter(len(head))}{ws.max_row}"
+        ws.freeze_panes = f"A{start + 1}"
+
+    # 1. Tóm tắt
+    ws = wb.active
+    ws.title = "Tóm tắt"
+    last = au["run"] or {}
+    at = ""
+    if last.get("finished_at"):
+        at = f"{datetime.fromisoformat(last['finished_at']).astimezone():%H:%M %d/%m/%Y}"
+    lv = {k: sum(len(c["pages"]) for c in au["checks"] if c["level"] == k) for k in SA.LEVELS}
+    for k, v in (("Website", site), ("Quét lúc", at), ("Số trang đã quét", au["pages"]),
+                 ("Trang không có lỗi cần sửa", au["healthy"]),
+                 ("Trang không mở được", last.get("errors") or 0),
+                 *[(f"{name} (lượt trang)", lv[k]) for k, (name, _) in SA.LEVELS.items()]):
+        ws.append([k, v])
+        ws.cell(ws.max_row, 1).font = bold
+    ws.append([])
+    table(ws, ["Mức", "Lỗi", "Số trang", "Cách sửa"],
+          [[SA.LEVELS[c["level"]][0], c["name"], len(c["pages"]), c["fix"]] for c in au["checks"]],
+          [30, 44, 10, 90], level_col=0)
+    ws.freeze_panes = None
+
+    # 2. Lỗi theo trang
+    table(wb.create_sheet("Lỗi theo trang"), ["Mức", "Lỗi", "Trang", "URL", "Chi tiết", "Cách sửa"],
+          [[SA.LEVELS[c["level"]][0], c["name"], _path(p["url"], site), p["url"], p["detail"] or "", c["fix"]]
+           for c in au["checks"] for p in c["pages"]],
+          [12, 36, 40, 50, 50, 70], level_col=0)
+
+    # 3. Theo trang
+    per: dict[str, dict] = {}
+    for c in au["checks"]:
+        for p in c["pages"]:
+            d = per.setdefault(p["url"], {k: 0 for k in SA.LEVELS} | {"names": []})
+            d[c["level"]] += 1
+            d["names"].append(f"[{SA.LEVELS[c['level']][0]}] {c['name']}")
+    rows = sorted(per.items(), key=lambda x: (-x[1]["high"], -x[1]["medium"], -x[1]["info"], x[0]))
+    table(wb.create_sheet("Theo trang"),
+          ["Trang", "URL", *[n for n, _ in SA.LEVELS.values()], "Các lỗi"],
+          [[_path(u, site), u, *[d[k] for k in SA.LEVELS], "\n".join(d["names"])] for u, d in rows],
+          [40, 50, 10, 10, 10, 70])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _p(v) -> str:
