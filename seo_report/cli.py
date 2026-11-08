@@ -303,6 +303,12 @@ def _daily_one(cfg) -> None:
                 cwv.refresh(con, cfg, log=lambda m: print(m, flush=True))
         except (Exception, SystemExit):
             traceback.print_exc()
+        try:  # Audit kỹ thuật (tool tự mở các trang quan trọng, miễn phí): mỗi tuần một lần
+            from . import site_audit
+            with db.connect(cfg.db_path) as con:
+                site_audit.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
         try:  # Local SEO (Google Business Profile, miễn phí): hồ sơ đã gắn, số nối tiếp từ ngày cuối đã có
             from . import gbp
             with db.connect(cfg.db_path) as con:

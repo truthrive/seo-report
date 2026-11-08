@@ -122,19 +122,30 @@ DECAY_NOTICE_MIN = 30  # chỉ báo trang mất từ 30 click / 28 ngày (ít h�
 
 
 def _seo(con, cfg) -> list[dict]:
-    """Trang tụt traffic mạnh (không phải mùa vụ) và từ khóa bị nhiều trang tranh nhau nặng: từ dữ liệu GSC đã lưu.
+    """Lỗi nặng của audit kỹ thuật, trang tụt traffic mạnh (không phải mùa vụ) và từ khóa bị nhiều trang tranh nhau
+    nặng: từ dữ liệu đã lưu.
     Key theo tuần của ngày GSC chốt: tuần sau còn tụt thì báo lại."""
     from . import keywords as K
     from . import opportunities as OP
     if not _has(con, "gsc_fetch_log"):
         return []
     end = K.latest_date(con, cfg.site_url)
+    out = []
+    try:
+        from . import site_audit as SA
+        au = SA.cached_findings(con, cfg)
+        run_id = (au["run"] or {}).get("id")
+        for ch in [c for c in au["checks"] if c["level"] == "high"]:
+            out.append(_n("seo", "high", f"audit:{run_id}:{ch['code']}:{len(ch['pages'])}",
+                          f"Audit: {ch['name']} · {len(ch['pages'])} trang", ch["fix"], "/co-hoi?tab=audit",
+                          ((au["run"] or {}).get("finished_at") or "")[:10]))
+    except Exception:  # noqa: BLE001 — chưa quét lần nào / thiếu bảng
+        pass
     data = OP.peek_summary(cfg)  # chưa tính xong thì lần sau mới có: không bắt trang chờ
     if not data:
-        return []
+        return out
     week = f"{end.isocalendar()[0]}w{end.isocalendar()[1]}"
     site = cfg.site_url.rstrip("/")
-    out = []
     for r in [r for r in data["decay"] if r["lost"] >= DECAY_NOTICE_MIN and not r["seasonal"]][:5]:
         path = r["url"].replace(site, "") or "/"
         out.append(_n("seo", "high" if r["change"] <= -0.5 else "medium", f"decay:{r['url']}:{week}",

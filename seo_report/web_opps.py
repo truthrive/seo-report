@@ -2,12 +2,14 @@
 Không gọi API, không tốn tiền. Team xem (người sửa và người chỉ xem); khách hàng không thấy."""
 from datetime import date
 
+from . import access as A
 from . import keywords as K
 from . import opportunities as O
+from . import site_audit as SA
 from . import ui_theme as T
 
-TABS = (("len-top", "Sắp lên top"), ("giam", "Trang tụt traffic"), ("tranh", "Tranh nhau từ khóa"),
-        ("moi", "Trang mới"))
+TABS = (("audit", "Audit kỹ thuật"), ("len-top", "Sắp lên top"), ("giam", "Trang tụt traffic"),
+        ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"))
 NUM = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
 POS = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})"
 CAUSES = {"rank": ("Rớt hạng", "k-lost"), "demand": ("Ít người tìm hơn", "k-kw"), "ctr": ("CTR giảm", "k-url"),
@@ -32,12 +34,13 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
     T.page_header(ui, "insights", "Cơ hội SEO",
                   f"Từ Search Console: 28 ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}) so với 28 ngày trước "
                   f"({prev[0]:%d/%m} – {prev[1]:%d/%m}). Tính từ dữ liệu đã có, không tốn chi phí.")
-    state = {"tab": start if start in dict(TABS) else "len-top", "data": None, "strike": "all", "new": "signal",
+    ed = A.can_edit(user)
+    state = {"tab": start if start in dict(TABS) else "audit", "data": None, "strike": "all", "new": "signal",
              "q": ""}
 
     def pick(v: str) -> None:
         state["tab"] = v
-        ui.run_javascript(f"history.replaceState(null, '', '/co-hoi' + ('{v}' === 'len-top' ? '' : '?tab={v}'))")
+        ui.run_javascript(f"history.replaceState(null, '', '/co-hoi' + ('{v}' === 'audit' ? '' : '?tab={v}'))")
 
     @ui.refreshable
     def body() -> None:
@@ -51,7 +54,9 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             return
         counts = {"len-top": len(data["striking"]), "giam": len(data["decay"]),
                   "tranh": sum(1 for g in data["cannibal"] if g["serious"]),
-                  "moi": sum(1 for r in data["new"] if r["impressions"] >= O.NEW_SIGNAL)}
+                  "moi": sum(1 for r in data["new"] if r["impressions"] >= O.NEW_SIGNAL),
+                  "audit": len({p["url_id"] for c in data["audit"]["checks"] if c["level"] != "info"
+                                for p in c["pages"]})}
         with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
             for k, name in TABS:
@@ -65,6 +70,8 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                 cannibal_tab(data["cannibal"])
             with ui.tab_panel("moi").classes("q-px-none"):
                 new_tab(data["new"])
+            with ui.tab_panel("audit").classes("q-px-none"):
+                audit_tab(data["audit"])
 
     def explain(title: str, lines: list[str]) -> None:
         with ui.element("div").classes("sr-op-explain"):
@@ -352,6 +359,110 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             "sr-seg q-mb-sm")
         new_table(rows)
 
+    # ---- Audit kỹ thuật ----
+    async def scan_now(btn) -> None:
+        from contextlib import closing
+
+        from . import db
+        from . import notices as N
+        key = str(cfg.db_path)
+        if not ed or key in SA.running:
+            return
+        SA.running[key] = {"n": 0, "total": 0, "by": str(user)}
+        btn.props("loading")
+        note = ui.notification("Đang quét các trang quan trọng (khoảng 5 phút, có thể rời trang)…", spinner=True,
+                               timeout=None, type="ongoing", position="bottom-right")
+
+        def prog(n, total):
+            SA.running[key].update(n=n, total=total)
+
+        def work():
+            with closing(db.connect(cfg.db_path)) as c:
+                return SA.run(c, site, end, str(user), progress=prog, log=lambda m: None)
+        try:
+            r = await run.io_bound(work)
+            ui.notify(f"Đã quét {r['pages']} trang" + (f" ({r['errors']} trang không mở được)" if r["errors"]
+                                                         else ""), type="positive", position="bottom-right")
+        except Exception as ex:  # noqa: BLE001
+            ui.notify(f"Quét chưa xong: {ex}", type="warning", position="bottom-right")
+        finally:
+            SA.running.pop(key, None)
+            try:
+                note.dismiss()
+            except Exception:  # noqa: BLE001 — người dùng đã rời trang
+                pass
+        N.forget()
+        with connect() as c:
+            state["data"] = {**state["data"], "audit": SA.cached_findings(c, cfg)}
+        body.refresh()
+
+    def audit_tab(au: dict) -> None:
+        explain("Tool tự mở các trang quan trọng nhất của website (nhiều click / hiển thị nhất 90 ngày qua, tối đa "
+                f"{SA.MAX_PAGES} trang) và kiểm tra lỗi kỹ thuật SEO. Tự quét mỗi tuần, miễn phí.", [
+                    "Kiểm tra: trang lỗi / chuyển hướng, noindex, canonical, tiêu đề, mô tả, H1, ảnh thiếu alt, nội "
+                    "dung mỏng, tốc độ phản hồi; và từ Search Console: tiêu đề thiếu từ khóa chính, CTR thấp so với "
+                    "vị trí. Bấm từng mục để xem trang cần sửa và cách sửa."])
+        last = au["run"]
+        key = str(cfg.db_path)
+        with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
+            if last and last["finished_at"]:
+                from datetime import datetime
+                at = datetime.fromisoformat(last["finished_at"]).astimezone()
+                ui.label(f"Quét lần gần nhất {at:%H:%M %d/%m/%Y} · {last['pages']} trang"
+                         + (f" · {last['errors']} trang không mở được" if last["errors"] else "")).classes(
+                    "text-sm muted")
+            elif key not in SA.running:
+                ui.label("Chưa quét lần nào.").classes("text-sm muted")
+            ui.space()
+            if key in SA.running:
+                prog = ui.label().classes("text-sm muted")
+
+                def tick():
+                    r = SA.running.get(key)
+                    prog.text = (f"Đang quét {r['n']}/{r['total'] or '…'} trang" if r
+                                 else "Đã quét xong: tải lại trang để xem kết quả")
+                tick()
+                ui.timer(2, tick)
+            elif ed:
+                btn = ui.button("Quét ngay", icon="travel_explore").props("unelevated no-caps")
+                btn.on_click(lambda: scan_now(btn))
+        if not au["pages"]:
+            T.empty_state(ui, "fact_check", "Chưa có kết quả audit",
+                          "Bấm “Quét ngay” (người có quyền sửa) hoặc chờ lịch quét hằng tuần.")
+            return
+        lv = {k: sum(len(c["pages"]) for c in au["checks"] if c["level"] == k) for k in SA.LEVELS}
+        with ui.element("div").classes("sr-op-audit-sum"):
+            with ui.element("div").classes("sr-op-stat"):
+                ui.label(f"{au['healthy']}/{au['pages']}").classes("sr-op-stat-num")
+                ui.label("trang không có lỗi cần sửa").classes("text-sm muted")
+            for k, (name, tone) in SA.LEVELS.items():
+                with ui.element("div").classes("sr-op-stat"):
+                    ui.label(f"{lv[k]:,}".replace(",", ".")).classes(f"sr-op-stat-num t-{tone}")
+                    ui.label(f"{name} (lượt trang)").classes("text-sm muted")
+        if not au["checks"]:
+            T.empty_state(ui, "check_circle", "Không phát hiện lỗi nào")
+            return
+        for ch in au["checks"]:
+            name, tone = SA.LEVELS[ch["level"]]
+            with ui.expansion().classes("w-full sr-op-check").props("dense") as ex:
+                with ex.add_slot("header"):
+                    with ui.row().classes("w-full items-center no-wrap gap-3"):
+                        T.pill(ui, name, tone)
+                        ui.label(ch["name"]).classes("text-sm font-semibold col")
+                        ui.label(f"{len(ch['pages'])} trang").classes("text-sm num muted")
+                ui.label(ch["fix"]).classes("text-sm q-mb-sm")
+                rows = [{"id": i, "url": p["url"], "path": _path(p["url"], site), "detail": p["detail"]}
+                        for i, p in enumerate(ch["pages"])]
+                tb = ui.table(columns=[
+                    {"name": "path", "label": "Trang", "field": "path", "align": "left"},
+                    {"name": "detail", "label": "Chi tiết", "field": "detail", "align": "left"},
+                ], rows=rows, row_key="id", pagination=10).props("flat dense").classes("w-full sr-bl-table")
+                tb.add_slot("body-cell-path", """
+                    <q-td :props="props"><div class="sr-bl-src"><a :href="props.row.url" target="_blank"
+                      rel="noopener" class="sr-bl-link" :title="props.row.url">{{ props.value }}</a></div></q-td>""")
+                tb.add_slot("body-cell-detail", """
+                    <q-td :props="props"><div class="sr-op-detail">{{ props.value || '–' }}</div></q-td>""")
+
     body()
 
     async def load() -> None:
@@ -360,11 +471,12 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
 
             from . import db
             with closing(db.connect(cfg.db_path)) as c:
-                return O.summary(c, site, end, cfg.keywords)
+                return {**O.summary(c, site, end, cfg.keywords), "audit": SA.cached_findings(c, cfg)}
         try:
             state["data"] = await run.io_bound(work)
         except Exception as ex:  # noqa: BLE001
-            state["data"] = {"striking": [], "decay": [], "cannibal": [], "new": []}
+            state["data"] = {"striking": [], "decay": [], "cannibal": [], "new": [],
+                             "audit": {"checks": [], "pages": 0, "healthy": 0, "run": None}}
             ui.notify(f"Chưa tính được cơ hội SEO: {ex}", type="warning")
         body.refresh()
 
