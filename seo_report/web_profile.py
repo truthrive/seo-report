@@ -27,7 +27,8 @@ def photo_uri(content: bytes, size: int = 128) -> str:
 
 
 def build_profile_page(ui, cfg, connect, user) -> None:
-    T.page_header(ui, "account_circle", "Hồ sơ của tôi", "Tên và ảnh hiện ở menu, nhóm avatar và màn Phân quyền.",
+    T.page_header(ui, "account_circle", "Hồ sơ của tôi", "Tên và ảnh hiện ở menu và nhóm avatar." if T.client_view() else
+                  "Tên và ảnh hiện ở menu, nhóm avatar và màn Phân quyền.",
                   tone="grey")
     with ui.element("div").classes("sr-card q-pa-md").style("max-width: 560px; width: 100%"):
         profile_form(ui, cfg, connect, user)
@@ -102,7 +103,7 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
             name = ui.input("Tên hiển thị", value=prof["name"], placeholder="ví dụ: Trường Thịnh").props(
                 f"outlined dense counter maxlength={A.MAX_NAME}")
             ui.input("Email / tên đăng nhập", value=email).props("outlined dense readonly").tooltip(
-                "Dùng để đăng nhập; Chủ tool đổi được ở màn Phân quyền")
+                "Dùng để đăng nhập" + ("" if T.client_view() else "; Chủ tool đổi được ở màn Phân quyền"))
             ui.input("Quyền", value=role_text + (f" · {row['title']}" if row and row.get("title") else "")).props(
                 "outlined dense readonly")
         with box:

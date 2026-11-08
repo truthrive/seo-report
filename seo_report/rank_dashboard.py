@@ -2,7 +2,8 @@
 
 Quy tắc số liệu (thống nhất mọi khu):
 - Từ khóa duy nhất: mỗi chữ từ khóa tính một lần trong phạm vi, ưu tiên dòng ở bộ Cam kết rồi bộ tạo trước. "Lượt theo
-  dõi" = số dòng từ khóa theo bộ (một từ khóa ở 2 bộ = 2 lượt). Bỏ bộ Nháp và từ khóa tạm dừng.
+  dõi" = số dòng từ khóa theo bộ (một từ khóa ở 2 bộ = 2 lượt). Bỏ bộ Nháp. Từ khóa / bộ tạm dừng vẫn tính theo lần
+  check gần nhất (tạm dừng chỉ là ngừng check), trừ từ khóa tạm dừng chưa check lần nào.
 - Top 3 / 5 / 10 cộng dồn (Top 5 gồm Top 3), % trên số từ khóa duy nhất của phạm vi.
 - Biến động chỉ tính trên từ khóa có lần check trước ("có lịch sử"); từ khóa mới kiểm tra đếm riêng, không là tăng.
 - Đối thủ chỉ tổng hợp khi mọi bộ trong phạm vi check cùng nơi (vùng Google, thiết bị, vị trí, ngôn ngữ). "Đối thủ vừa
@@ -30,7 +31,8 @@ def scope_keywords(con, site: str, end: date, scope) -> tuple[list[dict], int]:
     """(từ khóa duy nhất đang chạy của phạm vi, số lượt theo dõi)."""
     sets_ = scope_sets(con, site, scope)
     order = {x["id"]: i for i, x in enumerate(sets_)}  # bộ Cam kết đứng trước (R.sets đã xếp)
-    rows = [k for k in R.keywords(con, site, end) if k["set_id"] in order and not k["paused"]]
+    # Tạm dừng chỉ là ngừng check: từ khóa đã có số vẫn tính theo lần check gần nhất; chưa check lần nào thì bỏ
+    rows = [k for k in R.keywords(con, site, end) if k["set_id"] in order and (not k["paused"] or k["date"])]
     seen, out = set(), []
     for k in sorted(rows, key=lambda k: (order[k["set_id"]], k["id"])):
         key = k["keyword"].strip().lower()

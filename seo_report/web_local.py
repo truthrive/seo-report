@@ -68,9 +68,8 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
             ui.label("Danh sách hồ sơ tài khoản Google của tool đang quản lý. Chọn các chi nhánh của website này.") \
                 .classes("text-xs muted")
             box = ui.column().classes("w-full gap-1 q-mt-sm")
-            with box, ui.row().classes("items-center gap-2"):
-                ui.spinner(size="20px")
-                ui.label("Đang đọc danh sách hồ sơ từ Google…").classes("text-sm muted")
+            with box:
+                T.spinner(ui, "Đang đọc danh sách hồ sơ từ Google…")
             foot = ui.row().classes("w-full justify-end gap-2 q-mt-sm")
         dlg.open()
 
@@ -167,7 +166,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
             for k, label in TABS:
                 with ui.tab(k, label):
                     if k == "audit" and n_high:
-                        ui.badge(str(n_high), color="red").props("rounded").classes("sr-tab-badge")
+                        T.count_badge(ui, n_high, f"{n_high} việc cần xử lý").classes("sr-tab-badge")
         with ui.tab_panels(value=state["tab"]).classes("w-full").props("animated=false") as panels:
             state["panels"] = panels
             with ui.tab_panel("overview").classes("q-px-none"):

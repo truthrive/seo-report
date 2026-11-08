@@ -72,7 +72,9 @@ def build_projects_page(ui, base, app_connect, user) -> None:
         s = project["settings"] if project else PJ.DEFAULTS
         with ui.dialog() as dlg, ui.card().style("border-radius:16px; min-width:560px; max-width:640px"):
             ui.label(f"Sửa dự án {project['name']}" if project else "Thêm dự án").classes("text-lg font-semibold")
-            loading = ui.label("Đang lấy danh sách property từ Google…").classes("text-xs muted")
+            loading = ui.element("div").classes("w-full")  # vòng xoay khi đang hỏi Google → dòng hướng dẫn khi xong
+            with loading:
+                T.spinner(ui, "Đang lấy danh sách property từ Google…", size="16px")
             name = ui.input("Tên dự án", value=project["name"] if project else "",
                             placeholder="ví dụ: Công ty ABC").props("outlined dense").classes("w-full")
             site = ui.select({}, label="Property Search Console", value=None, with_input=True, new_value_mode="add-unique"
@@ -227,8 +229,10 @@ def build_projects_page(ui, base, app_connect, user) -> None:
             ga4_opts.setdefault(cur_ga4, cur_ga4)
         site.set_options(gsc_opts, value=cur_site)
         ga4.set_options(ga4_opts, value=cur_ga4 or None)
-        loading.text = warn or ("Chọn trong danh sách property tài khoản Google của tool truy cập được. Khách hàng "
-                                "cần thêm email đó vào GSC / GA4 (quyền đọc) trước.")
+        loading.clear()
+        with loading:
+            ui.label(warn or ("Chọn trong danh sách property tài khoản Google của tool truy cập được. Khách hàng "
+                              "cần thêm email đó vào GSC / GA4 (quyền đọc) trước.")).classes("text-xs muted")
 
     def fetch_logo_bg(p: dict) -> None:
         from nicegui import background_tasks
@@ -361,9 +365,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                 "text-xs muted")
             box = ui.column().classes("w-full gap-2 q-mt-sm")
             with box:
-                with ui.row().classes("items-center gap-2"):
-                    ui.spinner(size="20px")
-                    ui.label("Đang hỏi Search Console và Google Analytics…").classes("text-sm muted")
+                T.spinner(ui, "Đang hỏi Search Console và Google Analytics…")
             with ui.row().classes("w-full justify-end q-mt-sm"):
                 ui.button("Đóng", on_click=dlg.close).props("flat no-caps")
         dlg.open()
@@ -434,7 +436,8 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                     icon_btn = "flat round dense color=grey-8"
                     with ui.element("div").classes("sr-icon-slot"):
                         if p["slug"] in _syncing:
-                            ui.spinner(size="20px").tooltip("Đang lấy dữ liệu Search Console")
+                            T.spinner(ui, "Đang lấy dữ liệu Search Console", visible_label=False).tooltip(
+                                "Đang lấy dữ liệu Search Console")
                         elif not st["days"]:
                             ui.button(icon="cloud_download", on_click=lambda _, p=p: start_sync(p)).props(
                                 icon_btn).tooltip("Lấy dữ liệu Search Console")

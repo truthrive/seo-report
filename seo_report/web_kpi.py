@@ -47,69 +47,137 @@ def load_progress(cfg, today: date | None = None) -> dict | None:
 
 
 def _rank_target(ch: dict) -> str:
-    """Cam kết thứ hạng ghi cả hai cách: '40% (16 từ)' hoặc '16 từ (40%)'."""
+    """Cam kết thứ hạng ghi cả hai cách: '40% (16 từ khóa)' hoặc '16 từ khóa (40%)'."""
     if ch["unit"] == "pct":
-        return _pct(ch["target_pct"]) + (f" ({ch['need']} từ)" if ch["need"] is not None else "")
-    return f"{int(ch['target'])} từ" + (f" ({_pct(ch['target_pct'])})" if ch["target_pct"] is not None else "")
+        return _pct(ch["target_pct"]) + (f" ({ch['need']} từ khóa)" if ch["need"] is not None else "")
+    return f"{int(ch['target'])} từ khóa" + (f" ({_pct(ch['target_pct'])})" if ch["target_pct"] is not None else "")
+
+
+TILE_LOOK = {3: ("emoji_events", "green"), 5: ("workspace_premium", "blue"), 10: ("format_list_numbered", "lime")}
 
 
 def _tile(ui, line: dict, ch: dict, running: bool, has_ga4: bool) -> None:
-    """Một ô tiến độ: giá trị lớn, thanh so với cam kết, trạng thái, dòng gợi ý."""
+    """Một ô tiến độ: icon + tên + trạng thái, số lớn kèm đơn vị, thanh tiến độ (vạch đen = mức cam kết), gợi ý."""
     text, tone = KP.status(ch, running)
-    icon = "remove" if ch["target"] is None else ICONS[tone]
-    done = ahead = None  # phần đậm / phần nhạt của thanh tiến độ (0–1)
+    committed = ch["target"] is not None
+    icon, look = (TILE_LOOK.get(line.get("top"), ("leaderboard", "green")) if ch["kind"] == "rank"
+                  else ("trending_up", "purple"))
+    unit = ""
+    fill = ahead = mark = None  # thanh: phần đậm / phần nhạt (dự báo) / vạch cam kết, cùng thang 0–1
     if ch["kind"] == "rank":
         value = "chưa check" if not ch["checked"] else (_pct(ch["actual"]) if ch["total"] else "–")
-        hint = f"{ch['count']}/{ch['total']} từ khóa" + (
-            f" · cam kết {_rank_target(ch)}" if ch["target"] is not None else "")
+        unit = f"{ch['count']}/{ch['total']} từ khóa" if ch["checked"] and ch["total"] else ""
+        hint = f"Cam kết {_rank_target(ch)}" if committed else "Tháng này không cam kết"
         if not ch["checked"]:
-            hint = "Chưa có lần check nào trong tháng này" + (
-                f" · cam kết {_rank_target(ch)}" if ch["target"] is not None else "")
-        if ch["need"]:
-            done = ahead = min(ch["count"] / ch["need"], 1)
+            hint = "Chưa có lần check nào trong tháng này" + (f" · cam kết {_rank_target(ch)}" if committed else "")
+        if ch["total"] and ch["checked"]:
+            fill = ch["count"] / ch["total"]
+            if committed and ch["need"]:
+                mark = min(ch["need"] / ch["total"], 1)
     elif not has_ga4:
         value, hint = "chưa có", "Chưa kết nối GA4"
     elif ch["kind"] == "level":
         value = F.n(ch["actual"]) if ch["actual"] is not None else "chưa có"
-        hint = f"Cam kết {F.n(ch['target'])}" if ch["target"] is not None else "Tháng này không cam kết"
+        unit = "phiên"
+        parts = [f"Cam kết {F.n(ch['target'])}" if committed else "Tháng này không cam kết"]
         if running and ch.get("forecast") is not None:
-            hint += f" · dự báo cuối tháng {F.n(ch['forecast'])}"
+            parts.append(f"dự báo cuối tháng {F.n(ch['forecast'])}")
         elif running and ch.get("expected") is not None and ch["actual"] is not None:
-            hint += f" · {ch['days_done']} ngày đầu cần khoảng {F.n(ch['expected'])} (dự báo từ ngày thứ 3)"
-        if ch["target"] and ch["actual"] is not None:
-            done = min(ch["actual"] / ch["target"], 1)
-            ahead = min(ch["forecast"] / ch["target"], 1) if running and ch.get("forecast") else done
-    else:  # tích lũy: số lớn là lũy kế, gợi ý nói tháng này và kế hoạch
+            parts.append(f"{ch['days_done']} ngày đầu cần khoảng {F.n(ch['expected'])}")
+        hint = " · ".join(parts)
+        if ch["actual"] is not None:
+            top = max(ch["target"] or 0, ch.get("forecast") or 0, ch["actual"]) or 1
+            fill = ch["actual"] / top
+            ahead = (ch["forecast"] / top) if running and ch.get("forecast") else None
+            mark = (ch["target"] / top) if committed and ch["target"] else None
+    else:  # tích lũy: số lớn là lũy kế
         cum = ch["cum"]
         value = _signed(cum) if cum is not None else (_signed(ch["actual"]) if ch["actual"] is not None else "chưa có")
+        unit = "lũy kế"
         if ch["baseline"] is None:
-            hint = "Chưa nhập baseline trong sheet"
+            hint = "Chưa có số gốc để so"
         else:
-            hint = f"lũy kế / cam kết {F.n(ch['total'])} · tháng này {_signed(ch['actual'])}"
-            if ch["target"] is not None:
-                hint += f" (kế hoạch {_signed(ch['target'])}, lũy kế cần {F.n(ch['plan_cum'])})"
+            hint = f"Cam kết cả dự án {F.n(ch['total'])} · tháng này {_signed(ch['actual'])}"
             if running and ch.get("forecast_inc") is not None:
-                hint += f" · dự báo tháng này {_signed(ch['forecast_inc'])}"
+                hint += f" · dự báo {_signed(ch['forecast_inc'])}"
         if ch["total"] and cum is not None:
-            done = min(max(cum, 0) / ch["total"], 1)
-            ahead = min(ch["plan_cum"] / ch["total"], 1)
-    # Số mờ chỉ khi chưa có số thật; tháng không cam kết vẫn hiện số đậm như các ô khác (không phải số "kém")
+            fill = min(max(cum, 0) / ch["total"], 1)
+            mark = min(ch["plan_cum"] / ch["total"], 1) if ch.get("plan_cum") is not None else None
     muted_value = value in ("chưa check", "chưa có")
-    with ui.element("div").classes("sr-card sr-kpi"):
-        ui.label(KP.line_label(line)).classes("sr-tile-label")
-        ui.label(value).classes("sr-kpi-value num" + (" muted" if muted_value else ""))
-        if done is not None:  # thanh tiến độ so với cam kết (phần nhạt: dự báo / kế hoạch)
-            color = T.TONES[tone][1]
-            ui.html(
-                f'<div title="Đạt {done * 100:.0f}% cam kết" style="position:relative;height:6px;'
-                f'border-radius:3px;background:#ECEAE2;overflow:hidden;margin:4px 0 6px">'
-                f'<div style="position:absolute;inset:0 auto 0 0;width:{(ahead or 0) * 100:.1f}%;'
-                f'background:{color};opacity:.28"></div>'
-                f'<div style="position:absolute;inset:0 auto 0 0;width:{done * 100:.1f}%;'
-                f'background:{color}"></div></div>').classes("w-full")
-        if ch["target"] is not None:  # tháng không cam kết: ghi một lần ở đầu khối, không lặp trên từng ô
-            T.status_chip(ui, text, tone, icon)
-        ui.label(hint).classes("sr-kpi-hint")
+    bar = T.TONES[tone][1] if committed and tone != "grey" else T.TONES[look][1]
+    bg_icon, fg_icon = T.TONES[look]
+    with ui.element("div").classes("sr-kp-tile"):
+        with ui.row().classes("items-center no-wrap w-full").style("gap:8px"):
+            with ui.element("div").classes("sr-db-bubble").style(f"background:{bg_icon}"):
+                ui.icon(icon, size="15px").style(f"color:{fg_icon}").props('aria-hidden="true"')
+            ui.label(KP.line_label(line)).classes("sr-kp-label col ellipsis")
+            if committed:  # tháng không cam kết: đã đếm ở dòng đầu khối, không lặp chip trên từng ô
+                with ui.element("span").classes(f"sr-kp-chip {tone}"):
+                    ui.icon(ICONS.get(tone, "remove"), size="13px").props('aria-hidden="true"')
+                    ui.label(text)
+        with ui.row().classes("items-baseline no-wrap").style("gap:8px; margin-top:6px"):
+            ui.label(value).classes("sr-kp-value num" + (" muted" if muted_value else ""))
+            if unit and not muted_value:
+                ui.label(unit).classes("sr-kp-unit")
+        if fill is not None:
+            title = f"Đạt {fill / mark * 100:.0f}% mức cam kết" if mark else ""
+            html = (f'<div class="sr-kp-bar" title="{title}">'
+                    + (f'<i style="width:{min(ahead, 1) * 100:.1f}%;background:{bar};opacity:.25"></i>'
+                       if ahead else "")
+                    + f'<i style="width:{min(fill, 1) * 100:.1f}%;background:{bar}"></i>'
+                    + (f'<b style="left:{mark * 100:.1f}%"></b>' if mark else "") + "</div>")
+            ui.html(html).classes("w-full")
+        ui.label(hint).classes("sr-kp-hint")
+
+
+def kpi_skeleton(ui, n_lines: int = 4) -> None:
+    """Khung chờ cùng hình dạng khối Tiến độ KPI (dòng ngày + chip, lưới ô: icon · tên, số lớn, thanh, gợi ý)."""
+    with T.section(ui, "Tiến độ KPI cam kết", "flag", "Đang tính tiến độ…"):
+        with ui.element("div").classes("sr-kp-strip"):
+            T.bone(ui, "14px", "240px")
+            T.bone(ui, "22px", "120px", "999px")
+        with ui.element("div").classes("sr-kp-grid"):
+            for _ in range(n_lines):
+                with ui.element("div").classes("sr-kp-tile"):
+                    with ui.row().classes("items-center no-wrap w-full").style("gap:8px"):
+                        T.bone(ui, "28px", "28px", "50%")
+                        T.bone(ui, "14px", "55%")
+                    T.bone(ui, "30px", "45%").style("margin-top:8px")
+                    T.bone(ui, "7px", "100%", "4px").style("margin:8px 0 6px")
+                    T.bone(ui, "12px", "75%")
+                    T.bone(ui, "12px", "45%").style("margin-top:4px")  # gợi ý thường dài hai dòng
+        T.bone(ui, "12px", "40%").style("margin-top:2px")  # dòng chú thích dưới lưới
+
+
+def _month_strip(ui, m: dict, running: bool, p: dict, free: list[str]) -> None:
+    """Dòng đầu khối: tháng đã trôi bao nhiêu ngày (thanh mảnh) + đếm trạng thái các cam kết."""
+    d0, d1 = date.fromisoformat(m["from"]), date.fromisoformat(m["to"])
+    days = (d1 - d0).days + 1
+    done = days if not running else max(0, min(days, (date.today() - d0).days + 1))
+    counts = {"green": 0, "amber": 0, "red": 0}
+    for line in p["lines"]:
+        ch = m["checks"].get(KP.line_id(line))
+        if ch and ch["target"] is not None:
+            _, tone = KP.status(ch, running)
+            if tone in counts:
+                counts[tone] += 1
+    with ui.element("div").classes("sr-kp-strip"):
+        with ui.element("div").classes("sr-kp-days"):
+            ui.label(f"Ngày {done}/{days}" if running else f"Đã chốt · {days} ngày").classes("sr-kp-days-text")
+            ui.html(f'<div class="sr-kp-bar thin"><i style="width:{done / days * 100:.1f}%;background:#1F221E">'
+                    "</i></div>").classes("col")
+        with ui.row().classes("items-center gap-2"):
+            for tone, label in (("green", "Đang đạt" if running else "Đạt"), ("amber", "Đang thiếu"),
+                                ("red", "Không đạt")):
+                if counts[tone]:
+                    with ui.element("span").classes(f"sr-kp-chip {tone}"):
+                        ui.icon(ICONS[tone], size="13px").props('aria-hidden="true"')
+                        ui.label(f"{label} {counts[tone]}")
+            if free:
+                with ui.element("span").classes("sr-kp-chip grey") as chip:
+                    ui.icon("remove", size="13px").props('aria-hidden="true"')
+                    ui.label(f"Không cam kết {len(free)}")
+                chip.tooltip("Tháng này không cam kết: " + ", ".join(free))
 
 
 def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
@@ -135,11 +203,11 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
     free = [KP.line_label(ln).replace("Từ khóa top", "Top") for ln in p["lines"]
             if (m["checks"].get(KP.line_id(ln)) or {}).get("target", 0) is None]
     sub = (f"{_vn(m['from'])} – {_vn(m['to'])} · {m['rank']['total']} từ khóa cam kết"
-           + (" · đang chạy, số còn thay đổi" if running else " · đã chốt")
-           + (f" · tháng này không cam kết: {', '.join(free)}" if free else ""))
+           + (" · đang chạy, số còn thay đổi" if running else " · đã chốt"))
     with T.section(ui, f"Tiến độ KPI · Tháng dự án {m['n']}/{total}" + (f" · {p['project']}" if p.get("project") else ""),
                    "flag", sub, href="/kpi" if compact else None, link_text=f"Xem {total} tháng"):
-        with T.kpi_row(ui):
+        _month_strip(ui, m, running, p, free)
+        with ui.element("div").classes("sr-kp-grid"):
             for line in p["lines"]:
                 ch = m["checks"].get(KP.line_id(line))
                 if ch:
@@ -151,7 +219,8 @@ def kpi_block(ui, p: dict | None, compact: bool = True) -> None:
         if m["rank"]["checked"] < m["rank"]["total"]:
             left = m["rank"]["total"] - m["rank"]["checked"]
             notes.append(f"{left} từ khóa chưa có lần check nào trong tháng này" + (
-                ": lịch check tự động sẽ cập nhật, hoặc bấm Kiểm tra thứ hạng ở màn Từ khóa & Thứ hạng" if running
+                (": lịch check tự động sẽ cập nhật" if T.client_view() else
+                 ": lịch check tự động sẽ cập nhật, hoặc bấm Kiểm tra thứ hạng ở màn Từ khóa & Thứ hạng") if running
                 else ": tính là chưa đạt"))
         if notes:
             ui.label(" · ".join(notes)).classes("text-xs muted")
@@ -172,7 +241,7 @@ def _actual_cell(ch: dict, m: dict) -> str:
     if ch["kind"] == "rank":
         if not ch["checked"] and m["status"] == "running":
             return '<span class="mut">chưa check</span>'
-        val = f'{_pct(ch["actual"]) if ch["total"] else "–"}<div class="d">{ch["count"]}/{ch["total"]} từ</div>'
+        val = f'{_pct(ch["actual"]) if ch["total"] else "–"}<div class="d">{ch["count"]}/{ch["total"]} từ khóa</div>'
     elif ch["kind"] == "level":
         val = F.n(ch["actual"]) if ch["actual"] is not None else "chưa có"
         if m["status"] == "running" and ch.get("forecast") is not None:
@@ -225,15 +294,16 @@ def full_table(ui, p: dict) -> None:
 def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | None = None) -> None:
     from nicegui import run
 
-    from .access import can_edit
+    from .access import can_edit, is_client
     ed = can_edit(user)
+    cl = is_client(user)  # khách hàng: chỉ tiến độ KPI; không trạng thái sheet, lịch sử phiên bản, lỗi kỹ thuật
     with connect() as c:
         sid = KP.sheet_id(c)
     with connect() as c:
         has_versions = bool(KP.versions(c)) if sid else False
     right = T.page_header(ui, "flag", "Cam kết KPI",
-                          "Thứ hạng bộ từ khóa cam kết và phiên Organic / AI Assistant theo từng tháng dự án. Sửa trên "
-                          "tool; sheet dự án để xem (tool tự ghi).", eyebrow="KPI")
+                          "Thứ hạng bộ từ khóa cam kết và phiên Organic / AI Assistant theo từng tháng dự án."
+                          + ("" if cl else " Sửa trên tool; sheet dự án để xem (tool tự ghi)."), eyebrow="KPI")
     with right:
         if sid and ed:  # người chỉ xem không mở được sheet nội bộ
             ui.button("Mở sheet", icon="open_in_new", on_click=lambda: ui.navigate.to(
@@ -351,6 +421,9 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
         dlg.open()
 
     if not sid:
+        if cl:
+            T.empty_state(ui, "flag", "Chưa có KPI cam kết", "Tiến độ KPI sẽ hiện ở đây khi cam kết được thiết lập.")
+            return
         _setup(ui, cfg, connect, ed, user, app_connect, project)
         return
 
@@ -358,16 +431,19 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
     with connect() as c:
         KP.snapshot_keywords(c, cfg.site_url, date.today())  # từ khóa cam kết theo bộ Cam kết trên tool
         vs, pub = KP.versions(c), SV.published(c)
-    if pub:
+    if pub and not cl:
         T.status_chip(ui, f"Ghi lên sheet lúc {_local(pub['at'])} · {pub['tabs']} tab", "grey", "schedule")
     if not vs:
-        T.empty_state(ui, "download", "Chưa có KPI trên tool", "Bấm Nhập từ sheet để lấy KPI cam kết và từ khóa từ "
-                      "sheet một lần; sau đó sửa trên tool.")
+        if cl:
+            T.empty_state(ui, "flag", "Chưa có KPI cam kết", "Tiến độ KPI sẽ hiện ở đây khi cam kết được thiết lập.")
+        else:
+            T.empty_state(ui, "download", "Chưa có KPI trên tool", "Bấm Nhập từ sheet để lấy KPI cam kết và từ khóa "
+                          "từ sheet một lần; sau đó sửa trên tool.")
         return
 
-    box = ui.column().classes("w-full gap-4")
+    box = ui.column().classes("w-full gap-4").props('aria-busy="true"')
     with box:
-        T.skeleton(ui).classes("w-full").style("height: 220px; border-radius: 14px")
+        kpi_skeleton(ui, len((vs[-1]["data"] or {}).get("lines") or []) or 4)
 
     async def load():
         try:
@@ -375,9 +451,12 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
         except (Exception, SystemExit) as e:  # noqa: BLE001
             box.clear()
             with box:
-                T.status_chip(ui, f"Không tính được tiến độ: {str(e)[:160]}", "red", "error")
+                T.status_chip(ui, "Chưa tải được tiến độ KPI, vui lòng thử lại sau" if cl else
+                              f"Không tính được tiến độ: {str(e)[:160]}", "red", "error")
+            T.busy(box, False)
             return
         box.clear()
+        T.busy(box, False)
         with box:
             kpi_block(ui, p, compact=False)
             if p and p.get("start"):
@@ -388,7 +467,8 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
                     next((m for m in reversed(p["months"]) if m["status"] == "closed"), None)
                 if cur or p.get("pre"):
                     keyword_table(ui, cur or p["pre"], cfg.site_url)
-            with ui.expansion(f"Lịch sử phiên bản KPI ({len(vs)})", icon="history").classes("w-full sr-card"):
+            with ui.expansion(f"Lịch sử phiên bản KPI ({len(vs)})", icon="history").classes(
+                    "w-full sr-card" + (" hidden" if cl else "")):
                 for v in reversed(vs):
                     d = v["data"]
                     ui.label(f"Từ {_vn(v['day'])}/{v['day'][:4]} · {len(d['months'])} tháng · {len(d['lines'])} cam "
@@ -416,13 +496,13 @@ def keyword_table(ui, m: dict, site: str) -> None:
             pos = ("chưa check" if x["date"] is None else
                    (str(x["rank"]) if x["rank"] is not None else f">{x['depth']}"))
             st = ("Chưa check" if x["date"] is None and m.get("status") != "closed" else
-                  "Không đặt" if x["ok"] is None else "Đạt" if x["ok"] else "Chưa đạt")
+                  "Không có mục tiêu" if x["ok"] is None else "Đạt" if x["ok"] else "Chưa đạt")
             rows.append({"keyword": x["keyword"], "target": f"Top {x['target']}" if x["target"] else "–",
                          "pos": pos, "status": st, "date": _vn(x["date"]),
                          "url": (x["url"] or "").replace(site.rstrip("/"), "") or "–"})
         tbl = ui.table(columns=[
             {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left"},
-            {"name": "target", "label": "Top target", "field": "target", "align": "center"},
+            {"name": "target", "label": "Top mục tiêu", "field": "target", "align": "center"},
             {"name": "pos", "label": "Vị trí", "field": "pos", "align": "center"},
             {"name": "status", "label": "Trạng thái", "field": "status", "align": "left"},
             {"name": "date", "label": "Check", "field": "date", "align": "center"},

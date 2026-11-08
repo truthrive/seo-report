@@ -2,6 +2,7 @@
 from . import indexing as IX
 from . import keywords as K
 from . import rank as R
+from . import ui_theme as T
 from . import urls as U
 
 GREEN, RED, MUTED = "#1E7C31", "#C2410C", "#6B6A5E"
@@ -201,6 +202,9 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             prev = K.url_period(c, [rid], *wks[state["week"] + 1]).get(rid, (0, 0, None)) if has_prev else None
             week_q = K.query_period(c, rid, s, e)
             series = K.weekly_series(c, rid, wks)
+            from . import web_events as EV
+            spans = list(reversed(wks))
+            ev_marks = EV.mark_line(EV.marks(EV.site_events(c, site), spans, [f"{a_:%d/%m}" for a_, _ in spans]))
         target = state["targets"].get(rid, "")
 
         with ui.row().classes("w-full items-start justify-between"):
@@ -210,11 +214,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     with ui.link(target=row["url"], new_tab=True).props('aria-label="Mở trang trên site"'):
                         ui.icon("open_in_new", color="grey-7")
                 with ui.row().classes("gap-2"):
-                    ui.badge(row["type"] or "Chưa phân loại").props("outline color=grey-8")
-                    ui.badge(groups.get(state["group"], "")).props("color=green-1 text-color=green-10")
+                    T.tag(ui, row["type"] or "Chưa phân loại", "grey")
+                    if groups.get(state["group"]):
+                        T.tag(ui, groups[state["group"]], "green")
             ui.label(f"{week_options[state['week']]} · so với tuần trước").classes("text-sm muted")
 
-        from . import ui_theme as T
 
         labels = [p["week"] for p in series]
 
@@ -280,8 +284,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.label(f"Crawl gần nhất: {crawl} · kiểm tra ngày {_vn_date(ix['checked_at'])}").classes(
                         "text-xs muted")
                     if IX.canonical_mismatch(ix, row["url"]):
-                        ui.badge(f"Google chọn canonical khác: {_short(ix['google_canonical'], site)}").props(
-                            "color=orange-2 text-color=orange-10")
+                        T.pill(ui, f"Google chọn canonical khác: {_short(ix['google_canonical'], site)}", "amber",
+                               "warning")
                 ui.space()
                 if ed:
                     check_btn = ui.button("Kiểm tra ngay", icon="refresh", on_click=lambda: check_now()).props(
@@ -338,11 +342,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.label(a.head.query if a.head else "Chưa có query nào").classes("text-base font-medium")
                     match = K.head_matches_target(a.head, target)
                     if match is True:
-                        ui.badge("✓ khớp target").props("color=green-1 text-color=green-10")
+                        T.pill(ui, "Khớp target", "green", "check")
                     elif match is False:
-                        ui.badge("lệch target").props("color=orange-2 text-color=orange-10")
+                        T.pill(ui, "Lệch target", "amber", "warning")
                     elif not target:
-                        ui.badge("chưa gán target").props("outline color=grey-8")
+                        T.pill(ui, "Chưa gán target", "grey")
                 if a.head and a.head_basis == "impression":
                     ui.label("Không query nào có click; chọn theo impression.").classes("text-xs muted")
 
@@ -554,12 +558,13 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                       {"type": "value", "name": "Impression", "splitLine": {"show": False}}],
             "series": [
                 {"name": "Click", "type": "bar", "data": [p["clicks"] for p in series],
-                 "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}},
+                 "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}, **ev_marks},
                 {"name": "Impression", "type": "line", "yAxisIndex": 1, "data": [p["impressions"] for p in series],
                  "itemStyle": {"color": "#2563EB"}, "smooth": True, "symbol": "circle", "symbolSize": 5},
             ],
         }).classes("w-full").style("height: 260px")
-        ui.label("12 tuần gần nhất (GSC).").classes("text-xs muted")
+        ui.label("12 tuần gần nhất (GSC)." + (" Vạch tím: mốc sự kiện của website (thêm ở Tổng quan → Click theo "
+                 "ngày → Mốc sự kiện)." if ev_marks else "")).classes("text-xs muted")
 
     with detail:
         render_detail()

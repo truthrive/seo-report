@@ -7,6 +7,7 @@
   không dấu). Lần check cũ chưa lưu nội dung chữ thì "không biết", không tính vào tỷ lệ nhắc tên.
 - Mỗi tuần lấy lần check cuối của tuần đó cho từng từ khóa (mỗi từ khóa một dòng, ưu tiên bộ Cam kết).
 """
+import functools
 import json
 import re
 import sqlite3
@@ -50,11 +51,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+_MARKS = re.compile(r"[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]")  # dấu kết hợp (Mn)
+_WORD = re.compile(r"[a-z0-9]+")
+
+
 def norm(text: str) -> str:
-    """Chữ thường, bỏ dấu (đ → d), chỉ giữ chữ và số, cách nhau một khoảng trắng."""
+    """Chữ thường, bỏ dấu (đ → d), chỉ giữ chữ và số, cách nhau một khoảng trắng. Bỏ dấu bằng regex thay vì xét từng
+    ký tự: nhanh hơn nhiều lần với chữ AI Overview dài (bộ hàng trăm từ khóa)."""
     t = unicodedata.normalize("NFD", (text or "").replace("đ", "d").replace("Đ", "D"))
-    t = "".join(ch for ch in t if unicodedata.category(ch) != "Mn").lower()
-    return " ".join(re.findall(r"[a-z0-9]+", t))
+    return " ".join(_WORD.findall(_MARKS.sub("", t).lower()))
 
 
 def _lines(v: str) -> list[str]:
@@ -63,10 +68,15 @@ def _lines(v: str) -> list[str]:
 
 def terms(b: dict) -> list[str]:
     """Các chuỗi để nhận biết nhắc tên: tên, cách gọi khác, tên miền và phần trước đuôi tên miền (matkinhtamduc)."""
-    out = [b["name"], *b["aliases"]]
-    for d in b["domains"]:
+    return list(_terms(b["name"], tuple(b["aliases"]), tuple(b["domains"])))
+
+
+@functools.lru_cache(maxsize=512)
+def _terms(name: str, aliases: tuple, domains: tuple) -> tuple:
+    out = [name, *aliases]
+    for d in domains:
         out += [d, d.split(".")[0]]
-    return [t for t in dict.fromkeys(norm(x) for x in out) if len(t) >= 3]
+    return tuple(t for t in dict.fromkeys(norm(x) for x in out) if len(t) >= 3)
 
 
 def mentioned(text_norm: str, b: dict) -> bool:
@@ -139,6 +149,21 @@ def save_brand(con, site: str, name: str, aliases: str, domains: str, brand_id: 
         return cur.lastrowid
 
 
+def add_or_restore(con, site: str, domain_: str) -> int:
+    """Thêm đối thủ theo tên miền; nếu trước đây đã theo dõi rồi bỏ thì khôi phục dòng cũ (giữ tên, cách gọi đã sửa)."""
+    ensure_tables(con)
+    d = domain(domain_)
+    for bid, doms in con.execute("SELECT id, domains FROM aio_brands WHERE site = ? AND own = 0 AND removed_at IS NOT "
+                                 "NULL ORDER BY removed_at DESC", (site,)):
+        if d in _lines(doms):
+            if competitor_count(con, site) >= MAX_COMPETITORS:
+                raise ValueError(f"Mỗi dự án theo dõi tối đa {MAX_COMPETITORS} đối thủ: bỏ bớt một đối thủ trước khi thêm")
+            with con:
+                con.execute("UPDATE aio_brands SET removed_at = NULL WHERE id = ?", (bid,))
+            return bid
+    return save_brand(con, site, d, "", d)
+
+
 def remove_brand(con, site: str, brand_id: int) -> None:
     """Bỏ theo dõi (giữ dòng, đánh dấu đã bỏ); không bỏ được thương hiệu của mình."""
     with con:
@@ -152,10 +177,10 @@ def _week(d: str) -> str:
 
 
 def scope_keywords(con, site: str, end: date, set_id: int | None = None) -> list[dict]:
-    """Từ khóa đang xét: mọi bộ (mỗi từ khóa một dòng) hoặc một bộ; bỏ bộ Nháp và từ khóa tạm dừng (cùng cách tính
-    với màn Từ khóa & Thứ hạng)."""
+    """Từ khóa đang xét: mọi bộ (mỗi từ khóa một dòng) hoặc một bộ; bỏ bộ Nháp. Từ khóa tạm dừng vẫn tính theo lần
+    check gần nhất, trừ khi chưa check lần nào (cùng cách tính với màn Từ khóa & Thứ hạng)."""
     kws = R.primary_keywords(con, site, end) if set_id is None else R.keywords(con, site, end, set_id)
-    return [k for k in kws if not k.get("draft") and not k.get("paused")]
+    return [k for k in kws if not k.get("draft") and (not k.get("paused") or k.get("date"))]
 
 
 def snapshots(con, site: str, end: date, today: date, weeks: int,

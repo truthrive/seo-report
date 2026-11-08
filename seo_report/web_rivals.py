@@ -27,7 +27,10 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
     with connect() as c:
         end = K.latest_date(c, site)
         sets_ = [x for x in R.sets(c, site) if not x["draft"]]
-    state = {"set": 0, "only_ahead": False, "mx_set": 0}
+    state = {"set": 0, "only_ahead": False, "mx_set": 0, "mx_hide": set()}
+
+    # hộp thoại đặt ở đây, ngoài các khối vẽ lại (roster / overview): vẽ lại khối không làm đóng hộp thoại đang mở
+    dialog_host = ui.element("div").classes("hidden")
 
     # ------------------------------------------------------------------ danh sách đối thủ
     @ui.refreshable
@@ -47,7 +50,8 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 T.info_icon(ui, "Đối thủ theo dõi", (
                     "Một danh sách cho cả dự án, dùng chung cho thứ hạng và trang AI Overview.",
                     "Nhận đối thủ theo tên miền trong kết quả Google; cách gọi khác dùng để nhận tên trong câu trả "
-                    "lời AI Overview."))
+                    "lời AI Overview (số \"Được nhắc\").",
+                    "Rê chuột lên từng tên để xem cách gọi và tên miền."))
                 ui.space()
                 if ed and not full:
                     ui.button("Thêm đối thủ", icon="add", on_click=lambda: edit(None)).props(
@@ -63,25 +67,26 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                         ui.element("i").classes("sr-brand-dot").style(
                             f"background:{b['color'] if b['own'] or b['charted'] else AO.OTHER_COLOR}")
                         ui.label(b["name"]).classes("ellipsis")
+                        if ed and not b["aliases"]:  # thiếu cách gọi: AI Overview chỉ nhận ra tên miền, "Được nhắc" thấp
+                            ui.icon("error_outline", size="16px").classes("sr-rival-warn").props(
+                                'aria-label="Chưa có cách gọi"')
                         if ed:
                             icon_btn(ui, "edit", f"Sửa {b['name']}", lambda _, b=b: edit(b))
                             if not b["own"]:
                                 icon_btn(ui, "close", f"Bỏ theo dõi {b['name']}", lambda _, b=b: drop(b))
-                    chip.tooltip(", ".join(b["domains"]) or "Chưa có tên miền")
+                    chip.tooltip("Cách gọi: " + (", ".join(b["aliases"]) or "chưa thêm"
+                                                 + (" (AI Overview chỉ nhận ra tên miền, bấm ✏️ để thêm)" if ed else ""))
+                                 + " · Tên miền: " + (", ".join(b["domains"]) or "chưa có"))
             if full:
                 ui.label(f"Đã đủ {AO.MAX_COMPETITORS} đối thủ: bỏ bớt một đối thủ để thêm mới.").classes(
                     "text-xs muted q-mt-sm")
-            if ed and sug and not full:
-                ui.label("Gợi ý: website hay vào top 10 của bộ từ khóa").classes("text-sm muted q-mt-md")
-                with ui.element("div").classes("sr-sug-list"):
-                    for d_, n in sug:
-                        bt = ui.element("button").classes("sr-sug").props('type="button"')
-                        bt.on("click", lambda _, d_=d_: quick_add(d_))
-                        with bt:
-                            ui.icon("add", size="15px")
-                            ui.label(d_)
-                            ui.label(f"{n} từ khóa").classes("n")
-                        bt.tooltip(f"Thêm {d_} làm đối thủ")
+            if ed and (sug or n_comp):
+                with ui.row().classes("items-center gap-2 q-mt-md"):
+                    ui.button("Chọn đối thủ từ gợi ý", icon="swap_horiz", on_click=lambda: transfer_dialog()).props(
+                        "outline no-caps color=grey-9")
+                    if sug:
+                        ui.label(f"{len(sug)} website hay vào top 10 của bộ từ khóa chưa được theo dõi").classes(
+                            "text-xs muted")
 
     async def load_logos() -> None:
         from contextlib import closing
@@ -103,6 +108,75 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
         roster.refresh()
         overview.refresh()
         background_tasks.create(load_logos())
+
+    def transfer_data(con) -> tuple[list[dict], list[str]]:
+        """Khung trái: website hay vào top 10 (chưa theo dõi). Khung phải: đối thủ đang theo dõi."""
+        bs = [b for b in AO.brands(con, cfg) if not b["own"]]
+        sug = RO.rank_suggestions(con, cfg, end, limit=30)
+        data = [{"key": f"b:{b['id']}", "title": b["name"], "description": ", ".join(b["domains"])} for b in bs]
+        data += [{"key": f"d:{d_}", "title": d_, "description": f"Có mặt ở top 10 của {n} từ khóa"} for d_, n in sug]
+        return data, [f"b:{b['id']}" for b in bs]
+
+    def transfer_dialog():
+        from .pickers import Transfer
+        with connect() as c:
+            data, keys = transfer_data(c)
+        with dialog_host, ui.dialog() as dlg, ui.card().style("width: 760px; max-width: 96vw; border-radius: 14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label("Chọn đối thủ theo dõi").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=dlg.close).props('flat round dense aria-label="Đóng"')
+            ui.label(f"Đánh dấu website rồi bấm Thêm / Bỏ. Tối đa {AO.MAX_COMPETITORS} đối thủ; danh sách dùng chung cho "
+                     "Thứ hạng và AI Overview.").classes("text-sm muted")
+
+            def apply(direction: str, move_keys: list, _target: list) -> None:
+                if direction == "right":
+                    added = []
+                    with connect() as c:
+                        for k in move_keys:
+                            try:
+                                if k.startswith("d:"):
+                                    AO.add_or_restore(c, site, k[2:])
+                                    added.append(k[2:])
+                            except ValueError as e:
+                                ui.notify(str(e), type="warning", position="bottom-right", classes="sr-toast")
+                                break
+                    if added:
+                        ui.notify(f"Đã thêm {len(added)} đối thủ", type="positive", position="bottom-right",
+                                  classes="sr-toast")
+                    refresh()
+                    return
+                ids = [int(k[2:]) for k in move_keys if k.startswith("b:")]
+                names = [x["title"] for x in tf._props["data"] if x["key"] in move_keys]
+                with dialog_host, ui.dialog() as cd, ui.card().style("max-width: 440px; border-radius: 14px"):
+                    ui.label(f"Bỏ theo dõi {len(ids)} đối thủ?").classes("text-lg font-semibold")
+                    ui.label(", ".join(names)).classes("text-sm")
+                    ui.label("Thôi so sánh ở thứ hạng và AI Overview. Thêm lại lúc nào cũng được: tên và cách gọi đã "
+                             "sửa vẫn được giữ.").classes("text-sm muted")
+                    with ui.row().classes("w-full justify-end gap-2"):
+                        ui.button("Hủy", on_click=cd.close).props("flat no-caps")
+
+                        def go():
+                            with connect() as c:
+                                for i in ids:
+                                    AO.remove_brand(c, site, i)
+                            cd.close()
+                            ui.notify(f"Đã bỏ {len(ids)} đối thủ", type="info", position="bottom-right",
+                                      classes="sr-toast")
+                            refresh()
+                        ui.button("Bỏ theo dõi", on_click=go).props("unelevated no-caps color=negative")
+                cd.open()
+
+            def refresh():
+                with connect() as c:
+                    d2, k2 = transfer_data(c)
+                tf.set_data(d2, k2)
+                changed()
+
+            tf = Transfer(data, keys, titles=("Gợi ý từ top 10", "Đang theo dõi"), operations=("Thêm", "Bỏ"),
+                          empty_text=("Không còn website gợi ý", "Chưa theo dõi đối thủ nào"), unit="website",
+                          max_target=AO.MAX_COMPETITORS, on_change=apply).classes("w-full q-mt-sm")
+        dlg.on("hide", lambda: dlg.delete())
+        dlg.open()
 
     def quick_add(d_: str):
         if not ed:
@@ -180,7 +254,9 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             comp = RO.competitors(c, cfg, end, set_id=sid)
             trend = RO.visibility_trend(c, cfg, end, set_id=sid)
             cards = RO.set_rows(c, site, end, cfg.rank)
-        _competitors_block(ui, comp, cards, lambda i: open_set(i), header_extra=scope_toggle)
+        _competitors_block(ui, comp, cards, lambda i: open_set(i), header_extra=scope_toggle,
+                           empty_hint="Thêm tối đa 10 đối thủ ở phần bên trên." if ed else
+                           "Danh sách đối thủ sẽ hiện ở đây khi được thêm.")
         if len([r for r in comp["rows"] if not r["brand"]["own"]]) == 0:
             return
         trend_card(trend, comp)
@@ -192,8 +268,12 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 with ui.element("span").classes("sr-bx-icon").style("background:#EEF6EF"):
                     ui.icon("show_chart", size="16px").style("color:#1E7C31").props('aria-hidden="true"')
                 ui.label("Xu hướng độ hiển thị").classes("sr-bx-title")
+            # lần check quá ít từ khóa (ví dụ check thử vài từ) làm % nhảy vọt: bỏ, chỉ giữ lần có ≥ nửa số từ khóa
+            most = max((p["n"] for p in trend), default=0)
+            trend = [p for p in trend if p["n"] * 2 >= most]
             if len(trend) < 2:
-                ui.label("Biểu đồ hiện khi có từ 2 lần check có kết quả Google.").classes("text-sm muted")
+                ui.label("Biểu đồ hiện khi có từ 2 lần check đủ bộ từ khóa có kết quả Google.").classes(
+                    "text-sm muted")
                 return
             brands = sorted((r["brand"] for r in comp["rows"]), key=lambda b: not b["own"])  # dự án trước
             series = []
@@ -239,11 +319,15 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 export_menu(ui, cfg, connect, f"vi-tri-doi-thu_tat-ca-bo_{end}", export_xlsx,
                             label="Xuất vị trí mọi bộ (Excel)", user=user, icon_only=True,
                             category="rivals")
-            if len(sets_) > 1:
-                ui.toggle({0: "Mọi bộ", **{x["id"]: x["name"] for x in sets_}}, value=state["mx_set"],
-                          on_change=lambda e: (state.update(mx_set=e.value), matrix_view.refresh())).props(
-                    "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
-                    "sr-seg q-mb-sm")
+            tools = ui.element("div").classes("sr-mx-tools w-full")  # một thanh: bộ từ khóa (trái) · đối thủ (phải)
+            with tools:
+                if len(sets_) > 1:
+                    ui.toggle({0: "Mọi bộ", **{x["id"]: x["name"] for x in sets_}}, value=state["mx_set"],
+                              on_change=lambda e: (state.update(mx_set=e.value), matrix_view.refresh())).props(
+                        "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                        "sr-seg")
+                else:
+                    ui.element("span")
             if not matrix["rows"]:
                 ui.label("Chưa có từ khóa nào có kết quả Google.").classes("text-sm muted")
                 return
@@ -267,9 +351,27 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                     v = r["ranks"].get(b["id"])
                     row[f"b{b['id']}"] = v if v is not None else 999
                 data.append(row)
+            rivals_ = [b for b in brands if not b["own"]]
+            own_key = next((f"b{b['id']}" for b in brands if b["own"]), "")
+
+            def visible(hidden: set) -> list[str]:
+                return [c_["name"] for c_ in cols if not (c_["name"].startswith("b") and c_["name"] != own_key
+                                                          and int(c_["name"][1:]) in hidden)]
+
+            def pick_cols(e) -> None:
+                state["mx_hide"] = {b["id"] for b in rivals_} - set(e.value or [])
+                t.props["visible-columns"] = visible(state["mx_hide"])
+                t.update()
+            if rivals_:
+                from .pickers import MultiSelect
+                with tools:
+                    MultiSelect({b["id"]: b["name"] for b in rivals_}, label="Cột đối thủ",
+                                value=[b["id"] for b in rivals_ if b["id"] not in state["mx_hide"]],
+                                placeholder="Gõ tên đối thủ", chips_when_all=False, inline=True, pop_right=True,
+                                on_change=pick_cols)
             t = ui.table(columns=cols, rows=data, row_key="id", pagination=20).classes(
                 "w-full sr-matrix").props("flat dense")
-            own_key = next((f"b{b['id']}" for b in brands if b["own"]), "")
+            t.props["visible-columns"] = visible(state["mx_hide"])
             t.add_slot("body-cell", r"""
               <q-td :props="props" :class="props.col.name === '""" + own_key + r"""' ? 'mx-own' : ''">
                 <template v-if="props.col.name === 'keyword'">
@@ -291,7 +393,8 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             t.on("rowClick", lambda e: open_set(int(e.args[1]["set_id"])))
             ui.label("Số = vị trí trên Google ở lần check gần nhất; – = không có trong độ sâu đã check. ✦ = từ khóa có "
                      "AI Overview (tím đậm: website dự án được trích). Volume: lượt tìm mỗi tháng (Google Ads). Bấm một "
-                     "dòng để mở bộ chứa từ khóa.").classes("text-xs muted")
+                     "dòng để mở bộ chứa từ khóa. Ý định tìm kiếm: I thông tin · N tìm đúng thương hiệu / website · "
+                     "C cân nhắc mua · T sẵn sàng mua.").classes("text-xs muted")
 
     def export_xlsx() -> bytes:
         with connect() as c:

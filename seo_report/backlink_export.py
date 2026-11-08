@@ -82,12 +82,28 @@ def _list(wb, kind: str, data: dict | None, brand_terms: list[str]) -> None:
                 for x in items])
 
 
-def build(lists: dict, latest: dict | None, brand_terms: list[str], site: str, which: str = "all") -> bytes:
+def _drop_spam(wb) -> None:
+    """File cho khách: bỏ cột / dòng có chữ "spam"."""
+    for ws in wb.worksheets:
+        head = [c.value for c in ws[1]] if ws.max_row else []
+        for idx in sorted((i + 1 for i, v in enumerate(head) if v and "spam" in str(v).lower()), reverse=True):
+            ws.delete_cols(idx)
+        for r in range(ws.max_row, 1, -1):  # dòng "Điểm spam" của sheet Tổng quan
+            v = ws.cell(row=r, column=1).value
+            if v and "spam" in str(v).lower():
+                ws.delete_rows(r)
+        if ws.auto_filter and ws.auto_filter.ref:
+            ws.auto_filter.ref = ws.dimensions
+
+
+def build(lists: dict, latest: dict | None, brand_terms: list[str], site: str, which: str = "all",
+          client: bool = False) -> bytes:
+    """client: file cho khách hàng: không sheet audit (việc của team), không cột / dòng điểm spam."""
     wb = Workbook()
     wb.remove(wb.active)
     if which == "all":
         _overview(wb, latest, site)
-    checks = AU.audit(lists, brand_terms)
+    checks = [] if client else AU.audit(lists, brand_terms)
     if which in ("all", "audit"):
         _audit(wb, checks)
     for kind in LIST_SHEETS:
@@ -97,6 +113,8 @@ def build(lists: dict, latest: dict | None, brand_terms: list[str], site: str, w
         _audit(wb, [c for c in checks if AU.CHECK_TAB.get(c["key"]) == which], "Kiểm tra")
     if not wb.sheetnames:
         _sheet(wb, "Trống", [("Chưa có dữ liệu", 30, None)], [])
+    if client:
+        _drop_spam(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

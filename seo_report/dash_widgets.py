@@ -1,5 +1,7 @@
 """Khối và biểu đồ của màn Tổng quan kiểu bảng điều khiển (nhóm theo nguồn: Thứ hạng · Google Analytics · Tốc độ
 trang · Backlink · Search Console). Chỉ vẽ từ số đã có (SQLite / GA4 đã tải), không gọi API trả phí."""
+from html import escape
+
 from . import ai_format as F
 from . import ui_theme as T
 
@@ -25,7 +27,7 @@ def group_head(ui, title: str, icon: str, sub: str = "", href: str | None = None
                 ui.label(title).classes("sr-db-title")
                 if sub:
                     ui.label(sub).classes("sr-db-sub")
-        if href:
+        if href and T.link_allowed(href):
             ui.link(f"{link_text} →", href).classes("sr-link")
 
 
@@ -34,6 +36,8 @@ def stat(ui, label: str, value: str, icon: str = "", delta: str = "", good: bool
          value_html: str = "", tone: str = "grey", ratio: float | None = None, split: tuple | None = None):
     """Thẻ một số: icon nền màu theo nguồn (tone), tên, số lớn (color: màu số khi số tự nói tốt / xấu), nhãn tăng /
     giảm, thanh tỷ lệ (ratio 0–1, cùng màu nguồn) hoặc thanh hai phần (split = (lên, rớt): xanh / đỏ), dòng phụ."""
+    if href and not T.link_allowed(href):  # khách hàng không mở được trang đó: thẻ thường, không link
+        href = None
     if href:  # thẻ bấm được là một link thật: bàn phím Tab tới được, Enter mở
         el = ui.link(target=href).classes("sr-card sr-db-card sr-db-stat clickable no-underline")
     else:
@@ -256,7 +260,7 @@ def rank_share_chart(ui, hist: list[dict], height: int = 220) -> None:
 
 
 def daily_line(ui, values: list, prev_values: list, labels: list[str], prev_labels: list[str], name: str,
-               color: str = "#2a78d6", height: int = 220) -> None:
+               color: str = "#2a78d6", height: int = 220, marks: dict | None = None) -> None:
     """Đường theo ngày (kỳ này liền, kỳ trước nét đứt), trục Y bắt đầu từ 0 và có số (không phóng đại dao động)."""
     tip = ("ps => ps.map(p => p.marker + (p.seriesIndex ? " + str(prev_labels) + "[p.dataIndex] : p.axisValue) + "
            "': <b>' + (p.value == null ? '–' : p.value.toLocaleString('vi-VN')) + '</b>').join('<br/>')")
@@ -272,7 +276,7 @@ def daily_line(ui, values: list, prev_values: list, labels: list[str], prev_labe
                                                ":formatter": "v => v.toLocaleString('vi-VN')"}},
         "series": [{"type": "line", "name": f"{name} kỳ này", "data": values, "symbol": "none", "smooth": 0.3,
                     "lineStyle": {"width": 2, "color": color}, "itemStyle": {"color": color},
-                    "areaStyle": {"color": color, "opacity": 0.08}},
+                    "areaStyle": {"color": color, "opacity": 0.08}, **(marks or {})},
                    {"type": "line", "name": "Kỳ trước", "data": prev_values, "symbol": "none", "smooth": 0.3,
                     "lineStyle": {"width": 1.5, "color": "#A9A79B", "type": "dashed"}, "itemStyle": {"color": "#A9A79B"}}],
     }).classes("w-full").style(f"height:{height}px")
@@ -339,6 +343,7 @@ def source_bars(ui, rows: list[tuple[str, int]], color: str = "#7C3AED", empty: 
 def fact(ui, icon: str, tone: str, label: str, value_html: str, href: str | None = None, tip: str = "") -> None:
     """Một dòng "nhãn → số" gọn (thay cho câu dài): icon màu, nhãn mờ bên trái, số đậm bên phải. Giải thích đầy đủ ở
     chú thích khi rê chuột / focus."""
+    href = href if href and T.link_allowed(href) else None
     el = ui.link(target=href).classes("sr-db-fact no-underline") if href else \
         ui.element("div").classes("sr-db-fact")
     with el:
@@ -416,6 +421,9 @@ def mini_row(ui, icon: str, tone: str, label: str, value: str = "", sub: str = "
                     T.info_icon(ui, label, info)
                 if sub:
                     ui.label(sub).classes("sr-db-note ellipsis")
+            if not value_html and value.count("/") == 1:  # "10/69": số hiện tại đậm, tổng nhỏ và nhạt
+                cur, tot = value.split("/")
+                value_html = f"{escape(cur)}<span class='sr-db-mini-of'>/{escape(tot)}</span>"
             if value_html:
                 ui.html(value_html).classes("sr-db-mini-num")
             else:

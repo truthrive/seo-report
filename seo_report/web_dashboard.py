@@ -148,6 +148,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     pbks = buckets(prev, days)  # kỳ so sánh, cùng số điểm: vẽ nét đứt trên cùng biểu đồ nhỏ
     plabels = [f"{s:%d/%m}" for s, _ in pbks]
     ed = A.can_edit(user)
+    cl = A.is_client(user)  # khách hàng: chỉ số người đọc cần, không số vận hành / nội bộ
 
     T.page_header(ui, "space_dashboard", "Tổng quan",
                   f"{days} ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}) so với {days} ngày trước đó "
@@ -220,6 +221,12 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     def summary():
         """Một dòng dưới tiêu đề: việc cần xử lý (team) và KPI tháng dự án (khi có), bấm để cuộn xuống khối đó. Hai
         khối này nằm sau 3 hàng chỉ số SEO nên cần một lối tắt ngay đầu trang."""
+        if cl:
+            with ui.element("div").classes("sr-db-summary"):
+                with ui.element("div").classes("sr-db-jump info"):
+                    ui.icon("schedule", size="16px").props('aria-hidden="true"')
+                    ui.label(f"Số liệu Google đến {end:%d/%m/%Y}")
+            return
         if not ed and not kv:
             return
         with ui.element("div").classes("sr-db-summary"):
@@ -249,8 +256,9 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     def rank_row():
         """Thứ hạng (lần check mới nhất của mỗi từ khóa, không theo kỳ cuộn). Top N trên mọi từ khóa theo dõi (bỏ bộ
         Nháp), ghi rõ số đã check; có KPI thì thêm dòng Top N theo KPI (bộ cam kết, tháng dự án) để không lẫn."""
-        sub = (f"Lần check mới nhất {date.fromisoformat(rank['last']):%d/%m} · đã check {rank['checked']}/"
-               f"{rank['total']} từ khóa · không theo kỳ ngày đang chọn" if rank["last"] else "Chưa có lần check nào")
+        sub = ((f"Lần check mới nhất {date.fromisoformat(rank['last']):%d/%m} · {rank['total']} từ khóa" if cl else
+                f"Lần check mới nhất {date.fromisoformat(rank['last']):%d/%m} · đã check {rank['checked']}/"
+                f"{rank['total']} từ khóa · không theo kỳ ngày đang chọn") if rank["last"] else "Chưa có lần check nào")
         W.group_head(ui, "Thứ hạng từ khóa", "leaderboard", sub, "/rank", "Thứ hạng")
         if not rank["checked"]:
             with W.card(ui, "Thứ hạng", "leaderboard"):
@@ -262,6 +270,9 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                 W.mini_row(ui, "emoji_events", "green", "Top 3", f"{rank['top3']}/{n}",
                            sub=f"vào {tiers[3]['enter']} · rời {tiers[3]['leave']}", ratio=rank["top3"] / n,
                            info=("Số từ khóa ở vị trí 1–3 trên Google, lần check mới nhất của mỗi từ khóa.",))
+                W.mini_row(ui, "workspace_premium", "blue", "Top 5", f"{rank['top5']}/{n}",
+                           sub=f"vào {tiers[5]['enter']} · rời {tiers[5]['leave']}", ratio=rank["top5"] / n,
+                           info=("Số từ khóa ở vị trí 1–5 trên Google.",))
                 W.mini_row(ui, "format_list_numbered", "lime", "Top 10", f"{rank['top10']}/{n}",
                            sub=f"vào {tiers[10]['enter']} · rời {tiers[10]['leave']}", ratio=rank["top10"] / n,
                            info=("Số từ khóa ở trang 1 Google (vị trí 1–10).",))
@@ -271,7 +282,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                        "</span>"), split=(rank["up"], rank["down"]),
                            info=("Số từ khóa lên hạng và rớt hạng so với lần check liền trước của chính từ khóa "
                                  "đó.",))
-                W.mini_row(ui, "fact_check", "grey", "Đã check", f"{rank['checked']}/{n}",
+                if not cl:
+                  W.mini_row(ui, "fact_check", "grey", "Đã check", f"{rank['checked']}/{n}",
                            sub=(f"{n - rank['checked']} chưa check" if rank["checked"] < n else "đủ cả bộ"),
                            ratio=rank["checked"] / n,
                            info=("Từ khóa đã có ít nhất một lần check. Top N tính trên tổng số từ khóa theo dõi.",))
@@ -284,7 +296,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     W.rank_share_chart(ui, rank_hist)
                 elif rank_hist:
                     W.rank_segment_bar(ui, rank_hist[-1])
-                if thin and len(rank_hist) >= 2:
+                if thin and len(rank_hist) >= 2 and not cl:
                     ui.label(f"Ẩn {len(thin)} {rank_by} có quá ít từ khóa đã check").classes("sr-db-note")
                 # AI Overview ở lần check mới nhất của từng từ khóa: được trích / có nhưng chưa / không có
                 known = [r for r in aio_rows if r["aio"] is not None]
@@ -300,11 +312,12 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                   "AI Overview lần check mới nhất", total=len(known), compact=True)
                     opp = [r for r in has if r["cited"] is False and r["rank"] and r["rank"] <= 10]
                     with ui.element("div").classes("sr-db-facts"):
-                        W.fact(ui, "bolt", "purple", "Cơ hội AI Overview",
-                               f"<b>{len(opp)}</b> từ khóa top 10 chưa được trích", "/aio",
-                               "Từ khóa đã ở top 10 và có AI Overview nhưng website chưa được trích: "
-                               + (", ".join(r["keyword"] for r in opp[:8]) + ("…" if len(opp) > 8 else "")
-                                  if opp else "không có"))
+                        if not cl:  # việc của team, không đưa cho khách
+                            W.fact(ui, "bolt", "purple", "Cơ hội AI Overview",
+                                   f"<b>{len(opp)}</b> từ khóa top 10 chưa được trích", "/aio",
+                                   "Từ khóa đã ở top 10 và có AI Overview nhưng website chưa được trích: "
+                                   + (", ".join(r["keyword"] for r in opp[:8]) + ("…" if len(opp) > 8 else "")
+                                      if opp else "không có"))
                         if aio_s.get("known"):
                             W.fact(ui, "lightbulb", "purple", f"Được trích {AIO_WEEKS} tuần",
                                    f"<b>{aio_s['cited_rate'] * 100:.0f}%</b> ({aio_s['cited']}/{aio_s['known']} lượt)",
@@ -314,7 +327,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                         if kv_:
                             W.fact(ui, "flag", "green", kv_[0], kv_[1], "/kpi",
                                    re.sub("<[^>]+>", "", kpi_rank_line(kstate["p"])))
-                if cfg.rank.paused:
+                if cfg.rank.paused and not cl:
                     T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
             rows_c = comp.get("rows") or []
             vis_sum = sum(r["vis"] for r in rows_c)
@@ -323,10 +336,22 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     ui.label("Thêm đối thủ ở màn Đối thủ để so thị phần hiển thị.").classes("sr-db-note")
                 else:
                     from .web_rank import share_donut
-                    with ui.link(target="/doi-thu").classes("sr-db-donutlink no-underline"):
+                    with (ui.link(target="/doi-thu") if T.link_allowed("/doi-thu") else ui.element("div")).classes(
+                            "sr-db-donutlink no-underline"):
                         share_donut(ui, rows_c, vis_sum, next((r["brand"]["name"] for r in rows_c
                                                                if r["brand"]["own"]), "dự án"), size=220)
                     ui.label(f"Trên {comp['keywords']}/{comp['total']} từ khóa").classes("sr-db-note text-center")
+
+    from . import web_events as EV
+    events = {"list": []}
+    if not cl:
+        with connect() as c:
+            events["list"] = EV.site_events(c, site)
+
+    def reload_events():
+        with connect() as c:
+            events["list"] = EV.site_events(c, site)
+        gsc_row.refresh()
 
     @ui.refreshable
     def gsc_row():
@@ -343,21 +368,30 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                        href="/url", tone="blue")
                 ctr, ctr_p = (clicks / impr if impr else None), (clicks_prev / impr_prev if impr_prev else None)
                 dp = (ctr - ctr_p) if ctr is not None and ctr_p is not None else None
-                W.stat(ui, "CTR", pct_text(ctr), "percent", F.delta_points(dp), T.good_of(dp), tone="amber",
-                       sub=f"{prev_label}: {pct_text(ctr_p)}", info=("Click / lượt hiển thị trong kỳ.",))
+                if not cl:
+                    W.stat(ui, "CTR", pct_text(ctr), "percent", F.delta_points(dp), T.good_of(dp), tone="amber",
+                           sub=f"{prev_label}: {pct_text(ctr_p)}", info=("Click / lượt hiển thị trong kỳ.",))
                 aio = g.get("aio") if not state["loading"] else None
                 if aio and aio.get("share") is not None:
                     dpa = (aio["share"] - aio["prev_share"]) if aio.get("prev_share") is not None else None
                     W.stat(ui, "Tỷ lệ hiện trong AI", F.pct(aio["share"], 1), "lightbulb", F.delta_points(dpa),
-                           T.good_of(dpa), tone="purple", ratio=aio["share"], sub=(f"Số đến {aio['until']:%d/%m} (file AI Overviews về trễ)"
+                           T.good_of(dpa), tone="purple", ratio=aio["share"], sub=(f"Số đến {aio['until']:%d/%m} (Google cập nhật số AI Overviews chậm vài ngày)"
                                                 if aio.get("until") else "Phần lượt hiển thị nằm trong câu trả lời AI"),
                            href="/ai")
                 else:
                     W.stat(ui, "Tỷ lệ hiện trong AI", "–", "lightbulb", sub="Cần nhập file Generative AI từ GSC",
                            href="/ai", loading=state["loading"], tone="purple")
             with W.card(ui, "Click theo ngày", "show_chart", extra="sr-db-chartcard"):
+                ev_marks = EV.mark_line(EV.marks(events["list"], bks, labels)) if not cl else None
                 W.daily_line(ui, [total(s, e, 0) for s, e in bks], [total(s, e, 0) for s, e in pbks], labels, plabels,
-                             "Click")
+                             "Click", marks=ev_marks)
+                if not cl:
+                    n_ev = len(events["list"])
+                    with ui.row().classes("w-full justify-end"):
+                        ui.button("Mốc sự kiện" + (f" · {n_ev}" if n_ev else ""), icon="flag",
+                                  on_click=lambda: EV.events_dialog(ui, connect, site, user, ed, reload_events)).props(
+                            "flat dense no-caps size=sm color=deep-purple-7").tooltip(
+                            "Ghi mốc (Google update, sửa web, đăng bài…) để thấy trên biểu đồ")
 
     @ui.refreshable
     def ga_row():
@@ -412,34 +446,43 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     W.source_bars(ui, [(F.SOURCE_NAMES.get(k, k.replace("_", " ").title()), v) for k, v in srcs[:5]],
                                   empty="Chưa có lượt truy cập từ AI trong kỳ")
 
+    kpi_box = None
+
+    def kpi_placeholder():
+        nonlocal kpi_box
+        # Số KPI cần GA4 nên tải nền; trong lúc chờ giữ chỗ đúng số ô của phiên bản KPI hiện hành để trang không nhảy.
+        kpi_box = ui.column().classes("w-full").props('id="kpi-cam-ket"')
+        if kv:
+            from .web_kpi import kpi_skeleton
+            T.busy(kpi_box, True)
+            with kpi_box:  # khung chờ đúng hình khối KPI (đúng số ô của phiên bản hiện hành): trang không nhảy
+                kpi_skeleton(ui, len((kv.get("data") or {}).get("lines") or []) or 4)
+        elif ed:
+            with kpi_box, T.section(ui, "KPI cam kết", "flag", "Dự án chưa có KPI cam kết", href="/kpi",
+                                    link_text="Tạo KPI cam kết"):
+                ui.label("Tạo bộ cam kết (thứ hạng, phiên Organic / AI theo tháng dự án) để tool tự chấm tiến độ mỗi "
+                         "ngày.").classes("text-sm muted")
+
+    if cl:
+        kpi_placeholder()
+    groups: dict[str, object] = {}
     with ui.element("div").classes("sr-db w-full q-mt-sm"):
-        for fn in (rank_row, gsc_row, ga_row):
-            with ui.element("div").classes("sr-db-group sr-db-12"):
+        for key, fn in (("rank", rank_row), ("gsc", gsc_row), ("ga", ga_row)):
+            with ui.element("div").classes("sr-db-group sr-db-12") as grp:
                 fn()
+            groups[key] = grp
+    for key in ("gsc", "ga"):  # hai khối có số GA4 / AI Overview tải nền: đánh dấu đang tải tới khi số về
+        T.busy(groups[key], True)
 
     # ================= Việc cần làm (team) và KPI cam kết (tháng dự án) =================
     if ed:
         todo_section(ui, cfg, connect, rep, ctx, site, rows=todos)
-    # Số KPI cần GA4 nên tải nền; trong lúc chờ giữ chỗ đúng số ô của phiên bản KPI hiện hành để trang không nhảy.
-    kpi_box = ui.column().classes("w-full").props('id="kpi-cam-ket"')
-    if kv:
-        n_lines = len((kv.get("data") or {}).get("lines") or []) or 4
-        with kpi_box, T.section(ui, "Tiến độ KPI cam kết", "flag", "Tháng dự án · đang tính tiến độ…"):
-            with T.kpi_row(ui):
-                for _ in range(n_lines):
-                    with ui.element("div").classes("sr-card sr-kpi"):
-                        ui.skeleton("text").style("width:60%")
-                        ui.skeleton("rect").style("height:28px; width:45%; margin:6px 0")
-                        ui.skeleton("text").style("width:80%")
-    elif ed:
-        with kpi_box, T.section(ui, "KPI cam kết", "flag", "Dự án chưa có KPI cam kết", href="/kpi",
-                                link_text="Tạo KPI cam kết"):
-            ui.label("Tạo bộ cam kết (thứ hạng, phiên Organic / AI theo tháng dự án) để tool tự chấm tiến độ mỗi "
-                     "ngày.").classes("text-sm muted")
+    if not cl:
+        kpi_placeholder()
 
     # ================= Tốc độ · Backlink · Index · OKR =================
     with ui.element("div").classes("sr-db sr-db-eq w-full q-mt-sm"):
-        with ui.element("div").classes("sr-db-group sr-db-4"):
+        with ui.element("div").classes("sr-db-group sr-db-4" + (" hidden" if cl else "")):
             at = lh.get("at")
             sub = (f"Trung bình {lh['n']} trang quan trọng · điện thoại · đo {at[8:10]}/{at[5:7]}"
                    if lh.get("n") and at else "Chưa đo tốc độ")
@@ -453,9 +496,10 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                         ui.label("–" if v is None else "Tốt" if v >= 90 else "Cần cải thiện" if v >= 50
                                  else "Kém").classes("sr-db-note text-center")
 
-        with ui.element("div").classes("sr-db-group sr-db-8"):
+        with ui.element("div").classes("sr-db-group " + ("sr-db-12" if cl else "sr-db-8")):
             now_bl = (bl or {}).get("now")
-            sub = ((f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m} (DataForSEO) · "
+            sub = (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m}" if cl and now_bl else
+                   (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m} (DataForSEO) · "
                     + ("tạm ngưng tự lấy" if bst["paused"] else BL.EVERY_CHOICES[bst["every_days"]].lower()
                        + " tự lấy lại")
                     + (f" · thay đổi so với lần lấy {date.fromisoformat(bl['prev']['day']):%d/%m}"
@@ -481,13 +525,14 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     d = d_of("rank")
                     W.stat(ui, "Uy tín", f"{now_bl['rank'] if now_bl['rank'] is not None else '–'}/1000", "verified",
                            (f"{'+' if d > 0 else '−'}{abs(d)}" if d else ""), T.good_of(d), tone="amber",
-                           ratio=(now_bl["rank"] or 0) / 1000, sub="Thang 0–1000 (DataForSEO)",
+                           ratio=(now_bl["rank"] or 0) / 1000, sub="Thang điểm 0–1000",
                            info=("Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link "
                                  "trỏ về.",))
                     d = d_of("backlinks")
                     W.stat(ui, "Backlink", F.n(now_bl["backlinks"] or 0), "link",
                            (f"{'+' if d > 0 else '−'}{F.n(abs(d))}" if d else ""), T.good_of(d), tone="green",
-                           sub=f"Điểm spam {now_bl['spam_score'] if now_bl['spam_score'] is not None else '–'}/100")
+                           sub=("Tổng số link trỏ về" if cl else
+                                f"Điểm spam {now_bl['spam_score'] if now_bl['spam_score'] is not None else '–'}/100"))
                 with W.card(ui, "Link mới / mất theo tháng", "stacked_bar_chart"):
                     if hist:
                         W.new_lost_chart(ui, hist, height=200)
@@ -605,8 +650,25 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     def tot(src, s, e, i=None):
                         return sum((v[i] if i is not None else v) for d, v in src.items() if s <= d <= e)
                     out["channels"] = channels
+
+                    # Số tổng của kỳ: hỏi GA4 cả kỳ một lần, khớp số trên giao diện GA4. Cộng các ngày lại thì cao hơn
+                    # khoảng 1–2% (phiên vắt qua nửa đêm bị đếm ở cả hai ngày); số theo ngày chỉ dùng cho biểu đồ.
+                    from .ai_analytics import Filters
+                    aa = AIAnalytics(client)
+
+                    def period_totals(s, e) -> dict[str, int]:
+                        rows_ = client.run(["sessionDefaultChannelGroup"], ["sessions"], s, e, limit=500).rows
+                        ai_rows = client.run([], ["sessions"], s, e, aa._ai(Filters())).rows
+                        return {"all": sum(r["sessions"] for r in rows_),
+                                "organic": sum(r["sessions"] for r in rows_
+                                               if r["sessionDefaultChannelGroup"] == "Organic Search"),
+                                "ai": ai_rows[0]["sessions"] if ai_rows else 0}
+                    t_cur, t_prev = period_totals(*cur), period_totals(*prev)
+                    rows_cur = client.run(["sessionDefaultChannelGroup"], ["sessions"], *cur, limit=500).rows
+                    channels = {(r["sessionDefaultChannelGroup"] or "Unassigned"): r["sessions"] for r in rows_cur}
+                    out["channels"] = channels
                     for key, src, i in (("all", by_day, 0), ("organic", by_day, 1), ("ai", ai_day, None)):
-                        out[key] = (tot(src, *cur, i), tot(src, *prev, i), [tot(src, s, e, i) for s, e in bks],
+                        out[key] = (t_cur[key], t_prev[key], [tot(src, s, e, i) for s, e in bks],
                                     [tot(src, s, e, i) for s, e in pbks])
                 except (Exception, SystemExit) as e:  # noqa: BLE001
                     out["error"] = str(e)
@@ -618,6 +680,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         state["loading"] = False
         ga_row.refresh()
         gsc_row.refresh()
+        for key in ("gsc", "ga"):
+            T.busy(groups[key], False)
 
     async def load_kpi():
         from .web_kpi import kpi_block, load_progress
@@ -628,6 +692,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         if not kv:
             return  # không có KPI: khung mời tạo (nếu có) giữ nguyên
         kpi_box.clear()
+        T.busy(kpi_box, False)
         if p:
             with kpi_box:
                 kpi_block(ui, p)

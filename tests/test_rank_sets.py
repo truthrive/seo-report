@@ -297,6 +297,14 @@ class CrudTest(unittest.TestCase):
         self.assertEqual(R.budget_status(self.con, SITE, self.s, END)["estimate"], 0)
         self.assertTrue(all(k["paused"] for k in R.keywords(self.con, SITE, END, self.a)))
 
+    def test_paused_set_keeps_last_rank_in_overview(self):
+        from seo_report import rank_dashboard as D
+        self.con.execute("INSERT INTO rank_checks VALUES (?, '2026-10-06', 30, 4, NULL, NULL, 0, '')", (self.ids["x"],))
+        R.update_set(self.con, self.a, "t", paused=True)
+        kws, rows = D.scope_keywords(self.con, SITE, END, "all")
+        self.assertEqual([(k["keyword"], k["rank"]) for k in kws], [("x", 4)])  # y chưa check lần nào: bỏ
+        self.assertEqual(D.kpis(kws)["tiers"][5]["count"], 1)
+
     def test_move_copy_note_and_log(self):
         R.set_note(self.con, SITE, [self.ids["x"]], "viết lại bài", "t")
         c = R.copy_keywords(self.con, SITE, self.s, END, [self.ids["x"]], self.b, "t")

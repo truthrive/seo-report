@@ -527,6 +527,14 @@ def todo_rows(cfg, connect, rep, ctx) -> list[tuple]:
     wrong = [r for r in rep.ranks if r["target_url"] and r["ranking_url"] and r["ranking_url"] != r["target_url"]]
     issues = _sheet_issues(okr_items, okr_tasks, date.today()) if okr_items else []
     rows = []
+    try:
+        from . import feedback as FB
+        with connect() as c:
+            n_fb = FB.count_new(c)
+        if n_fb:
+            rows.append(("support_agent", T.RED, f"{n_fb} yêu cầu hỗ trợ mới", "/ho-tro"))
+    except Exception:  # noqa: BLE001
+        pass
     if dropped:
         rows.append(("error", T.RED, f"{len(dropped)} URL vừa rớt khỏi index", "/index"))
     if len(not_indexed) > len(dropped):

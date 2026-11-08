@@ -17,9 +17,9 @@ PCT_JS = "val => val.toLocaleString('vi-VN', {minimumFractionDigits: 2, maximumF
 PRESETS = {"week": "Tuần đang chọn", "7": "7 ngày", "28": "28 ngày", "90": "90 ngày", "last_month": "Tháng trước",
            "custom": "Tùy chọn"}
 KPI_ICONS = {"Phiên AI": ("smart_toy", "green"), "Tỷ lệ AI": ("pie_chart", "blue"),
-             "Tỷ lệ AI (nhóm organic)": ("donut_small", "blue"), "Engaged sessions": ("how_to_reg", "lime"),
-             "Engagement rate": ("touch_app", "lime"), "Thời gian tương tác TB/phiên": ("timer", "purple"),
-             "Key events": ("flag", "amber"), "Session key event rate": ("percent", "amber")}
+             "Tỷ lệ AI (nhóm organic)": ("donut_small", "blue"), "Phiên có tương tác": ("how_to_reg", "lime"),
+             "Tỷ lệ tương tác": ("touch_app", "lime"), "Thời gian tương tác TB/phiên": ("timer", "purple"),
+             "Sự kiện chính": ("flag", "amber"), "Tỷ lệ phiên có sự kiện chính": ("percent", "amber")}
 
 
 def preset_range(key: str, today: date) -> tuple[date, date]:
@@ -200,6 +200,11 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
     tab_by_name = {t._props["name"]: t for t in (t_over, t_src, t_land, t_geo, t_gai, t_opp, t_dq)}
     t_geo.set_visibility(False)  # quốc gia hiện ngay trong tab Nguồn AI
     t_dq.set_visibility(False)  # mở từ menu "Chất lượng dữ liệu"
+    from .access import is_client
+    if is_client(user):  # khách hàng: không tab Cơ hội (việc của team) / Chất lượng dữ liệu (kỹ thuật)
+        t_opp.set_visibility(False)
+        if init["tab"] in (t_opp._props["name"], t_dq._props["name"]):
+            init["tab"] = t_over._props["name"]
     if quality:
         tabs.set_visibility(False)
     tabs.set_value(tab_by_name[init["tab"]])
@@ -299,9 +304,8 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         with filter_chips:
             for key, label in [("source", "Nguồn"), ("country", "Quốc gia"), ("landing", "Trang đích")]:
                 if state[key]:
-                    ui.chip(f"{label}: {F.SOURCE_NAMES.get(state[key], state[key])}", removable=True,
-                            on_value_change=lambda e, k=key: set_filter(k, None) if not e.value else None).props(
-                        "color=green-1 text-color=green-10")
+                    T.filter_chip(ui, f"{label}: {F.SOURCE_NAMES.get(state[key], state[key])}",
+                                  lambda k=key: set_filter(k, None))
 
     def on_preset(e):
         state["preset"] = e.value
@@ -446,22 +450,22 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             kpi_card("Tỷ lệ AI", F.pct(sh["ofAllSessions"]), hint=f"trên tổng {F.n(sh['allSessions'])} phiên của site")
             kpi_card("Tỷ lệ AI (nhóm organic)", F.pct(sh["ofOrganicBase"]),
                      hint=f"trên {F.n(sh['organicBase'])} phiên AI + Organic Search + Social")
-            kpi_card("Engaged sessions", F.n(a["engagedSessions"]), F.delta_pct(dl.get("engagedSessions"), prev_of("engagedSessions")),
+            kpi_card("Phiên có tương tác", F.n(a["engagedSessions"]), F.delta_pct(dl.get("engagedSessions"), prev_of("engagedSessions")),
                      sign(dl.get("engagedSessions")))
         with T.kpi_row(ui):
-            kpi_card("Engagement rate", F.pct(a["engagementRate"]), F.delta_points(dl.get("engagementRate")),
+            kpi_card("Tỷ lệ tương tác", F.pct(a["engagementRate"]), F.delta_points(dl.get("engagementRate")),
                      sign(dl.get("engagementRate")))
             kpi_card("Thời gian tương tác TB/phiên", F.mmss(a["avgEngagementTimePerSession"]),
                      F.delta_pct(dl.get("avgEngagementTimePerSession")), sign(dl.get("avgEngagementTimePerSession")))
-            kpi_card("Key events", F.n(a["keyEvents"]), F.delta_pct(dl.get("keyEvents"), prev_of("keyEvents")), sign(dl.get("keyEvents")),
-                     hint=f"{F.per100(a['keyEventsPer100Sessions'])} key events / 100 phiên")
-            kpi_card("Session key event rate", F.pct(a["sessionKeyEventRate"]),
+            kpi_card("Sự kiện chính", F.n(a["keyEvents"]), F.delta_pct(dl.get("keyEvents"), prev_of("keyEvents")), sign(dl.get("keyEvents")),
+                     hint=f"{F.per100(a['keyEventsPer100Sessions'])} sự kiện chính / 100 phiên")
+            kpi_card("Tỷ lệ phiên có sự kiện chính", F.pct(a["sessionKeyEventRate"]),
                      F.delta_points(dl.get("sessionKeyEventRate")), sign(dl.get("sessionKeyEventRate")),
-                     hint="% phiên có ít nhất 1 key event")
+                     hint="% phiên có ít nhất 1 sự kiện chính")
         paid = s["data"]["paidAi"]
         if paid["sessions"]:
             ui.label(f"Ngoài ra {F.n(paid['sessions'])} phiên từ nguồn AI có medium trả phí (ví dụ chatgpt / paid), "
-                     f"{paid['keyEvents']} key events: tính là quảng cáo, không cộng vào số trên.").classes(
+                     f"{paid['keyEvents']} sự kiện chính: tính là quảng cáo, không cộng vào số trên.").classes(
                 "text-xs muted")
 
         pts = tr["data"].get("points", [])
@@ -498,18 +502,18 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         ui.table(columns=[
             {"name": "ch", "label": "Kênh", "field": "ch", "align": "left"},
             {"name": "s", "label": "Phiên", "field": "s", "align": "right"},
-            {"name": "e", "label": "Engaged", "field": "e", "align": "right"},
-            {"name": "er", "label": "Engagement rate", "field": "er", "align": "right"},
+            {"name": "e", "label": "Có tương tác", "field": "e", "align": "right"},
+            {"name": "er", "label": "Tỷ lệ tương tác", "field": "er", "align": "right"},
             {"name": "t", "label": "TG tương tác TB/phiên", "field": "t", "align": "right"},
-            {"name": "k", "label": "Key events", "field": "k", "align": "right"},
-            {"name": "kr", "label": "Session key event rate", "field": "kr", "align": "right"},
+            {"name": "k", "label": "Sự kiện chính", "field": "k", "align": "right"},
+            {"name": "kr", "label": "Tỷ lệ phiên có sự kiện chính", "field": "kr", "align": "right"},
         ], rows=[{"ch": name, "s": F.n(v["sessions"]), "e": F.n(v["engagedSessions"]), "er": F.pct(v["engagementRate"]),
                   "t": F.mmss(v["avgEngagementTimePerSession"]), "k": F.n(v["keyEvents"]),
                   "kr": F.pct(v["sessionKeyEventRate"])} for name, v in rows],
             row_key="ch").classes("w-full").props("flat bordered dense")
         ke = d.get("key_events")
         if ke and ke.get("data", {}).get("events"):
-            ui.label("Key events từ phiên AI, theo từng event").classes("text-lg font-semibold q-mt-md")
+            ui.label("Sự kiện chính từ phiên AI, theo từng sự kiện").classes("text-lg font-semibold q-mt-md")
             ui.table(columns=[
                 {"name": "ev", "label": "Event", "field": "ev", "align": "left"},
                 {"name": "k", "label": "Số lần", "field": "k", "align": "right"},
@@ -538,9 +542,9 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             {"name": "p", "label": "Số trang", "field": "p", "align": "right"},
             {"name": "s", "label": "Phiên AI", "field": "s", "align": "right"},
             {"name": "chg", "label": "So với kỳ trước", "field": "chg", "align": "right"},
-            {"name": "er", "label": "Engagement rate", "field": "er", "align": "right"},
-            {"name": "k", "label": "Key events", "field": "k", "align": "right"},
-            {"name": "kr", "label": "Session key event rate", "field": "kr", "align": "right"},
+            {"name": "er", "label": "Tỷ lệ tương tác", "field": "er", "align": "right"},
+            {"name": "k", "label": "Sự kiện chính", "field": "k", "align": "right"},
+            {"name": "kr", "label": "Tỷ lệ phiên có sự kiện chính", "field": "kr", "align": "right"},
         ], rows=[{"seg": x["segment"], "p": x["pages"], "s": x["sessions"],
                   "chg": F.delta_pct(x["sessionsChange"], x["sessionsPrev"]), "er": F.pct(x["engagementRate"]),
                   "k": F.n(x["keyEvents"]), "kr": F.pct(x["sessionKeyEventRate"])} for x in seg_rows],
@@ -558,10 +562,10 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             {"name": "type", "label": "Loại", "field": "type", "align": "left", "sortable": True},
             {"name": "s", "label": "Phiên AI", "field": "s", "align": "right", "sortable": True},
             {"name": "chg", "label": "So với kỳ trước", "field": "chg", "align": "right"},
-            {"name": "er", "label": "Engagement rate", "field": "er", "align": "right", "sortable": True,
+            {"name": "er", "label": "Tỷ lệ tương tác", "field": "er", "align": "right", "sortable": True,
              ":format": PCT_JS},
-            {"name": "k", "label": "Key events", "field": "k", "align": "right", "sortable": True},
-            {"name": "kr", "label": "Session key event rate", "field": "kr", "align": "right", "sortable": True,
+            {"name": "k", "label": "Sự kiện chính", "field": "k", "align": "right", "sortable": True},
+            {"name": "kr", "label": "Tỷ lệ phiên có sự kiện chính", "field": "kr", "align": "right", "sortable": True,
              ":format": PCT_JS},
             {"name": "org", "label": "Phiên Organic Search (tham khảo)", "field": "org", "align": "right",
              "sortable": True, ":format": "val => val.toLocaleString('vi-VN')"},
@@ -652,9 +656,9 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             {"name": "s", "label": "Phiên AI", "field": "s", "align": "right"},
             {"name": "share", "label": "% phiên AI", "field": "share", "align": "right"},
             {"name": "chg", "label": "So với kỳ trước", "field": "chg", "align": "right"},
-            {"name": "er", "label": "Engagement rate", "field": "er", "align": "right"},
-            {"name": "k", "label": "Key events", "field": "k", "align": "right"},
-            {"name": "kr", "label": "Session key event rate", "field": "kr", "align": "right"},
+            {"name": "er", "label": "Tỷ lệ tương tác", "field": "er", "align": "right"},
+            {"name": "k", "label": "Sự kiện chính", "field": "k", "align": "right"},
+            {"name": "kr", "label": "Tỷ lệ phiên có sự kiện chính", "field": "kr", "align": "right"},
         ], rows=[{"c": r["country"], "s": F.n(r["sessions"]), "share": F.pct(r["sessions"] / total if total else None, 1),
                   "chg": F.delta_pct(r["sessionsChange"], r["sessionsPrev"]), "er": F.pct(r["engagementRate"]), "k": F.n(r["keyEvents"]),
                   "kr": F.pct(r["sessionKeyEventRate"])} for r in rows],
@@ -740,8 +744,8 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                             "dense switch-toggle-side") as ex:
                         with ex.add_slot("header"):
                             with ui.row().classes("items-center gap-2 no-wrap w-full"):
-                                ui.badge(first["severity"], color=sev.get(first["severity"], "grey-3")).props(
-                                    "text-color=black")
+                                T.pill(ui, f"Mức {first['severity']}",
+                                       {"cao": "red", "trung bình": "amber"}.get(first["severity"], "grey"))
                                 ui.label(f"{first['title']} ({len(items)} trang)").classes("text-sm font-medium")
                         for k, lbl in [("threshold", "Ngưỡng"), ("verification", "Cách kiểm chứng"),
                                        ("action", "Gợi ý"), ("source", "Nguồn"), ("data_period", "Kỳ"),
@@ -1249,10 +1253,10 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             {"name": "s", "label": "Phiên", "field": "s", "align": "right"},
             {"name": "share", "label": "% phiên AI", "field": "share", "align": "right"},
             {"name": "chg", "label": "So với kỳ trước", "field": "chg", "align": "right"},
-            {"name": "er", "label": "Engagement rate", "field": "er", "align": "right"},
+            {"name": "er", "label": "Tỷ lệ tương tác", "field": "er", "align": "right"},
             {"name": "t", "label": "TG tương tác TB/phiên", "field": "t", "align": "right"},
-            {"name": "k", "label": "Key events", "field": "k", "align": "right"},
-            {"name": "kr", "label": "Session key event rate", "field": "kr", "align": "right"},
+            {"name": "k", "label": "Sự kiện chính", "field": "k", "align": "right"},
+            {"name": "kr", "label": "Tỷ lệ phiên có sự kiện chính", "field": "kr", "align": "right"},
             {"name": "m", "label": "Cách nhận diện", "field": "m", "align": "left"},
         ], rows=[{"code": r["source"], "name": F.SOURCE_NAMES.get(r["source"], r["source"]), "s": F.n(r["sessions"]),
                   "share": F.pct(r["sessions"] / total if total else None, 1), "chg": F.delta_pct(r.get("sessionsChange"), r.get("sessionsPrev")),

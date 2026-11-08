@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from . import keywords as K
 from . import rank as R
+from . import ui_theme as T
 from .projects import domain
 
 
@@ -82,10 +83,10 @@ def icon_btn(ui, icon: str, tip: str, on_click=None, kind: str = "flat", color: 
     """Nút tròn chỉ có icon; tip hiện khi rê chuột và là tên đọc cho trình đọc màn hình. badge: số nhỏ ở góc."""
     b = ui.button(icon=icon, on_click=on_click).props(
         f"{kind} round dense" + (f" color={color}" if color else "")).tooltip(tip)
-    b.props["aria-label"] = tip
+    b.props["aria-label"] = f"{tip} ({badge})" if badge else tip
     if badge:
         with b:
-            ui.badge(str(badge)).props("floating rounded color=grey-7")
+            T.count_badge(ui, badge, f"{badge} mục", tone="grey", floating=True)
     return b
 
 
@@ -419,8 +420,9 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                                on_change=lambda e: (state.update(view=e.value), line.refresh())).props(
                     "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
                 vw.props['aria-label'] = "Xem dạng bảng hoặc biểu đồ"
-                icon_btn(ui, "flag", "Mốc sự kiện: đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ",
-                         on_events, color="deep-purple-7", badge=len(evs) if evs else None)
+                if on_events:
+                    icon_btn(ui, "flag", "Mốc sự kiện: đánh dấu Google update, đẩy backlink, viết lại bài… lên biểu đồ",
+                             on_events, color="deep-purple-7", badge=len(evs) if evs else None)
 
             def avg_chart(h, time_axis: bool, marks: dict, period: str) -> None:
                 """Vị trí trung bình của các từ khóa có hạng ở từng lần check / tuần / tháng. Trục đảo: hạng 1 ở trên
@@ -710,21 +712,24 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
     aria-labelledby; chỉ tab đang chọn có tabindex 0; phím ← → Home End chuyển tab) + một vùng nội dung dùng chung:
     đổi bộ thì dựng lại vùng đó ngay trong trang, không tải lại (địa chỉ ?bo= cập nhật để chép link / tải lại vẫn
     đúng bộ). set_id: bộ mở đầu; không có / không còn thì bộ đầu tiên."""
-    from .access import can_edit
+    from .access import can_edit, is_client
     from . import ui_theme as T
     site = cfg.site_url
+    cl = is_client(user)  # khách hàng: không bộ nháp, không trạng thái vận hành (tạm ngưng, lịch, chi phí)
     with connect() as c:
         all_sets = R.sets(c, site)
-        if not all_sets:
+        if not all_sets and can_edit(user):  # chỉ người sửa được mới tự tạo bộ mặc định
             R.default_set(c, site, str(user))
             all_sets = R.sets(c, site)
+    if cl:
+        all_sets = [x for x in all_sets if not x["draft"]]
     ids = [0] + [x["id"] for x in all_sets]  # 0 = Tổng quan (mặc định), rồi từng bộ (Đối thủ: trang /doi-thu)
     state = {"sid": set_id if set_id in ids else 0, "hooks": {}}
 
     right = T.page_header(ui, "leaderboard", "Từ khóa & Thứ hạng",
                           "Vị trí thật trên Google của từng bộ từ khóa: đạt mục tiêu chưa, từ khóa nào vừa lên / xuống.")
     with right:
-        if cfg.rank.paused:
+        if cfg.rank.paused and not cl:
             T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
 
     tabs = {}
@@ -745,7 +750,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
                 t.props.update({"role": "tab", "id": f"rk-tab-{x['id']}", "aria-controls": "rk-panel",
                                 "type": "button"})
                 with t:
-                    if x["draft"] or x["paused"] or x["kind"] == "kpi":
+                    if (x["draft"] or x["paused"]) and not cl or x["kind"] == "kpi":
                         ui.icon("edit_note" if x["draft"] else "pause_circle" if x["paused"] else "verified",
                                 size="16px")
                     ui.label(f"{x['name']} · {x['count']}")
@@ -908,7 +913,7 @@ def _project_panel(ui, cfg, connect, user, select, open_set) -> None:
 
 
 def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: bool = False,
-                       header_extra=None) -> None:
+                       header_extra=None, empty_hint: str = "Thêm tối đa 10 đối thủ ở phần bên trên.") -> None:
     """Đối thủ trên bộ từ khóa: donut thị phần hiển thị + bảng số (không dùng thanh so sánh); cảnh báo khi mới có ít
     từ khóa có dữ liệu; danh sách từ khóa đối thủ vừa vượt mình."""
     from . import rank_overview as RO
@@ -932,9 +937,9 @@ def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: b
             if header_extra:  # ví dụ nút "Tính trên: Mọi bộ / từng bộ" của tab Đối thủ
                 header_extra()
             if manage_link:
-                ui.link("Quản lý đối thủ", "/doi-thu").classes("text-sm")
+                ui.link("Quản lý đối thủ" if ed else "Trang Đối thủ", "/doi-thu").classes("text-sm")
         if not rivals:
-            T.empty_state(ui, "group_add", "Chưa có đối thủ nào", "Thêm tối đa 10 đối thủ ở phần bên trên.")
+            T.empty_state(ui, "group_add", "Chưa có đối thủ nào", empty_hint)
             return
         n, total = comp["keywords"], comp["total"]
         thin = not total or n / total < 0.3
@@ -1061,13 +1066,19 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     from . import ui_theme as T
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không thêm/bỏ keyword, không check (tốn tiền), không sửa bộ
+    cl = A.is_client(user)  # khách hàng: không ghi chú, mốc sự kiện, nhật ký, lịch / độ sâu check, bộ nháp
     owner = A.is_admin(user) or getattr(user, "role", None) == A.LOCAL  # xóa lần check sai: chỉ Chủ tool
     with connect() as c:
         end = K.latest_date(c, site)
         all_sets = R.sets(c, site)
-        if not all_sets:
+        if not all_sets and ed:
             R.default_set(c, site, str(user))
             all_sets = R.sets(c, site)
+        if cl:
+            all_sets = [x for x in all_sets if not x["draft"]]
+        if not all_sets:
+            T.empty_state(ui, "leaderboard", "Chưa có bộ từ khóa", "Bộ từ khóa sẽ hiện ở đây khi được tạo.")
+            return
         sheet = KP.sheet_id(c)
         linked = (R.kpi_set(c, site) or {}).get("id")
     cur = next((x for x in all_sets if x["id"] == set_id), all_sets[0])
@@ -1109,7 +1120,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             primary = ui.label(f"{engine} · {device}").classes("sr-setbar-title")
             primary.tooltip(f"Tìm trên {where.se_domain}, thiết bị {device.lower()}"
                             + ("; theo cài đặt chung của dự án" if not cur["settings"] else "; cài đặt riêng của bộ"))
-            ui.label(f"{lang} · {loc} · {depth_txt.capitalize()}").classes("sr-setbar-sub")
+            ui.label(f"{lang} · {loc}" + ("" if cl else f" · {depth_txt.capitalize()}")).classes("sr-setbar-sub")
             status_row = ui.element("div").classes("sr-setbar-status")
             status_row.props["aria-live"] = "polite"
         with ui.row().classes("items-center gap-1 no-wrap sr-setbar-actions"):
@@ -1169,7 +1180,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             run_box.props["role"] = "status"
             run_box.props["aria-live"] = "polite"
             with ui.row().classes("w-full items-center no-wrap gap-2"):
-                ui.spinner(size="14px", color="primary")
+                ui.spinner(size="14px", color="primary").props('aria-hidden="true"')  # vùng cha đã là role=status
                 run_label = ui.label("Đang chuẩn bị…").classes("sr-run-label")
                 ui.space()
                 run_stats = ui.label("").classes("sr-run-stats")
@@ -1291,8 +1302,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                     "outlined dense").classes("w-full")
                 t_device = ui.select(R.DEVICES, value=w.device, label="Thiết bị").props("outlined dense").classes(
                     "w-full")
-                t_loc = ui.select(R.locations(), value=w.location_code, label="Vị trí tìm kiếm",
-                                  with_input=True).props("outlined dense").classes("w-full")
+                from .combobox import Combobox
+                t_loc = Combobox(R.locations(), value=w.location_code, label="Vị trí tìm kiếm",
+                                 placeholder="Gõ tên tỉnh / thành phố, vd: Hà Nội")
                 t_lang = ui.select(R.LANGUAGES, value=w.language_code, label="Ngôn ngữ").props(
                     "outlined dense").classes("w-full")
             box.bind_visibility_from(follow, "value", backward=lambda v: not v)
@@ -1447,7 +1459,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         from .web_export import export_menu as _export_menu
         _export_menu(ui, cfg, connect, f"tu-khoa_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
                      label="Xuất bảng (Excel)", user=user, icon_only=True, category="rank")
-        filt = ui.select({k: v[0] for k, v in FILTERS.items()}, value="all", label="Lọc",
+        filt = ui.select({k: v[0] for k, v in FILTERS.items() if not (cl and k == "note")}, value="all", label="Lọc",
                          on_change=lambda: refresh()).props("dense outlined options-dense").classes("w-56")
         trash_slot = ui.row()  # nút thùng rác (có số), vẽ lại khi làm mới
     wrong_box = ui.row().classes("w-full")
@@ -1543,14 +1555,16 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                       <q-tooltip>{{ {'I': 'Informational (Thông tin)', 'N': 'Navigational (Điều hướng)', 'C': 'Commercial (Cân nhắc mua)', 'T': 'Transactional (Mua / giao dịch)'}[props.row.intent] }}</q-tooltip></span></q-td>""")
     table.add_slot("body-cell-pos", """
         <q-td :props="props" class="text-center">
-          <span v-if="props.row.paused" class="sr-pill grey"><q-icon name="pause" size="13px" /> dừng</span>
-          <span v-else-if="props.row.checked" class="sr-pos">
+          <span v-if="props.row.checked" class="sr-pos" :style="{opacity: props.row.paused ? 0.7 : 1}">
             <q-icon class="medal" :name="props.row.medal_icon || 'circle'" size="15px"
                     :style="{color: props.row.medal || 'transparent'}" />
             <span class="chip" :style="{background: props.row.bg, color: props.row.fg}">{{ props.value }}</span>
             <i v-if="props.row.date_old" class="old"></i>
+            <q-icon v-if="props.row.paused" name="pause_circle" size="14px" color="grey-6" />
             <q-tooltip>Lần check gần nhất: {{ props.row.date_full }}<template v-if="props.row.date_old"><br/>Cũ hơn
-              lần check mới nhất của bộ</template></q-tooltip></span>
+              lần check mới nhất của bộ</template><template v-if="props.row.paused"><br/>Đang tạm dừng: giữ thứ hạng
+              lần check gần nhất, không check tiếp</template></q-tooltip></span>
+          <span v-else-if="props.row.paused" class="sr-pill grey"><q-icon name="pause" size="13px" /> dừng</span>
           <span v-else class="muted">chờ check</span>
         </q-td>""")
     table.add_slot("body-cell-aio", """
@@ -1677,8 +1691,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         row = e.args
         with connect() as c:
             hist = R.history(c, row["id"])
-            log = R.keyword_log(c, site, row["keyword"])
-            evs = R.events(c, site, sid)
+            log = [] if cl else R.keyword_log(c, site, row["keyword"])
+            evs = [] if cl else R.events(c, site, sid)
             serps = R.serp_history(c, row["id"])
         with ui.dialog() as d, ui.card().style("min-width: 680px; max-width: 94vw; border-radius: 14px"):
             with ui.row().classes("w-full items-center no-wrap"):
@@ -1689,6 +1703,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 t0 = ui.tab("Kết quả Google", icon="travel_explore")
                 t2 = ui.tab(f"Các lần check · {len(hist)}", icon="event_note")
                 t3 = ui.tab(f"Nhật ký · {len(log)}", icon="history")
+                if cl:
+                    t3.set_visibility(False)
             with ui.tab_panels(tabs, value=t1).classes("w-full").props("animated=false"):
                 with ui.tab_panel(t1).classes("q-px-none"):
                     pts = [{"date": dd} for dd, _, _ in hist]
@@ -1821,9 +1837,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 with ui.row().classes("w-full items-center gap-2"):
                     ui.label("Đối thủ").classes("sr-section-title").style("font-size:14px")
                     ui.space()
-                    ui.link("Quản lý đối thủ", "/aio?tab=brands").classes("text-xs")
+                    ui.link("Quản lý đối thủ" if ed else "Trang Đối thủ", "/doi-thu").classes("text-xs")
                 if not rivals:
-                    ui.label("Chưa có đối thủ nào: thêm ở trang AI Overview → Thương hiệu (tối đa 10).").classes(
+                    ui.label("Chưa có đối thủ nào: thêm ở trang Đối thủ (tối đa 10).").classes(
                         "text-sm muted")
                 else:
                     pos = AO.brand_ranks(cur["organic"], rivals)
@@ -1976,7 +1992,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             kws = R.keywords(c, site, end, sid)
             vols = V.latest(c)
             hist = R.set_history(c, site, sid)
-            evs = R.events(c, site, sid)
+            evs = [] if cl else R.events(c, site, sid)
             try:  # mục tiêu cam kết Top N (sheet KPI) cho bảng / biểu đồ xu hướng của bộ Cam kết
                 kpi_now = KP.rank_kpi_now(c, site, date.today(), sid) if commit_set else None
             except Exception:  # noqa: BLE001 — sheet KPI lỗi không được làm hỏng màn rank
@@ -2039,7 +2055,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 "wrong": bool(k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"]),
                 "target_pos": _pos(k["target_rank"], k["last_depth"]),
                 "can_edit": ed and (not is_kpi or bool(sheet)),
-                "paused": k["paused"], "own_paused": k["own_paused"], "note": k["note"],
+                "paused": k["paused"], "own_paused": k["own_paused"], "note": "" if cl else k["note"],
                 "medal": {1: "#D4A017", 2: "#9AA3AE", 3: "#B87333"}.get(k["rank"], ""),  # vàng / bạc / đồng
                 "medal_icon": {1: "emoji_events", 2: "workspace_premium", 3: "military_tech"}.get(k["rank"], ""),
                 "aio_rank": (2 if flags.get(k["id"], (False, None))[1] else 1) if flags.get(k["id"], (False,))[0]
@@ -2058,7 +2074,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                      period=period)
         bento_box.clear()
         with bento_box:
-            bento(ui, kws, hist, evs, load, view_state, lambda: events_dialog(),
+            bento(ui, kws, hist, evs, load, view_state, None if cl else (lambda: events_dialog()),
                   lambda k: show_chart(SimpleNamespace(args={"id": k["id"], "keyword": k["keyword"]})),
                   on_filter=show_in_table, short_url=short, kpi_now=kpi_now, aio=aio_now, aio_link=f"/aio?bo={sid}")
         with connect() as c:
@@ -2078,16 +2094,17 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 stat("schedule", f"Cập nhật {_local(at) if at else _vn(last_h['date'])}", "Lần check mới nhất của bộ")
             else:
                 stat("schedule", "Chưa kiểm tra lần nào")
-            stat("event_repeat", when.replace(" vào ", " · "),
-                 f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed else "Lịch check tự động")
-            if cur["paused"]:
+            if not cl:
+                stat("event_repeat", when.replace(" vào ", " · "),
+                     f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed else "Lịch check tự động")
+            if cur["paused"] and not cl:
                 stat("pause_circle", "Đang tạm dừng", "Bộ không được check tự động, không tính tiền", tone="warn")
             if is_kpi:
                 stat("sync", "Đồng bộ sheet cam kết",
                      "Thêm / sửa / bỏ từ khóa ở đây thì tool ghi lên tab Từ khóa cam kết")
         wrong = sum(1 for k in kws if k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"])
         wrong_box.clear()
-        if wrong and filt.value != "wrong":
+        if wrong and filt.value != "wrong" and not cl:
             with wrong_box:
                 ui.button(f"{wrong} sai URL mục tiêu", icon="warning",
                           on_click=lambda: filt.set_value("wrong")).props(

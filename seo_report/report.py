@@ -127,7 +127,11 @@ def organic_block(cfg, con, cur: tuple[date, date], prev: tuple[date, date],
 
         def total(s, e):
             return sum(v for d, v in daily.items() if s <= d <= e)
-        now, before = total(*cur), total(*prev)
+
+        def period_total(s, e) -> int:  # tổng kỳ của GA4 (cộng theo ngày đếm trùng phiên qua nửa đêm)
+            rows = client.run([], ["sessions"], s, e, C.channel_filter("Organic Search")).rows
+            return rows[0]["sessions"] if rows else 0
+        now, before = period_total(*cur), period_total(*prev)
         return {"sessions": now, "prev": before, "change": change(now, before),
                 "spark": [total(s, e) for s, e in trend_periods],
                 "cur_days": day_values(daily, cur), "prev_days": day_values(daily, prev)}

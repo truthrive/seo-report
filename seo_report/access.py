@@ -36,7 +36,7 @@ LOCAL, EDITOR, VIEWER, CLIENT = "local", "editor", "viewer", "client"
 ADMIN, MEMBER = EDITOR, VIEWER
 PROJECT_ROLES = {CLIENT: "Khách hàng", VIEWER: "Team xem", EDITOR: "Được sửa"}  # quyền trong một dự án
 CLIENT_PAGES = ("/", "/report", "/kpi", "/okr", "/rank", "/doi-thu", "/aio", "/backlink", "/local", "/merchant",
-                "/tai-khoan")  # màn khách hàng được mở
+                "/toc-do", "/nguon", "/ai", "/yeu-cau", "/tai-khoan")  # màn khách hàng được mở
 MAX_FAILED, LOCK_MINUTES, MIN_PASSWORD = 5, 15, 10
 
 

@@ -143,8 +143,11 @@ def explain(e: Exception) -> str:
                 + (f" (project {proj})" if proj else "") + " → APIs & Services → Library, bật đủ 3 API: "
                 + ", ".join(APIS.values()) + ". Bật xong đợi vài phút rồi thử lại.")
     if "RATE_LIMIT_EXCEEDED" in text or "Quota exceeded" in text or "quota" in text.lower() and "0" in text:
-        return ("Google chưa cấp quota cho Business Profile API (project chưa được duyệt hoặc quota đang là 0). "
-                "Kiểm tra mục Quotas của các API Business Profile trong Google Cloud Console.")
+        proj = (re.search(r"project(?:_number:|s/)(\d+)", text) or [None, ""])[1]
+        return ("Google chưa duyệt cho tool dùng Business Profile API (quota đang là 0 lượt/phút). Cần gửi đơn xin "
+                "quyền truy cập API: developers.google.com/my-business/content/prereqs → “Request access to the "
+                "API”" + (f", ghi project number {proj}" if proj else "") + ". Google duyệt xong (thường vài ngày) "
+                "quota tự lên 300 lượt/phút, khi đó bấm “Chi nhánh” để gắn hồ sơ.")
     if "PERMISSION_DENIED" in text or "403" in text:
         return ("Tài khoản Google của tool không có quyền với hồ sơ này: thêm email tool làm người quản lý hồ sơ "
                 "trong Google Business Profile.")

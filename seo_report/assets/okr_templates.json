@@ -1,0 +1,332 @@
+[
+ {
+  "key": "seo-3-thang",
+  "name": "SEO tổng thể 3 tháng",
+  "desc": "Audit → chiến lược → content & onpage → brand / digital PR → Local SEO. Khung đã chạy thực tế, 5 mục tiêu, 33 hạng mục.",
+  "days": 85,
+  "objectives": [
+   {
+    "title": "Audit & hoàn thiện nền tảng SEO/GEO",
+    "items": [
+     {
+      "title": "Audit Technical SEO, GEO & Core Web Vitals",
+      "grp": "Audit",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO, DEV",
+      "s": 0.0,
+      "l": 0.176
+     },
+     {
+      "title": "Audit Logfile",
+      "grp": "Audit",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.047,
+      "l": 0.129
+     },
+     {
+      "title": "Audit Backlink Profile",
+      "grp": "Audit",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.094,
+      "l": 0.106
+     },
+     {
+      "title": "Audit Content SEO & Content Gap",
+      "grp": "Audit",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO, CONTENT",
+      "s": 0.094,
+      "l": 0.176
+     },
+     {
+      "title": "Audit UX/UI & SEO User Journey",
+      "grp": "Audit",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.365,
+      "l": 0.235
+     }
+    ]
+   },
+   {
+    "title": "Nghiên cứu thị trường & chiến lược SEO",
+    "items": [
+     {
+      "title": "Thiết lập SEO, Local SEO & GEO Baseline",
+      "grp": "Strategy",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.129,
+      "l": 0.141
+     },
+     {
+      "title": "Keyword & Competitor Research",
+      "grp": "Strategy",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.129,
+      "l": 0.141
+     },
+     {
+      "title": "Keyword Clustering & Search Intent Mapping",
+      "grp": "Strategy",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.129,
+      "l": 0.141
+     },
+     {
+      "title": "Xây dựng SEO Strategy & Quarterly OKRs",
+      "grp": "Strategy",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.129,
+      "l": 0.141
+     },
+     {
+      "title": "Xây dựng Off-page SEO & Digital PR Strategy",
+      "grp": "Strategy",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.129,
+      "l": 0.141
+     }
+    ]
+   },
+   {
+    "title": "Triển khai Content, Onpage & Structured Data",
+    "items": [
+     {
+      "title": "Xây dựng SEO Content Outline",
+      "grp": "Content SEO/GEO",
+      "qty": "",
+      "unit": "Outline",
+      "pic": "CONTENT, SEO",
+      "s": 0.376,
+      "l": 0.388
+     },
+     {
+      "title": "Triển khai SEO Content Production",
+      "grp": "Content SEO/GEO",
+      "qty": "",
+      "unit": "Bài",
+      "pic": "CONTENT, SEO",
+      "s": 0.376,
+      "l": 0.388
+     },
+     {
+      "title": "Triển khai Digital PR Content",
+      "grp": "Content SEO/GEO",
+      "qty": "",
+      "unit": "Bài",
+      "pic": "CONTENT, SEO",
+      "s": 0.376,
+      "l": 0.388
+     },
+     {
+      "title": "Tối ưu Onpage SEO & AI Retrieval cho bài viết",
+      "grp": "Onpage & GEO/AIO Optimization",
+      "qty": "",
+      "unit": "Bài viết",
+      "pic": "SEO",
+      "s": 0.459,
+      "l": 0.471
+     },
+     {
+      "title": "Tối ưu Onpage SEO cho Category Pages",
+      "grp": "Onpage & GEO/AIO Optimization",
+      "qty": "",
+      "unit": "Page",
+      "pic": "SEO",
+      "s": 0.459,
+      "l": 0.471
+     },
+     {
+      "title": "Tối ưu Onpage SEO cho Product Pages",
+      "grp": "Onpage & GEO/AIO Optimization",
+      "qty": "",
+      "unit": "Page",
+      "pic": "SEO",
+      "s": 0.459,
+      "l": 0.471
+     },
+     {
+      "title": "Xây dựng Topical Map & Internal Linking Architecture",
+      "grp": "Internal link",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.541,
+      "l": 0.059
+     },
+     {
+      "title": "Triển khai Internal Linking Optimization",
+      "grp": "Internal link",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.624,
+      "l": 0.306
+     },
+     {
+      "title": "Audit & tối ưu Website Structured Data",
+      "grp": "Schema",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.294,
+      "l": 0.141
+     },
+     {
+      "title": "Triển khai Organization & Local Business Schema",
+      "grp": "Schema",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.294,
+      "l": 0.141
+     },
+     {
+      "title": "Tối ưu Structured Data theo loại trang",
+      "grp": "Schema",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.624,
+      "l": 0.306
+     },
+     {
+      "title": "Xây dựng Automated Schema Templates",
+      "grp": "Schema",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO, DEV",
+      "s": 0.624,
+      "l": 0.059
+     }
+    ]
+   },
+   {
+    "title": "Xây dựng Brand Presence & Digital PR",
+    "items": [
+     {
+      "title": "Lập plan Social Stacking",
+      "grp": "Backlink",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.294,
+      "l": 0.059
+     },
+     {
+      "title": "Triển khai Social Stacking",
+      "grp": "Backlink",
+      "qty": "",
+      "unit": "Link",
+      "pic": "OS/VENDOR",
+      "s": 0.294,
+      "l": 0.141
+     },
+     {
+      "title": "Triển khai Google Stacking",
+      "grp": "Backlink",
+      "qty": "1",
+      "unit": "File",
+      "pic": "OS/VENDOR",
+      "s": 0.294,
+      "l": 0.059
+     },
+     {
+      "title": "Lập plan Textlink",
+      "grp": "Backlink",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.706,
+      "l": 0.141
+     },
+     {
+      "title": "Triển khai textlink sidebar trên đầu báo lớn",
+      "grp": "Backlink",
+      "qty": "",
+      "unit": "Link",
+      "pic": "OS/VENDOR",
+      "s": 0.835,
+      "l": 0.012
+     },
+     {
+      "title": "Lập plan Social Signal",
+      "grp": "Backlink",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.294,
+      "l": 0.059
+     },
+     {
+      "title": "Triển khai gói Social Signal",
+      "grp": "Backlink",
+      "qty": "1",
+      "unit": "File",
+      "pic": "OS/VENDOR",
+      "s": 0.706,
+      "l": 0.141
+     },
+     {
+      "title": "Triển khai mô hình link từ các trang báo PR (AS trên 30)",
+      "grp": "Backlink",
+      "qty": "",
+      "unit": "Bài",
+      "pic": "OS/VENDOR",
+      "s": 0.835,
+      "l": 0.012
+     }
+    ]
+   },
+   {
+    "title": "Triển khai Local SEO & Google Business Profile",
+    "items": [
+     {
+      "title": "Audit & tối ưu Google Business Profile cơ bản",
+      "grp": "SEO Local",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.706,
+      "l": 0.294
+     },
+     {
+      "title": "Xây dựng Local SEO & Google Maps Strategy",
+      "grp": "SEO Local",
+      "qty": "1",
+      "unit": "File",
+      "pic": "SEO",
+      "s": 0.706,
+      "l": 0.294
+     },
+     {
+      "title": "Triển khai Google Business Profile Posts",
+      "grp": "SEO Local",
+      "qty": "",
+      "unit": "Post",
+      "pic": "SEO",
+      "s": 0.706,
+      "l": 0.294
+     }
+    ]
+   }
+  ]
+ }
+]

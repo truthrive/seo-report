@@ -73,7 +73,7 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
             tr = D.trend(c, kws, state["period"], 12)
             ins = D.insights(kws, comp if "invalid" not in comp else None)
             sets_ = D.set_list(c, cfg, end, scope)
-        section_a(k, n_sets, rows)
+        section_a(k, n_sets, rows, kws)
         with ui.element("div").classes("sr-rd-row two"):
             section_b(tr, scope)
             section_c(comp)
@@ -82,7 +82,7 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
             section_e(sets_)
 
     # ---------------------------------------------------------------- A. Tổng quan SEO
-    def section_a(k: dict, n_sets: int, rows: int):
+    def section_a(k: dict, n_sets: int, rows: int, kws_=()):
         tot = k["total"]
         with ui.element("div").classes("sr-rd-kpis"):
             with ui.element("div").classes("sr-rd-kpi"):
@@ -90,10 +90,13 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
                     ui.label("Từ khóa theo dõi").classes("sr-rd-lab")
                     T.info_icon(ui, "Từ khóa theo dõi", (
                         "Số từ khóa duy nhất trong phạm vi: một từ khóa nằm ở nhiều bộ chỉ tính một lần (ưu tiên bộ "
-                        "Cam kết). Không tính bộ Nháp và từ khóa tạm dừng.",
+                        "Cam kết). Không tính bộ Nháp. Từ khóa / bộ đang tạm dừng vẫn tính theo lần check gần nhất.",
                         "Lượt theo dõi = tổng số dòng từ khóa của các bộ."))
                 ui.label(f"{tot:,}".replace(",", ".")).classes("sr-rd-num")
                 ui.label(f"{n_sets} bộ · {rows} lượt theo dõi").classes("sr-rd-sub")
+                n_paused = sum(1 for x in kws_ if x["paused"])
+                if n_paused:
+                    ui.label(f"{n_paused} đang tạm dừng · giữ số lần check gần nhất").classes("sr-rd-sub neutral")
                 if k["new"] or k["unchecked"]:
                     ui.label(" · ".join(x for x in (f"{k['new']} mới kiểm tra" if k["new"] else "",
                                                      f"{k['unchecked']} chưa check" if k["unchecked"] else "")
@@ -154,8 +157,18 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
                           on_change=lambda e: (state.update(period=e.value), body.refresh())).props(
                     "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
                     "sr-seg")
+            drawable = [p for p in tr if p["has_data"] and not p["thin"]]
             if not [p for p in tr if p["has_data"]]:
                 ui.label("Chưa có lần check nào trong phạm vi này.").classes("text-sm muted q-py-md")
+            elif len(drawable) < 2:  # một điểm thì biểu đồ gần như trống: nói rõ và đưa số hiện tại
+                last = (drawable or [p for p in tr if p["has_data"]])[-1]
+                with ui.column().classes("w-full items-center justify-center gap-1 q-py-lg"):
+                    ui.icon("show_chart", size="28px").classes("muted").props('aria-hidden="true"')
+                    ui.label("Xu hướng hiện khi có từ 2 lần check đủ bộ từ khóa.").classes("text-sm muted")
+                    parts = [f"Top {n} {str(last[f'pct{n}']).replace('.', ',')}%" for n in (3, 5, 10)
+                             if last.get(f"pct{n}") is not None]
+                    if parts:
+                        ui.label("Lần gần nhất: " + " · ".join(parts)).classes("text-sm font-semibold")
             else:
                 trend_chart(tr)
                 thin = sum(1 for p in tr if p["has_data"] and p["thin"])

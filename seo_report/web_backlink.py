@@ -5,7 +5,7 @@ Khách hàng xem được; chỉ người sửa được dự án mới bấm "L
 """
 import re
 from datetime import date
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from . import access as A
 from . import ai_format as F
@@ -46,8 +46,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
 
     site = cfg.site_url
     ed = A.can_edit(user)
+    cl = A.is_client(user)  # khách hàng: không chi phí / lịch lấy, không điểm spam, không việc cần làm của team
     right = T.page_header(ui, "add_link", "Backlink",
-                          "Ai đang link về website, link mới / mất, anchor và việc cần xử lý. Số của DataForSEO.")
+                          "Ai đang link về website, link mới / mất, anchor" + ("." if cl else " và việc cần xử lý. Số của DataForSEO."))
 
     async def fetch(btn):
         if not ed:  # tốn tiền DataForSEO: chặn ở server, nút bị ẩn chưa đủ
@@ -131,7 +132,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
         def build() -> bytes:
             from . import backlink_export as BX
             with connect() as c:
-                return BX.build(BL.lists(c, site), BL.latest(c, site), brand_terms_of(own_brand(c)), site, which)
+                return BX.build(BL.lists(c, site), BL.latest(c, site), brand_terms_of(own_brand(c)), site, which,
+                                client=cl)
         return build
 
     def export_btn(which: str, name: str, label: str, icon_only: bool = True) -> None:
@@ -169,7 +171,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                           if ed else "Số backlink sẽ có sau lần lấy đầu tiên.")
             return
         status_line(bl, st, due)
-        checks = AU.audit(ls, brand_terms_of(own)) if ls else []
+        checks = AU.audit(ls, brand_terms_of(own)) if ls and not cl else []
         by_tab = {k: [c_ for c_ in checks if CHECK_TAB.get(c_["key"]) == k] for k in BL.LIST_KINDS}
 
         def label(k: str, name: str) -> str:
@@ -181,8 +183,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 with ui.tab(k, label(k, name)):
                     high = sum(1 for c_ in by_tab.get(k, []) if c_["level"] == "high")
                     if high:  # chấm đỏ: tab có việc cần xử lý
-                        ui.badge(str(high), color="red").props("rounded").classes("sr-tab-badge").tooltip(
-                            f"{high} việc cần xử lý trong tab này")
+                        T.count_badge(ui, high, f"{high} việc cần xử lý trong tab này").classes("sr-tab-badge")
         state["tabs"] = tabs
         with ui.tab_panels(tabs, value=state["tab"]).classes("w-full").props("animated=false"):
             with ui.tab_panel("overview").classes("q-px-none"):
@@ -204,6 +205,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 ui.label(f"Lấy ngày {date.fromisoformat(now['day']):%d/%m/%Y}"
                          + (f" · so với lần lấy {date.fromisoformat(prev['day']):%d/%m}" if prev else "")).classes(
                     "text-xs muted")
+            if cl:
+                return
             if cfg.rank.paused:
                 T.status_chip(ui, "Website đang tạm ngưng mọi chi phí DataForSEO", "grey", "pause_circle")
             elif st["paused"]:
@@ -241,11 +244,12 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                   info=("Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link trỏ về.",))
             d, g, _ = delta("spam_score", good_up=False)
             spam = now["spam_score"]
-            T.kpi(ui, "gpp_maybe", "Điểm spam", f"{spam if spam is not None else '–'}/100", delta=d, good=g,
-                  tone="red" if (spam or 0) >= 30 else "grey",
-                  info=("Điểm spam trung bình của các backlink (0–100). Càng thấp càng tốt.",
-                        "Từ 30 trở lên nên xem lại các website link về có dấu hiệu spam."),
-                  hint=f"{F.n(now['broken_backlinks'] or 0)} link trỏ về trang không còn (link gãy)")
+            if not cl:  # điểm spam: số kiểm soát nội bộ, không đưa cho khách
+                T.kpi(ui, "gpp_maybe", "Điểm spam", f"{spam if spam is not None else '–'}/100", delta=d, good=g,
+                      tone="red" if (spam or 0) >= 30 else "grey",
+                      info=("Điểm spam trung bình của các backlink (0–100). Càng thấp càng tốt.",
+                            "Từ 30 trở lên nên xem lại các website link về có dấu hiệu spam."),
+                      hint=f"{F.n(now['broken_backlinks'] or 0)} link trỏ về trang không còn (link gãy)")
             ch = (ls.get("changes") or {}).get("items")
             if ch is not None:
                 new_n = sum(1 for x in ch if not x["lost"])
@@ -253,8 +257,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                              tone="purple",
                              info=(f"Số backlink mới xuất hiện / vừa mất trong {BL.CHANGE_DAYS} ngày gần nhất.",
                                    "Bấm để xem danh sách."),
-                             hint=f"{sum(1 for x in ch if not x['lost'] and (x.get('spam') or 0) >= SPAM_FLAG)} "
-                                  "link mới có điểm spam cao")
+                             hint="" if cl else
+                             f"{sum(1 for x in ch if not x['lost'] and (x.get('spam') or 0) >= SPAM_FLAG)} "
+                             "link mới có điểm spam cao")
                 card.classes("clickable").on("click", lambda: go("changes"))
 
     def open_check(tab: str, key: str) -> None:
@@ -385,10 +390,19 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                         ui.download.content(AU.disavow(ls, f"{date.today():%d/%m/%Y}"),
                                             f"disavow-{urlparse(site).netloc or 'site'}-{date.today():%Y%m%d}.txt",
                                             "text/plain")
-                    ui.button("Tải file disavow (.txt)", icon="download", on_click=download).props(
-                        "outline no-caps dense color=grey-9").classes("q-mt-sm").tooltip(
-                        "File theo định dạng của Google: một dòng domain:… cho mỗi website có link spam. Xem lại "
-                        "trước khi nộp; disavow nhầm website tốt sẽ làm mất giá trị link.")
+                    # Công cụ disavow của Google, mở sẵn đúng property Search Console của dự án
+                    disavow_url = ("https://search.google.com/search-console/disavow-links?resource_id="
+                                   + quote(site, safe=""))
+                    with ui.row().classes("items-center gap-2 q-mt-sm"):
+                        ui.button("Tải file disavow (.txt)", icon="download", on_click=download).props(
+                            "outline no-caps dense color=grey-9").tooltip(
+                            "File theo định dạng của Google: một dòng domain:… cho mỗi website có link spam. Xem lại "
+                            "trước khi nộp; disavow nhầm website tốt sẽ làm mất giá trị link.")
+                        ui.button("Mở trang disavow của Google", icon="open_in_new",
+                                  on_click=lambda: ui.navigate.to(disavow_url, new_tab=True)).props(
+                            "outline no-caps dense color=grey-9").tooltip(
+                            "Mở công cụ Disavow links của Google Search Console (đúng property của dự án) để tải file "
+                            "vừa tải về lên.")
         sec = T.section(ui, title, icon)
         with sec:
             ui.element("div").props(f'id="{anchor_id}"').style("position:relative; top:-80px")
@@ -419,7 +433,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 if kind == "domains":
                     cols = [("domain", "Website", "left"), ("rank", "Uy tín", "right"),
                             ("backlinks", "Backlink", "right"), ("dofollow", "Trang dofollow", "right"),
-                            ("first_seen", "Thấy lần đầu", "left"), ("spam", "Spam", "right")]
+                            ("first_seen", "Thấy lần đầu", "left")] + ([] if cl else [("spam", "Spam", "right")])
                     rows = [{"domain": x["domain"], "rank": x["rank"], "backlinks": x["backlinks"],
                              "dofollow": f"{x['dofollow_pages']}/{x['pages']}", "first_seen": _vn(x["first_seen"]),
                              "first_iso": x["first_seen"], "spam": x["spam"], "href": f"https://{x['domain']}"}
@@ -429,7 +443,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                     new_n = sum(1 for x in items if not x["lost"])
                     spam_n = sum(1 for x in items if (x.get("spam") or 0) >= SPAM_FLAG)
                     note += f" · {new_n} link mới, {len(items) - new_n} link mất trong {BL.CHANGE_DAYS} ngày" + (
-                        f" · {spam_n} link có điểm spam ≥ {SPAM_FLAG}" if spam_n else "")
+                        f" · {spam_n} link có điểm spam ≥ {SPAM_FLAG}" if spam_n and not cl else "")
                     cols = [("status", "", "left"), ("source", "Trang link về", "left"), ("anchor", "Anchor", "left"),
                             ("target", "Trang đích", "left"), ("follow", "Loại", "left"),
                             ("when", "Ngày", "left")]
@@ -437,7 +451,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                              "source": x["domain_from"], "title": x.get("title") or "", "href": x["url_from"],
                              "anchor": x["anchor"] or ("(ảnh)" if x.get("type") == "image" else "(trống)"),
                              "target": _path(x["url_to"]), "follow": "dofollow" if x["dofollow"] else "nofollow",
-                             "spam": x.get("spam"), "spammy": (x.get("spam") or 0) >= SPAM_FLAG,
+                             "spam": x.get("spam"), "spammy": (x.get("spam") or 0) >= SPAM_FLAG and not cl,
                              "when": _vn(x["last_seen"] if x["lost"] else x["first_seen"]),
                              "first_iso": x["last_seen"] if x["lost"] else x["first_seen"]} for x in items]
                 elif kind == "anchors":
@@ -479,13 +493,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 note_box.clear()
                 with note_box:
                     if fkey and fkey in by_key:
-                        chip = ui.element("button").classes("sr-au-chip").props('type="button"')
-                        chip.on("click", lambda: set_filter(fkey))
-                        with chip:
-                            ui.icon("filter_list", size="15px")
-                            ui.label(f"Đang lọc: {by_key[fkey]['title']} · {len(items)} dòng")
-                            ui.icon("close", size="15px")
-                        chip.tooltip("Bỏ lọc")
+                        T.filter_chip(ui, f"Đang lọc: {by_key[fkey]['title']} · {len(items)} dòng",
+                                      lambda: set_filter(fkey))
                     ui.label(note).classes("text-xs muted")
                 tb = ui.table(columns=columns, rows=rows, row_key="id", pagination=20).props(
                     "flat dense binary-state-sort").classes("w-full sr-bl-table")

@@ -29,9 +29,11 @@ NUMBER = "val => val.toLocaleString('vi-VN')"
 # Menu chia nhóm: (tên nhóm hoặc None, [(nhãn, đường dẫn, icon)])
 NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
-            ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt")]),
+            ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt"),
+            ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
     ("SEO", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
              ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
+             ("Cơ hội SEO", "/co-hoi", "insights"),
              ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
              ("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
@@ -273,7 +275,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         render()
         ui.timer(30, render.refresh)
 
-    def account_menu(user, P, active: str) -> None:
+    def account_menu(user, P, active: str, budget: dict | None = None) -> None:
         """Góc dưới menu trái: avatar + tên + trạng thái; bấm vào mở menu tài khoản (thông tin, website của tôi, đổi
         mật khẩu / đăng xuất, lối tắt quản trị)."""
         st, st_text = PR.describe(user)
@@ -305,6 +307,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 ui.label(name).classes("text-sm ellipsis").props["title"] = str(user)
                 ui.label(" · ".join(x for x in (role_text.split(" · ")[0] if user.role != A.LOCAL else "", st_text)
                                     if x)).classes("text-xs muted ellipsis")
+            if budget and budget["warn"]:  # ngân sách sắp vượt: chấm cam ngay trên nút tài khoản để không bị bỏ sót
+                ui.icon("warning", size="16px").classes("sr-mini-hide").style("color:#B7791F").tooltip(
+                    "Ngân sách DataForSEO dự kiến vượt 80%")
             ui.icon("unfold_more", size="18px").classes("muted sr-mini-hide")
             with ui.menu().props('anchor="top left" self="bottom left" :offset="[0, 8]"').classes(
                     "sr-account-menu").style("width: 300px") as acc_menu:
@@ -325,6 +330,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         with ui.row().classes("items-center no-wrap sr-acct-status" + (" on" if on else "")):
                             ui.element("span").classes("sr-acct-dot")
                             ui.label(st_text)
+                if budget:
+                    budget["render"]()
                 ui.label(f"Website của tôi · {len(P.projects)}").classes("sr-nav-group sr-acct-group")
                 with ui.column().classes("gap-0 w-full").style("max-height: 260px; overflow-y: auto"):
                     for p in P.projects:
@@ -359,6 +366,45 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         ui.label("Đăng xuất").classes("text-sm").style(f"color:{T.RED}")
         acc_row.on("keydown.enter", acc_menu.open)
 
+    def client_unlinked(P) -> set[str]:
+        """Màn khách hàng không cần thấy trên menu vì dự án chưa gắn nguồn số (Local SEO, Merchant Center)."""
+        from . import gbp as G
+        from . import merchant as M
+        out = set()
+        with P.connect() as c:
+            for href, linked in (("/local", G.linked), ("/merchant", M.linked)):
+                try:
+                    if not linked(c):
+                        out.add(href)
+                except Exception:  # noqa: BLE001 — bảng chưa có / lỗi đọc: coi như chưa gắn
+                    out.add(href)
+        return out
+
+    def float_group(user, P, active: str) -> None:
+        """Nhóm nút nổi góc dưới phải: nút + mở 3 thao tác nhanh theo vai trò, nút về đầu trang (cuộn quá 400px).
+        Khách hàng: ba loại góp ý gửi cho đội SEO. Người được sửa: thêm từ khóa, thêm đối thủ, trả lời góp ý.
+        Người chỉ xem: không có nút + (không có gì để tạo), chỉ còn nút về đầu trang."""
+        from .fab import FloatGroup
+        if A.is_client(user):
+            from .web_feedback import feedback_opener
+            open_fb = feedback_opener(ui, P.connect, user, active)
+            FloatGroup([{"key": "question", "icon": "help_outline", "label": "Đặt câu hỏi"},
+                        {"key": "data", "icon": "report_gmailerrorred", "label": "Báo lỗi số liệu"},
+                        {"key": "idea", "icon": "lightbulb_outline", "label": "Gửi đề xuất"}],
+                       fab_label="Gửi yêu cầu cho đội SEO", on_action=lambda k: open_fb(k))
+        elif A.can_edit(user):
+            from . import feedback as FB
+            with P.connect() as c:
+                n_new = FB.count_new(c)
+            go = {"kw": "/rank", "rival": "/doi-thu", "fb": "/ho-tro"}
+            FloatGroup([{"key": "kw", "icon": "playlist_add", "label": "Thêm từ khóa theo dõi"},
+                        {"key": "rival", "icon": "group_add", "label": "Thêm đối thủ"},
+                        {"key": "fb", "icon": "support_agent", "label": "Xử lý yêu cầu hỗ trợ",
+                         **({"badge": f"{n_new} mới"} if n_new else {})}],
+                       fab_label="Thao tác nhanh", on_action=lambda k: ui.navigate.to(go[k]))
+        else:
+            FloatGroup([])
+
     def shell(active: str, user, P, ctx: dict | None = None, period: bool | str = True, group: bool = True):
         ui.add_head_html(T.HEAD)
         ui.add_body_html(T.BODY)
@@ -383,9 +429,19 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             with ui.element("div").classes("sr-mini-only w-full"):
                 T.project_icon(ui, P.project, 36).classes("q-mx-auto")
             with ui.column().classes("sr-nav w-full gap-0 q-mt-sm"):
+                skip = client_unlinked(P) if A.is_client(user) else set()
+                fb_new = 0
+                if not A.is_client(user):
+                    from . import feedback as FB
+                    with P.connect() as c:
+                        fb_new = FB.count_new(c)
                 for group_name, items in NAV:
+                    if A.is_client(user):
+                        items = [("Nguồn tìm kiếm", "/nguon", "travel_explore") if h == "/url" else (lb, h, ic)
+                                 for lb, h, ic in items if h not in skip]
                     items = [(label, href, icon) for label, href, icon in items
-                             if (not A.is_client(user) or href.split("?")[0] in A.CLIENT_PAGES)
+                             if (href != "/yeu-cau" or A.is_client(user))  # trang yêu cầu của khách: chỉ khách
+                             and (not A.is_client(user) or href.split("?")[0] in A.CLIENT_PAGES)
                              and (href not in ADMIN_PAGES or A.is_admin(user))
                              and (href not in EDIT_PAGES or A.can_edit(user))]
                     if not items:
@@ -397,12 +453,13 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         with ui.link(target=href).classes("active" if on else ""):
                             ui.icon(icon, size="19px")
                             ui.label(label).classes("sr-mini-hide")
+                            if href == "/ho-tro" and fb_new:
+                                T.count_badge(ui, fb_new, f"{fb_new} yêu cầu mới").classes("sr-nav-badge")
                             if mini:
                                 ui.tooltip(label).props("anchor='center right' self='center left'")
             ui.space()
 
-            @ui.refreshable
-            def budget_card():
+            def budget_state() -> dict:
                 with P.connect() as c:
                     st = R.budget_status(c, P.site, P.cfg.rank, K.latest_date(c, P.site))
                 from datetime import date
@@ -410,27 +467,41 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 from .web_budget import projected  # cùng cách tính với màn Ngân sách: đã dùng + lịch còn lại
                 st["estimate"] = projected(st["spent"], st["estimate"], date.today(), P.cfg.rank.paused)
                 st["ratio"] = st["estimate"] / st["budget"] if st["budget"] else 0
-                warn = st["ratio"] >= R.ALERT_RATIO
-                card = ui.element("div").classes("sr-card q-pa-sm q-mt-lg w-full sr-mini-hide")
-                if A.is_admin(user):  # quản trị: bấm mở màn Ngân sách & chi phí (mọi website)
-                    card.classes("cursor-pointer").on("click", lambda: ui.navigate.to("/budget"))
-                    card.tooltip("Xem ngân sách check rank của mọi website")
-                with card:
-                    with ui.row().classes("items-center gap-1 no-wrap"):
-                        ui.icon("account_balance_wallet", size="16px").classes("muted")
-                        ui.label("Ngân sách DataForSEO").classes("text-xs muted")
-                    ui.label(f"Dự kiến {R.usd(st['estimate'])} / {st['budget']:.0f} USD").classes(
-                        "text-sm font-semibold num")
-                    ui.linear_progress(min(st["ratio"], 1), show_value=False, size="6px",
-                                       color="orange-8" if warn else "primary").classes("rounded-borders")
-                    ui.label(f"{st['stars']} keyword · đã dùng {R.usd(st['spent'])} USD tháng này").classes(
-                        "text-xs muted")
-                    if warn:
-                        ui.label("Dự kiến vượt 80% ngân sách").classes("text-xs text-orange-9")
+                st["warn"] = st["ratio"] >= R.ALERT_RATIO
+                return st
 
+            @ui.refreshable
+            def budget_card():
+                """Ngân sách DataForSEO tháng này của website đang mở, vẽ trong menu tài khoản (thông tin nội bộ)."""
+                st = budget_state()
+                box = ui.element("div").classes("sr-acct-budget" + (" warn" if st["warn"] else ""))
+                if A.is_admin(user):  # quản trị: bấm mở màn Ngân sách & chi phí (mọi website)
+                    box.classes("clickable").props('role=link tabindex=0 aria-label="Mở Ngân sách & chi phí"')
+                    box.on("click", lambda: ui.navigate.to("/budget"))
+                    box.on("keydown.enter", lambda: ui.navigate.to("/budget"))
+                with box:
+                    with ui.row().classes("items-center gap-1 no-wrap w-full"):
+                        ui.icon("account_balance_wallet", size="16px").classes("muted").props('aria-hidden="true"')
+                        ui.label("Ngân sách DataForSEO").classes("text-xs muted col ellipsis")
+                        if A.is_admin(user):
+                            ui.icon("chevron_right", size="16px").classes("muted").props('aria-hidden="true"')
+                    with ui.row().classes("items-baseline gap-1 no-wrap"):
+                        ui.label(f"{R.usd(st['estimate'])}").classes("sr-acct-budget-num num")
+                        ui.label(f"/ {st['budget']:.0f} USD · dự kiến tháng này").classes("text-xs muted")
+                    color = "#B7791F" if st["warn"] else T.GREEN
+                    ui.html(f'<div class="sr-kp-bar thin" role="img" aria-label="Đã dự kiến '
+                            f'{min(st["ratio"], 9.99) * 100:.0f}% ngân sách"><i style="width:'
+                            f'{min(st["ratio"], 1) * 100:.1f}%;background:{color}"></i></div>').classes("w-full")
+                    ui.label(f"{st['stars']} keyword · đã dùng {R.usd(st['spent'])} USD").classes("text-xs muted")
+                    if st["warn"]:
+                        with ui.row().classes("items-center gap-1 no-wrap"):
+                            ui.icon("warning", size="14px").style("color:#B7791F").props('aria-hidden="true"')
+                            ui.label("Dự kiến vượt 80% ngân sách").classes("text-xs").style("color:#9A5B0B")
+
+            budget = None
             if A.can_edit(user):  # chi phí check rank là thông tin nội bộ
-                budget_card()
-            account_menu(user, P, active)
+                budget = {"render": budget_card, "warn": budget_state()["warn"]}
+            account_menu(user, P, active, budget)
 
         def toggle_nav():
             app.storage.user["nav_mini"] = not app.storage.user.get("nav_mini")
@@ -438,6 +509,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 drawer.props("mini")
             else:
                 drawer.props(remove="mini")
+
+        float_group(user, P, active)
 
         # Thanh trên gọn, tự ẩn khi cuộn xuống và hiện lại khi cuộn lên (reveal).
         with ui.header().props("reveal reveal-offset=120").classes("sr-top q-px-md q-py-xs items-center gap-2"):
@@ -537,9 +610,11 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 if group and not A.is_client(user):  # nhóm URL là khái niệm nội bộ, khách hàng không cần
                     ui.select(ctx["groups"], value=ctx["group"], on_change=lambda e: pick("group", e.value)).props(
                         "dense outlined options-dense").classes("w-44")
+            from .web_notices import bell
+            bell(ui, P.cfg, P.connect, user, P.project["slug"])
             if not A.is_client(user):  # khách hàng không thấy ai khác có quyền (tránh lộ email team / khách khác)
                 people_group(user, P)
-            if not A.can_edit(user):
+            if not A.can_edit(user) and not A.is_client(user):  # khách hàng: không cần nhãn quyền của chính mình
                 T.status_chip(ui, A.PROJECT_ROLES.get(user.role, "Team xem"), "grey", "visibility")
             if ctx:  # điện thoại: ẩn (đã có trong chú thích chỉ báo dữ liệu), để thanh đầu trang không xuống 3 dòng
                 with ui.row().classes("items-center gap-1 no-wrap gt-xs"):
@@ -587,11 +662,11 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if params.get("tab") == "ai-overview":  # link cũ: AI Overview đã thành trang riêng
             from fastapi.responses import RedirectResponse
             return RedirectResponse("/aio")
-        if not (opened := open_page(request, edit=params.get("tab") == "chat-luong")):
+        if not (opened := open_page(request, client_ok=True, edit=params.get("tab") == "chat-luong")):
             return
         user, P = opened
         ctx = page_ctx(P)
-        shell("AI Search & GEO", user, P, ctx, group=False)
+        shell("AI Search & GEO", user, P, ctx, period=False, group=False)  # trang có ô chọn kỳ riêng
         build_ai_page(ui, P.cfg, P.connect, user, params, week=ctx["weeks"][ctx["week"]])
 
     @ui.page("/report")
@@ -607,7 +682,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
 
     def url_tabs(user, current: str) -> None:
         """Ba tab của mục URL & Index (Hiệu suất URL · Index · Quản lý URL): mỗi tab là một màn, bấm để chuyển."""
-        tabs_ = [(t, h) for t, h in URL_TABS if h not in EDIT_PAGES or A.can_edit(user)]
+        tabs_ = [(t, h) for t, h in URL_TABS if (h not in EDIT_PAGES or A.can_edit(user))
+                 and (not A.is_client(user) or h in A.CLIENT_PAGES)]
+        if len(tabs_) < 2:  # khách hàng: chỉ còn một màn, không cần thanh tab
+            return
         with ui.tabs(value=current, on_change=lambda e: ui.navigate.to(e.value) if e.value != current else None).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs q-mb-sm"):
             for title, href in tabs_:
@@ -623,6 +701,45 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         url_tabs(user, "/url")
         build_url_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh, ctx=ctx)
 
+    @ui.page("/ho-tro")
+    def requests_page(request: Request):
+        """Yêu cầu hỗ trợ gửi từ trang báo cáo (đội SEO đọc, trả lời, đánh dấu đã xử lý). Quyền Khách hàng không
+        mở trang này (họ xem yêu cầu của mình ở /yeu-cau)."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Yêu cầu hỗ trợ", user, P, page_ctx(P), period=False, group=False)
+        from .web_feedback import build_feedback_page
+        build_feedback_page(ui, P.cfg, P.connect, user)
+
+    @ui.page("/gop-y")
+    def old_feedback_page():  # link cũ
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/ho-tro")
+
+    @ui.page("/yeu-cau")
+    def my_requests_page(request: Request):
+        """Khách hàng: các yêu cầu đã gửi cho đội SEO, trạng thái và câu trả lời."""
+        if not (opened := open_page(request, client_ok=True)):
+            return
+        user, P = opened
+        if not A.is_client(user):
+            ui.navigate.to("/ho-tro")
+            return
+        shell("Yêu cầu của tôi", user, P, page_ctx(P), period=False, group=False)
+        from .web_feedback import build_my_requests_page
+        build_my_requests_page(ui, P.cfg, P.connect, user)
+
+    @ui.page("/okr/sua")
+    def okr_edit_page(request: Request):
+        """Tạo / sửa OKR trên tool (người được sửa)."""
+        if not (opened := open_page(request, edit=True)):
+            return
+        user, P = opened
+        shell("Công việc & OKR", user, P, page_ctx(P), period=False, group=False)
+        from .web_okr_edit import build_okr_edit_page
+        build_okr_edit_page(ui, P.cfg, P.connect, user, app_connect=app_connect)
+
     @ui.page("/okr")
     def okr_page(request: Request):
         if not (opened := open_page(request, client_ok=True)):
@@ -630,7 +747,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         ctx = page_ctx(P)
         shell("Công việc & OKR", user, P, ctx, group=False)
-        build_okr_page(ui, P.cfg, P.connect, user, ctx)
+        build_okr_page(ui, P.cfg, P.connect, user, ctx, app_connect=app_connect, project=P.project)
 
     @ui.page("/kpi")
     def kpi_page(request: Request):
@@ -747,17 +864,28 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     @ui.page("/toc-do")
     def speed_page(request: Request):
         """Tốc độ & Core Web Vitals: mục riêng trên menu (CrUX + PageSpeed)."""
-        if not (opened := open_page(request)):
+        if not (opened := open_page(request, client_ok=True)):
             return
         user, P = opened
         shell("Tốc độ trang", user, P, page_ctx(P), period=False, group=False)
         from .web_cwv import build_cwv_page
         build_cwv_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
+    @ui.page("/co-hoi")
+    def opps_page(request: Request):
+        """Cơ hội SEO: sắp lên top, trang tụt traffic, tranh nhau từ khóa, trang mới (từ dữ liệu GSC, không tốn tiền).
+        Chỉ team: khách hàng không mở."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Cơ hội SEO", user, P, page_ctx(P), period=False, group=False)
+        from .web_opps import build_opps_page
+        build_opps_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+
     @ui.page("/nguon")
     def sources_page(request: Request):
         """Nguồn tìm kiếm: web, hình ảnh, video, tab Tin tức, Discover, Google News (tab của URL & Index)."""
-        if not (opened := open_page(request)):
+        if not (opened := open_page(request, client_ok=True)):
             return
         user, P = opened
         shell("Nguồn tìm kiếm", user, P, page_ctx(P), period=False, group=False)

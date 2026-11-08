@@ -1,5 +1,11 @@
 """Sheet dự án là nơi XEM: tool ghi (đè) các tab, sửa trên sheet sẽ bị ghi đè ở lần ghi sau.
 
+Ai sửa tab nào (chốt 2026-11-07):
+- Tool ghi đè + khóa: "Thông tin dự án", "KPI cam kết", "OKRs <đợt>" (khi OKR đã chuyển sang tool), "Bộ – <tên bộ>",
+  "Dữ liệu check".
+- Team sửa trên sheet, tool chỉ đọc: "Weekly Task Tracker" (tool chỉ khóa hàng tiêu đề cột).
+- Team sửa, tool không đụng: "Content", "Đề xuất chi phí" và mọi tab khác.
+
 - "KPI cam kết": các dòng cam kết theo tháng (phiên bản KPI mới nhất trên tool).
 - "Bộ – <tên bộ>": mỗi bộ từ khóa một tab: từ khóa, URL / Top mục tiêu, ghi chú, hạng mới nhất, mỗi lần check một cột.
 - "Dữ liệu check": mỗi dòng là một từ khóa trong một lần check (để lọc, làm pivot).
@@ -11,9 +17,13 @@ import json
 from datetime import date, datetime, timezone
 
 from . import kpi as KP
+from . import okr as O
 from . import rank as R
+from .projects import domain
 
 DATA_TAB = "Dữ liệu check"
+INFO_TAB = "Thông tin dự án"
+HEADER_TAG = "seo-report-header"  # khóa (cảnh báo) hàng tiêu đề tab Weekly Task Tracker: tool đọc theo tên cột
 SET_PREFIX = "Bộ – "
 NOTE = "Tab do tool SEO Report ghi tự động: thêm / sửa trên tool. Sửa ở đây sẽ bị ghi đè ở lần cập nhật sau."
 MAX_DATE_COLS = 26  # tab bộ: tối đa 26 lần check gần nhất (khoảng nửa năm nếu check hằng tuần)
@@ -98,13 +108,42 @@ def _save(con, sid: str, ids: dict[str, int]) -> None:
     KP._setting(con, _SETTING, json.dumps(allv))
 
 
-def plan(con, site: str, end: date, today: date | None = None) -> dict[str, tuple[str, list[list]]]:
-    """Các tab cần ghi: {khóa: (tên tab, các ô)}. Khóa "kpi", "data", "set:<id>"."""
+def info_rows(con, site: str, stamp: str, weekly_tab: str, ver: dict | None) -> tuple[list[list], int]:
+    """Tab Thông tin dự án: thông tin chung + bảng quy ước tab nào sửa ở đâu. Trả (các ô, chỉ số hàng tiêu đề bảng)."""
+    start = (ver or {}).get("start")
+    months = len((ver or {}).get("months") or [])
+    rows = [[f"Thông tin dự án · {domain(site)}"], [f"{NOTE} Cập nhật {stamp}."], [],
+            ["Website", site],
+            ["Bắt đầu dự án", _vn(start) if start else "Chưa đặt (đặt ở KPI cam kết trên tool)"],
+            ["Thời gian cam kết", f"{months} tháng" if months else "Chưa có KPI cam kết"],
+            ["Sheet này", "Do tool SEO Report quản lý. Tab của tool được ghi lại mỗi khi dữ liệu trên tool đổi."], [],
+            ["Tab", "Ai sửa", "Ghi chú"]]
+    head = len(rows) - 1
+    rows += [[INFO_TAB, "Tool", "Tool ghi, không sửa ở đây."],
+             [KP.KPI_TAB, "Tool", "Sửa trên tool: KPI cam kết → Sửa cam kết."],
+             ["OKRs <đợt>", "Tool", "Sửa trên tool: Công việc & OKR → Sửa OKR. Mỗi đợt một tab."],
+             [f"{SET_PREFIX}<tên bộ>", "Tool", "Từ khóa và thứ hạng của từng bộ; sửa trên tool: Từ khóa & Thứ hạng."],
+             [DATA_TAB, "Tool", "Mỗi từ khóa trong mỗi lần check, để lọc / làm pivot."],
+             [weekly_tab, "Team, trên sheet", "Tool chỉ đọc. Không đổi tên cột ở hàng tiêu đề (tool đọc theo tên cột)."],
+             ["Content", "Team, trên sheet", "Tool không đụng vào."],
+             ["Đề xuất chi phí", "Team, trên sheet", "Tool không đụng vào."],
+             ["Tab khác", "Team, trên sheet", "Tool không đụng vào."]]
+    return rows, head
+
+
+def plan(con, site: str, end: date, today: date | None = None,
+         weekly_tab: str = "Weekly Task Tracker") -> dict[str, tuple[str, list[list]]]:
+    """Các tab cần ghi: {khóa: (tên tab, các ô)}. Khóa "info", "kpi", "okr:<mã đợt>", "set:<id>", "data"."""
     stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
     out: dict[str, tuple[str, list[list]]] = {}
     ver = KP.version_at(KP.versions(con), today or date.today())
+    out["info"] = (INFO_TAB, info_rows(con, site, stamp, weekly_tab, ver)[0])
     if ver:
         out["kpi"] = (KP.KPI_TAB, KP.kpi_grid(ver))
+    if O.tool_owned(con):  # OKR sửa trên tool: mỗi đợt một tab (khóa theo mã đợt, đổi tên đợt vẫn đúng tab)
+        ids = O.cycle_ids(con)
+        for c in O.cycle_list(con):
+            out[f"okr:{ids[c['name']]}"] = (O.tab_title(c["name"]), O.sheet_rows(con, c["name"], NOTE, stamp, today))
     for st in R.sets(con, site):
         out[f"set:{st['id']}"] = (set_title(st["name"]), set_rows(con, site, end, st, stamp))
     out[DATA_TAB] = (DATA_TAB, data_rows(con, site, stamp))
@@ -125,7 +164,8 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
                    cache_discovery=False)
     site = cfg.site_url
     KP.snapshot_keywords(con, site, today or date.today())
-    want = plan(con, site, K.latest_date(con, site), today)
+    weekly_tab = getattr(getattr(cfg, "okr", None), "weekly_tab", "Weekly Task Tracker")
+    want = plan(con, site, K.latest_date(con, site), today, weekly_tab)
     want = {("data" if k == DATA_TAB else k): v for k, v in want.items()}
     meta = sh.spreadsheets().get(spreadsheetId=sid, fields="sheets(properties(sheetId,title),protectedRanges("
                                                            "protectedRangeId,description,range))").execute()
@@ -160,7 +200,7 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
             reqs.append({"addSheet": {"properties": {"title": title}}})
     deleted = 0
     for key, gid in saved.items():  # bộ đã xóa: xóa tab của bộ
-        if key.startswith("set:") and key not in want and gid in props and gid not in ids.values():
+        if key.startswith(("set:", "okr:")) and key not in want and gid in props and gid not in ids.values():
             reqs.append({"deleteSheet": {"sheetId": gid}})
             deleted += 1
     if reqs:
@@ -183,11 +223,16 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
         tab = {"sheetId": gid, "title": final[key]}
         if key == "kpi":
             fmt += KP._format_requests(tab, rows, True)
+        elif key.startswith("okr:"):
+            fmt += _format(gid, rows, header_row=3, widths="okr")
+        elif key == "info":
+            fmt += _format(gid, rows, header_row=info_rows(con, site, "", weekly_tab, None)[1], widths="info")
         else:
             fmt += _format(gid, rows, header_row=3 if key.startswith("set:") else 1)
         if not any(p.get("description") == PROTECT_TAG for p in props.get(gid, {}).get("protectedRanges") or []):
             fmt.append({"addProtectedRange": {"protectedRange": {"range": {"sheetId": gid}, "warningOnly": True,
                                                                  "description": PROTECT_TAG}}})
+    fmt += _weekly_header_lock(sh, sid, meta, weekly_tab, set(ids.values()))
     if fmt:
         sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": fmt}).execute()
     info = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tabs": len(want),
@@ -196,7 +241,23 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
     return info
 
 
-def _format(gid: int, rows: list[list], header_row: int) -> list[dict]:
+def _weekly_header_lock(sh, sid: str, meta: dict, weekly_tab: str, ours: set[int]) -> list[dict]:
+    """Tab Weekly Task Tracker của team: chỉ khóa (cảnh báo) hàng tiêu đề cột, một lần; không ghi gì vào tab."""
+    tab = next((x for x in meta["sheets"] if x["properties"]["title"].strip().lower() == weekly_tab.strip().lower()
+                and x["properties"]["sheetId"] not in ours), None)
+    if not tab or any(p.get("description") == HEADER_TAG for p in tab.get("protectedRanges") or []):
+        return []
+    title = tab["properties"]["title"]
+    vals = sh.spreadsheets().values().get(spreadsheetId=sid, range="'" + title.replace("'", "''") + "'!A1:Z10").execute()
+    for i, r in enumerate(vals.get("values", [])):
+        if "ngày" in [str(c).strip().lower() for c in r]:
+            return [{"addProtectedRange": {"protectedRange": {
+                "range": {"sheetId": tab["properties"]["sheetId"], "startRowIndex": i, "endRowIndex": i + 1},
+                "warningOnly": True, "description": HEADER_TAG}}}]
+    return []
+
+
+def _format(gid: int, rows: list[list], header_row: int, widths: str = "") -> list[dict]:
     ncol = max((len(r) for r in rows), default=1)
     navy = {"red": 0.12, "green": 0.23, "blue": 0.41}
     head = {"backgroundColor": navy, "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}}}
@@ -214,7 +275,16 @@ def _format(gid: int, rows: list[list], header_row: int) -> list[dict]:
            {"updateSheetProperties": {"properties": {"sheetId": gid, "gridProperties": {
                "frozenRowCount": header_row + 1, "frozenColumnCount": 1 if header_row > 1 else 0}},
                "fields": "gridProperties(frozenRowCount,frozenColumnCount)"}}]
-    if header_row > 1:  # tab bộ
+    if widths == "okr":  # ID · Nhóm · Hạng mục · Task details · SL · ĐV · Tháng · Start · End · PIC · TT · % · Link · CB
+        out += [width(0, 1, 64), width(1, 2, 110), width(2, 3, 320), width(3, 4, 260), width(4, 7, 80),
+                width(7, 9, 96), width(9, 10, 120), width(10, 11, 110), width(11, 12, 80), width(12, 14, 200),
+                {"repeatCell": {"range": {"sheetId": gid, "startRowIndex": header_row + 1, "startColumnIndex": 11,
+                                          "endColumnIndex": 12},
+                                "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT", "pattern": "0%"}}},
+                                "fields": "userEnteredFormat.numberFormat"}}]
+    elif widths == "info":
+        out += [width(0, 1, 190), width(1, 2, 160), width(2, 3, 520)]
+    elif header_row > 1:  # tab bộ
         out += [width(0, 1, 260), width(1, 2, 300), width(2, 5, 100), width(5, 7, 100), width(7, 8, 300),
                 width(8, ncol, 78)]
     else:
@@ -235,7 +305,8 @@ def fingerprint(con, site: str) -> str:
              con.execute("SELECT MAX(at), COUNT(*) FROM change_log WHERE site = ?", (site,)).fetchone(),
              con.execute("SELECT MAX(id) FROM kpi_versions").fetchone(),
              con.execute("SELECT COUNT(*), MAX(id), GROUP_CONCAT(name || state || schedule) FROM rank_sets "
-                         "WHERE site = ?", (site,)).fetchone()]
+                         "WHERE site = ?", (site,)).fetchone(),
+             O.changed_at(con), O.tool_owned(con)]
     return json.dumps(parts, default=str)
 
 
@@ -246,6 +317,70 @@ def publish_if_changed(con, cfg) -> dict | None:
     fp = fingerprint(con, cfg.site_url)
     if KP._setting(con, "sheet_view_fp") == fp:
         return None
+    info = publish(con, cfg)
+    KP._setting(con, "sheet_view_fp", fingerprint(con, cfg.site_url))
+    return info
+
+
+# ---- Tạo / gắn sheet dự án ----
+
+WEEKLY_HEAD = ["Ngày", "Loại task", "Mã OKR", "Hạng mục liên kết", "Task tuần / hành động", "Link / Evidence",
+               "Vướng mắc", "PIC", "Ưu tiên", "Start date", "Deadline", "Trạng thái", "% Tiến độ", "Blocker / Ghi chú"]
+
+
+def _template_tabs(titles: list[str]) -> list[str]:
+    """Tab mẫu trong bản chép của sheet mẫu gốc mà tool sẽ tự ghi bản của nó: bỏ đi để sheet mới không có hai bản."""
+    tool = {KP.KPI_TAB.lower(), KP.KW_TAB.lower()}
+    return [t for t in titles if t.strip().lower() in tool or t.strip().lower().startswith("okr")]
+
+
+def create_project_sheet(con, cfg, master: str = "") -> dict:
+    """Tạo sheet dự án trong folder Drive của dự án rồi gắn làm sheet dự án và ghi các tab của tool.
+    Có sheet mẫu gốc: chép nguyên (Weekly Task Tracker, Content, Đề xuất chi phí…), bỏ các tab mẫu tool sẽ tự ghi.
+    Chưa có sheet mẫu gốc: tạo sheet trống có sẵn tab Weekly Task Tracker (đúng tên cột tool đọc).
+    Trả {"id", "name", "webViewLink"}."""
+    from googleapiclient.discovery import build
+
+    from . import auth
+    from . import drive as D
+    creds = auth.get_credentials(cfg, need=(auth.SHEETS_WRITE_SCOPE,))
+    if auth.missing_scopes(creds.scopes or [], (auth.DRIVE_FULL_SCOPE if master else auth.DRIVE_SCOPE,
+                                                 auth.SHEETS_WRITE_SCOPE)):
+        raise SystemExit("Tool chưa đủ quyền Google Drive / Sheets để tạo sheet dự án. Chủ tool vào Cài đặt tích hợp → "
+                         "Kết nối Google, đăng nhập lại và tích đủ các ô quyền.")
+    drv = build("drive", "v3", credentials=creds, cache_discovery=False)
+    sh = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    name = f"Sheet dự án – {domain(cfg.site_url)}"
+    folder = D.root_folder(con, drv, cfg.site_url, getattr(cfg, "drive_parent", ""))
+    weekly = getattr(getattr(cfg, "okr", None), "weekly_tab", "Weekly Task Tracker")
+    if master:
+        f = drv.files().copy(fileId=master, body={"name": name, "parents": [folder]},
+                             fields="id, name, webViewLink").execute()
+        meta = sh.spreadsheets().get(spreadsheetId=f["id"], fields="sheets(properties(sheetId,title))").execute()
+        tabs = {x["properties"]["title"]: x["properties"]["sheetId"] for x in meta["sheets"]}
+        drop = _template_tabs(list(tabs))
+        if drop and len(drop) < len(tabs):  # sheet phải còn ít nhất một tab
+            sh.spreadsheets().batchUpdate(spreadsheetId=f["id"], body={"requests": [
+                {"deleteSheet": {"sheetId": tabs[t]}} for t in drop]}).execute()
+    else:
+        f = drv.files().create(body={"name": name, "mimeType": D.SHEET, "parents": [folder]},
+                               fields="id, name, webViewLink").execute()
+        meta = sh.spreadsheets().get(spreadsheetId=f["id"], fields="sheets(properties(sheetId,title))").execute()
+        first = meta["sheets"][0]["properties"]["sheetId"]
+        sh.spreadsheets().batchUpdate(spreadsheetId=f["id"], body={"requests": [
+            {"updateSheetProperties": {"properties": {"sheetId": first, "title": weekly}, "fields": "title"}}]}).execute()
+        sh.spreadsheets().values().update(spreadsheetId=f["id"], range=f"'{weekly}'!A1", valueInputOption="RAW",
+                                          body={"values": [[f"{weekly} · team cập nhật task tuần ở đây"],
+                                                           WEEKLY_HEAD]}).execute()
+    KP.set_sheet(con, f["id"])
+    publish(con, cfg, sh=sh)
+    KP._setting(con, "sheet_view_fp", fingerprint(con, cfg.site_url))
+    return f
+
+
+def attach_sheet(con, cfg, link: str) -> dict:
+    """Gắn sheet dự án đã có: chỉ thêm / ghi các tab của tool, không đụng tab của team."""
+    KP.set_sheet(con, link)
     info = publish(con, cfg)
     KP._setting(con, "sheet_view_fp", fingerprint(con, cfg.site_url))
     return info

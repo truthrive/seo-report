@@ -26,6 +26,7 @@ TABS = (("overview", "Tổng quan"), ("field", "Người dùng thật"), ("pages
 def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
     from nicegui import background_tasks, run
     ed = A.can_edit(user)
+    cl = A.is_client(user)  # khách hàng: số tốc độ, không danh sách việc cần sửa / nên sửa của team
     right = T.page_header(ui, "speed", "Tốc độ & Core Web Vitals",
                           "Số người dùng Chrome thật (Google dùng để xếp hạng) và điểm PageSpeed của các trang quan "
                           "trọng nhất. Tự kiểm tra mỗi tuần.")
@@ -92,7 +93,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
             return
         ui.label(f"Kiểm tra lúc {datetime.fromisoformat(last).astimezone():%H:%M %d/%m/%Y} · tự kiểm tra lại mỗi tuần") \
             .classes("text-xs muted q-mb-xs")
-        checks = CA.audit(phone, desktop, pages)
+        checks = [] if cl else CA.audit(phone, desktop, pages)
         site_checks = [c_ for c_ in checks if not c_["pages"]]   # cả website: tab Người dùng thật
         page_checks = [c_ for c_ in checks if c_["pages"]]       # theo trang: tab Từng trang (bấm để lọc)
         badge = {"field": sum(1 for c_ in site_checks if c_["level"] == "high"),
@@ -102,8 +103,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
             for k, name in TABS:
                 with ui.tab(k, name + (f" · {len(pages)}" if k == "pages" else "")):
                     if badge.get(k):
-                        ui.badge(str(badge[k]), color="red").props("rounded").classes("sr-tab-badge").tooltip(
-                            f"{badge[k]} việc cần sửa trong tab này")
+                        T.count_badge(ui, badge[k], f"{badge[k]} việc cần sửa trong tab này").classes("sr-tab-badge")
         with ui.tab_panels(value=state["tab"]).classes("w-full").props("animated=false") as panels:
             state["panels"] = panels
             with ui.tab_panel("overview").classes("q-px-none"):
@@ -146,6 +146,18 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                 ui.label("Chỉ số người dùng thật: đạt “Tốt” = 100, đúng ngưỡng “Kém” = 50. Phần chưa có số thì không "
                          "tính.").classes("text-xs muted q-mt-xs")
             todo = [c_ for c_ in checks if c_["level"] in ("high", "medium")]
+            if cl:  # khách hàng: thay "Việc cần làm" bằng 3 chỉ số Core Web Vitals hiện tại trên điện thoại
+                with T.section(ui, "Core Web Vitals trên điện thoại", "smartphone", "Người dùng Chrome thật, 28 ngày"):
+                    now = phone[-1] if phone else {}
+                    names = {"good": "Tốt", "ni": "Cần cải thiện", "poor": "Kém", "none": "Chưa có số"}
+                    for m in C.CORE:
+                        r = C.rating(m, now.get(m))
+                        with ui.row().classes("w-full items-center no-wrap gap-2 sr-cwv-part"):
+                            ui.label(C.NAMES.get(m, m.upper())).classes("text-sm").style("flex:1 1 0")
+                            ui.label(names.get(r, "")).classes("text-xs").style(f"color:{COLORS.get(r, '#8C8A7E')}")
+                            ui.label(C.fmt(m, now.get(m))).classes("num text-sm font-semibold").style(
+                                f"min-width:64px; text-align:right; color:{COLORS.get(r, '#8C8A7E')}")
+                return
             with T.section(ui, "Việc cần làm", "fact_check",
                            f"{len(todo)} việc · bấm để xem ở tab tương ứng" if todo else "Không có việc gấp"):
                 if phone:
@@ -283,13 +295,8 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                        f"{len(pages)} trang quan trọng (trang chủ + nhiều click nhất)"
                        + (f" · {bad} trang điểm dưới 50" if bad else "") + " · bấm một dòng để xem việc nên sửa"):
             if flt:
-                chip = ui.element("button").classes("sr-au-chip q-mb-sm").props('type="button"')
-                chip.on("click", lambda: set_filter(flt["key"]))
-                with chip:
-                    ui.icon("filter_list", size="15px")
-                    ui.label(f"Đang lọc: {flt['title']} · {len(pages)}/{len(all_pages)} trang")
-                    ui.icon("close", size="15px")
-                chip.tooltip("Bỏ lọc")
+                T.filter_chip(ui, f"Đang lọc: {flt['title']} · {len(pages)}/{len(all_pages)} trang",
+                              lambda: set_filter(flt["key"])).classes("q-mb-sm")
             rows = []
             for i, p in enumerate(pages):
                 path = urlparse(p["url"]).path or "/"

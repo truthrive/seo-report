@@ -27,8 +27,9 @@ def project_keywords(con, site: str, end: date) -> list[dict]:
 
 
 def active_keywords(con, site: str, end: date) -> list[dict]:
-    """Từ khóa của dự án đang chạy (bỏ tạm dừng): mẫu số của các số Top N ở Tổng quan dự án."""
-    return [k for k in project_keywords(con, site, end) if not k["paused"]]
+    """Từ khóa của dự án (mẫu số của các số Top N ở Tổng quan dự án). Tạm dừng chỉ là ngừng check: từ khóa tạm dừng
+    đã có số vẫn tính theo lần check gần nhất; tạm dừng mà chưa check lần nào thì bỏ."""
+    return [k for k in project_keywords(con, site, end) if not k["paused"] or k["date"]]
 
 
 def project_history(con, site: str, end: date, limit: int = 30, period: str = "check") -> list[dict]:
@@ -350,7 +351,7 @@ def rank_suggestions(con, cfg, end: date, limit: int = 8) -> list[tuple[str, int
 def _scope(con, cfg, end: date, set_id: int | None) -> list[dict]:
     if set_id is None:
         return active_keywords(con, cfg.site_url, end)
-    return [k for k in R.keywords(con, cfg.site_url, end, set_id) if not k["paused"]]
+    return [k for k in R.keywords(con, cfg.site_url, end, set_id) if not k["paused"] or k["date"]]
 
 
 # ---- AI Overview theo bộ ----

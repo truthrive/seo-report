@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from seo_report import db
 from seo_report import kpi as KP
+from seo_report import okr as O
 from seo_report import rank as R
 from seo_report import sheet_view as SV
 from seo_report.config import RankSettings
@@ -32,7 +33,9 @@ class FakeSheets:
     def values(self):
         return self
 
-    def get(self, spreadsheetId, fields):
+    def get(self, spreadsheetId, fields=None, range=None):
+        if range:  # values().get: các ô của một tab
+            return _Call(lambda: {"values": self.tabs[self.by_title(range.split("!")[0].strip("'"))]["values"]})
         return _Call(lambda: {"sheets": [{"properties": {"sheetId": g, "title": t["title"]},
                                           "protectedRanges": t["protected"]} for g, t in self.tabs.items()]})
 
@@ -148,9 +151,54 @@ class SheetViewTest(unittest.TestCase):
         self.assertNotIn("Bộ – Blog", [t["title"] for t in sh.tabs.values()])
         data = sh.tabs[sh.by_title(SV.DATA_TAB)]["values"]
         self.assertFalse(any(r[1:2] == ["Blog"] for r in data))
-        self.assertEqual(len([t for t in sh.tabs.values() if t["protected"]]), 3)  # KPI, Cam kết, Dữ liệu
+        self.assertEqual(len([t for t in sh.tabs.values() if t["protected"]]), 4)  # Thông tin, KPI, Cam kết, Dữ liệu
+        info = sh.tabs[sh.by_title(SV.INFO_TAB)]["values"]
+        self.assertIn(["Tab", "Ai sửa", "Ghi chú"], info)
         self.assertIsNotNone(k)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OkrTabsTest(unittest.TestCase):
+    """OKR sửa trên tool: mỗi đợt một tab OKRs do tool ghi; tab OKR cũ của team và tab Weekly không bị ghi đè."""
+
+    def setUp(self):
+        self.con = db.connect(":memory:")
+        self.cfg = SimpleNamespace(site_url=SITE, rank=RankSettings(monthly_budget_usd=20),
+                                   okr=SimpleNamespace(weekly_tab="Weekly Task Tracker"))
+        KP.ensure_tables(self.con)
+        KP.set_sheet(self.con, "https://docs.google.com/spreadsheets/d/" + "y" * 30 + "/edit")
+        O.ensure_tables(self.con)
+        O.take_over(self.con)
+        O.add_cycle(self.con, "Q4/2026", "2026-10-01", "2026-12-31")
+        o = O.add_objective(self.con, "Q4/2026", "Nền tảng")
+        O.add_item(self.con, o, "Audit kỹ thuật", pic="Thịnh")
+
+    def test_okr_tabs_follow_cycles(self):
+        sh = FakeSheets({1: "OKRs 3 tháng", 2: "Weekly Task Tracker", 3: "Content"})
+        team_okr, weekly = ["ID", "team tự thiết kế"], [["Tuần"], ["Ngày", "Task tuần / hành động"]]
+        sh.tabs[1]["values"], sh.tabs[2]["values"] = [team_okr], weekly
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        gid = sh.by_title("OKRs Q4-2026")
+        rows = sh.tabs[gid]["values"]
+        self.assertEqual(rows[3], O.SHEET_HEAD)
+        self.assertEqual(rows[5][:3], ["O1.01", "", "Audit kỹ thuật"])
+        self.assertEqual(sh.tabs[1]["values"], [team_okr])  # tab OKR cũ của team: không đụng
+        self.assertEqual(sh.tabs[2]["values"], weekly)  # tab Weekly: chỉ khóa hàng tiêu đề
+        self.assertEqual([p["description"] for p in sh.tabs[2]["protected"]], [SV.HEADER_TAG])
+        self.assertEqual(sh.tabs[3]["protected"], [])
+        O.update_cycle(self.con, "Q4/2026", "OKRs Q4 2026", "2026-10-01", "2026-12-31")
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        self.assertEqual(sh.tabs[gid]["title"], "OKRs Q4 2026")  # đổi tên đợt: cùng tab, đổi tên tab
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        self.assertEqual(len(sh.tabs[2]["protected"]), 1)  # khóa hàng tiêu đề một lần
+        O.delete_cycle(self.con, "OKRs Q4 2026")
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        self.assertNotIn(gid, sh.tabs)
+
+    def test_fingerprint_changes_when_okr_changes(self):
+        before = SV.fingerprint(self.con, SITE)
+        O.update_item(self.con, "O1.01", status=O.DOING)
+        self.assertNotEqual(before, SV.fingerprint(self.con, SITE))

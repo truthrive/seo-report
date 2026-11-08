@@ -397,11 +397,13 @@ def versions(con) -> list[dict]:
 
 def version_at(vs: list[dict], day: date) -> dict | None:
     """Phiên bản có hiệu lực vào ngày `day` (mới nhất có ngày ≤ day); trước khi tool thấy phiên bản nào thì dùng
-    phiên bản đầu tiên."""
+    phiên bản chốt cuối cùng của ngày đầu tiên (ngày đó có thể đã lưu nhiều lần khi đang nhập / sửa)."""
     if not vs:
         return None
     ok = [v for v in vs if v["day"] <= day.isoformat()]
-    return (ok[-1] if ok else vs[0])["data"]
+    if ok:
+        return ok[-1]["data"]
+    return [v for v in vs if v["day"] == vs[0]["day"]][-1]["data"]
 
 
 # ---- Tính tiến độ ----
@@ -528,8 +530,7 @@ def progress(con, site: str, today: date, sessions=None) -> dict | None:
         row["sessions"], row["forecast"] = {}, {}
         if sessions and s <= yesterday:
             for src in sorted({ln["source"] for ln in ver["lines"] if ln["kind"] != "rank"}):
-                daily = sessions(src, s, min(e, yesterday))
-                row["sessions"][src] = sum(daily.values())
+                row["sessions"][src] = _period_sessions(sessions, src, s, min(e, yesterday))
                 if row["status"] == "running" and row["days_done"] >= 3:
                     row["forecast"][src] = round(row["sessions"][src] / row["days_done"] * row["days_total"])
         row["checks"] = {}
@@ -604,7 +605,19 @@ def ga4_sessions(cfg, con):
     def fn(source: str, s: date, e: date) -> dict[str, int]:
         rep = client.run(["date"], ["sessions"], s, e, filters[source], limit=1000)
         return {r["date"]: r["sessions"] for r in rep.rows}
+
+    def total(source: str, s: date, e: date) -> int:
+        """Tổng phiên cả kỳ, khớp giao diện GA4 (cộng theo ngày thì đếm trùng phiên qua nửa đêm, cao hơn 1–2%)."""
+        rows = client.run([], ["sessions"], s, e, filters[source]).rows
+        return rows[0]["sessions"] if rows else 0
+    fn.total = total
     return fn
+
+
+def _period_sessions(sessions, source: str, s: date, e: date) -> int:
+    """Tổng phiên một kỳ: dùng tổng kỳ của GA4 nếu hàm lấy số có (ga4_sessions), không thì cộng theo ngày."""
+    total = getattr(sessions, "total", None)
+    return total(source, s, e) if total else sum(sessions(source, s, e).values())
 
 
 # ---- Chữ cho màn hình và báo cáo ----
@@ -648,11 +661,11 @@ def status(ch: dict, running: bool) -> tuple[str, str]:
 
 
 def fmt_target(line: dict, t) -> str:
-    """Ô cam kết ngắn: '11%', '12 từ', '40.348', '+500'."""
+    """Ô cam kết ngắn: '11%', '12 từ khóa', '40.348', '+500'."""
     if t is None:
         return "–"
     if line["kind"] == "rank":
-        return _p(t) if line["unit"] == "pct" else f"{int(t)} từ"
+        return _p(t) if line["unit"] == "pct" else f"{int(t)} từ khóa"
     return _n(t) if line["kind"] == "level" else _signed(t)
 
 
@@ -947,7 +960,7 @@ def baseline_suggest(sessions, start: date, n_months: int = 3) -> dict:
     for s, e in windows:
         row = {"label": f"{s:%m/%Y}"}
         for src in SOURCES:
-            row[src] = sum(sessions(src, s, e).values())
+            row[src] = _period_sessions(sessions, src, s, e)
         out["months"].append(row)
     for src in SOURCES:
         out[src] = int(round(sum(m[src] for m in out["months"]) / len(out["months"]))) if out["months"] else None
