@@ -64,6 +64,28 @@ class BrandEntityTest(unittest.TestCase):
         self.assertFalse(ok["same_as"])  # mới 2 hồ sơ
         self.assertFalse(ok["wikidata"])
 
+    def test_search_sends_each_language_separately(self):
+        seen = []
+
+        def opener(url, timeout=0):
+            seen.append(url)
+            return kg_reply([])
+        BE.search("k", "Tâm Đức", opener=opener)
+        self.assertIn("languages=vi&languages=en", seen[0])  # gộp "vi,en" thì Google trả 400
+        self.assertNotIn("vi%2Cen", seen[0])
+
+    def test_search_multi_language_values(self):
+        def opener(url, timeout=0):
+            return kg_reply([(9.5, {"@id": "kg:/m/1", "@type": ["Organization"],
+                                    "name": [{"@language": "en", "@value": "Carl Zeiss AG"},
+                                             {"@language": "vi", "@value": "Carl Zeiss"}],
+                                    "description": [{"@language": "en", "@value": "Company"}],
+                                    "detailedDescription": [{"inLanguage": "en", "articleBody": "Optics maker"}],
+                                    "image": [{"contentUrl": "https://x/logo.png"}]})])
+        r = BE.search("k", "Zeiss", opener=opener)[0]
+        self.assertEqual((r["name"], r["description"], r["detail"], r["image"]),
+                         ("Carl Zeiss", "Company", "Optics maker", "https://x/logo.png"))
+
     def test_blocked_api_explained_and_schema_still_checked(self):
         def opener(url, timeout=0):
             raise HTTPError(url, 403, "Forbidden", {}, io.BytesIO(b'{"error": {"message": "Requests to this API '

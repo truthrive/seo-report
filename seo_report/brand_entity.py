@@ -85,10 +85,22 @@ class ApiError(Exception):
         self.code, self.body = code, body
 
 
+def _lang(v, prefer: tuple = ("vi", "en")) -> str:
+    """Hỏi nhiều ngôn ngữ thì Google trả [{"@value", "@language"}, …] thay cho chuỗi: lấy tiếng Việt trước."""
+    if isinstance(v, list):
+        vals = {x.get("@language"): x.get("@value", "") for x in v if isinstance(x, dict)}
+        return next((vals[p] for p in prefer if vals.get(p)), next(iter(vals.values()), "")) or ""
+    if isinstance(v, dict):
+        return v.get("@value", "") or ""
+    return v or ""
+
+
 def search(key: str, query: str, limit: int = 5, opener=urlopen) -> list[dict]:
     """Kết quả Knowledge Graph cho một tên: [{score, id, name, types, description, detail, detail_url, url,
     image}]."""
-    url = f"{API}?" + urlencode({"query": query, "key": key, "limit": limit, "languages": "vi,en"})
+    # languages phải lặp lại từng ngôn ngữ (languages=vi&languages=en); gộp "vi,en" thì Google trả 400
+    url = f"{API}?" + urlencode([("query", query), ("key", key), ("limit", limit), ("languages", "vi"),
+                                 ("languages", "en")])
     try:
         d = json.load(opener(url, timeout=20))
     except HTTPError as e:
@@ -98,10 +110,17 @@ def search(key: str, query: str, limit: int = 5, opener=urlopen) -> list[dict]:
         r = it.get("result", {})
         t = r.get("@type") or []
         det = r.get("detailedDescription") or {}
-        out.append({"score": round(it.get("resultScore", 0) or 0, 1), "id": r.get("@id", ""), "name": r.get("name", ""),
-                    "types": t if isinstance(t, list) else [t], "description": r.get("description", ""),
-                    "detail": det.get("articleBody", ""), "detail_url": det.get("url", ""),
-                    "url": r.get("url", ""), "image": (r.get("image") or {}).get("contentUrl", "")})
+        if isinstance(det, list):  # nhiều ngôn ngữ: mỗi ngôn ngữ một mô tả, lấy tiếng Việt trước
+            ds = [x for x in det if isinstance(x, dict)]
+            det = next((x for p in ("vi", "en") for x in ds if x.get("inLanguage") == p), ds[0] if ds else {})
+        img = r.get("image") or {}
+        if isinstance(img, list):
+            img = next((x for x in img if isinstance(x, dict)), {})
+        out.append({"score": round(it.get("resultScore", 0) or 0, 1), "id": r.get("@id", ""),
+                    "name": _lang(r.get("name")), "types": t if isinstance(t, list) else [t],
+                    "description": _lang(r.get("description")),
+                    "detail": _lang(det.get("articleBody")), "detail_url": det.get("url", ""),
+                    "url": r.get("url", ""), "image": img.get("contentUrl", "")})
     return out
 
 
