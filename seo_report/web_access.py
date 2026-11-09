@@ -267,13 +267,14 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     with connect() as c:
                         e = A.set_user(c, email.value, A.ADMIN if k == "admin" else A.MEMBER, user, note.value or "",
                                        title=title.value or "",
-                                       team_role=(team_role.value if k == "team_all" else None) if kind else A.KEEP)
+                                       team_role=(team_role.value if k == "team_all" else None) if kind else A.KEEP,
+                                       settings=cfg.access)
                         if k != "admin":
                             for s_, role in pl["want"].items():
-                                A.set_member(c, e, s_, role, user)
+                                A.set_member(c, e, s_, role, user, settings=cfg.access)
                             for s_ in mine:
                                 if s_ not in pl["want"]:
-                                    A.remove_member(c, e, s_, user)
+                                    A.remove_member(c, e, s_, user, settings=cfg.access)
                             if kind is not None:  # hạn mức điểm Member
                                 if int(lim.value or 0) != PT.monthly_limit(c, e):
                                     PT.set_limit(c, e, int(lim.value or 0), user)
@@ -336,7 +337,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
 
                 def go():
                     with connect() as c:
-                        A.remove_user(c, em, user)
+                        A.remove_user(c, em, user, settings=cfg.access)
                     LIVE.kick(email=em, keep=ui.context.client.id)
                     dlg.close()
                     ui.notify(f"Đã gỡ tài khoản {em}", type="positive")

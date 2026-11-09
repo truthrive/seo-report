@@ -85,6 +85,8 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
             msg = ui.label("").classes("text-sm")
 
         async def do_register(btn) -> None:
+            if not A.is_admin(user):  # đăng ký là đổi cài đặt tài khoản Merchant bằng token chung của tool
+                return
             acc_id = "".join(ch for ch in (acc_in.value or "") if ch.isdigit())
             email = (mail_in.value or "").strip()
             if not acc_id or "@" not in email:
@@ -111,8 +113,11 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
             rb.on_click(lambda _, b=rb: do_register(b))
 
     async def link_dialog() -> None:
-        """Chọn tài khoản Merchant Center của dự án trong các tài khoản Google của tool có quyền."""
-        if not ed:
+        """Chọn tài khoản Merchant Center của dự án trong các tài khoản Google của tool có quyền.
+
+        Danh sách là tài khoản của MỌI khách hàng mà tài khoản Google chung quản lý, nên chỉ Owner / Admin được xem,
+        gắn và đăng ký (Member chỉ lấy số của tài khoản đã gắn)."""
+        if not A.is_admin(user):
             return
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; width:620px; max-width:94vw"):
             ui.label("Gắn tài khoản Merchant Center").classes("text-base font-semibold")
@@ -168,6 +173,8 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
                     "text-xs muted")
 
         def save():
+            if not A.is_admin(user):  # chặn cả sự kiện giả từ trình duyệt
+                return
             a = next(x for x in accs if x["name"] == radio.value)
             with connect() as c:
                 M.link(c, a, str(user))
@@ -182,9 +189,10 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
     right.classes("no-wrap").style("flex:none")  # hai nút không bị ép hẹp (chữ xuống dưới icon)
     if ed and has_scope:  # chưa có quyền: nút không dùng được, thân trang đã hướng dẫn cấp quyền
         with right, ui.row().classes("items-center no-wrap gap-2"):
-            ui.button("Tài khoản", icon="storefront", on_click=link_dialog).props(
-                "outline no-caps color=grey-9").style("white-space:nowrap").tooltip(
-                "Gắn / đổi tài khoản Merchant Center của dự án")
+            if A.is_admin(user):
+                ui.button("Tài khoản", icon="storefront", on_click=link_dialog).props(
+                    "outline no-caps color=grey-9").style("white-space:nowrap").tooltip(
+                    "Gắn / đổi tài khoản Merchant Center của dự án")
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary").style(
                 "white-space:nowrap")
             b.on_click(lambda _, b=b: fetch(b))

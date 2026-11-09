@@ -111,6 +111,61 @@ class ToolListTest(unittest.TestCase):
         self.assertEqual(us["marketing@vidushop.com"]["role"], A.EDITOR)
 
 
+class AdminBoundaryTest(unittest.TestCase):
+    """Admin không sửa được Owner hay Admin khác ở tầng dữ liệu (không chỉ ẩn nút), không cấp được Admin."""
+
+    def setUp(self):
+        import sqlite3
+        self.con = sqlite3.connect(":memory:")
+        A.set_user(self.con, "admin2@abc.vn", A.ADMIN, "me")  # Admin khác (chuỗi thường: CLI / test)
+        A.set_user(self.con, "mem@abc.vn", A.MEMBER, "me")
+        self.admin = A.User("admin1@abc.vn", A.ADMIN_ACCT)
+        self.owner = A.User("marketing@vidushop.com", A.EDITOR)
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_admin_cannot_touch_owner_account(self):
+        # gõ email Owner vào ô "Thêm người": bị chặn, kể cả khi Owner chưa có dòng nào trong tool
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "marketing@vidushop.com", A.MEMBER, self.admin, settings=S)
+        with self.assertRaises(ValueError):
+            A.set_password(self.con, A.effective(self.con, S), "marketing@vidushop.com", "mat-khau-moi-1",
+                           must_change=False, by=self.admin)
+        with self.assertRaises(ValueError):
+            A.set_member(self.con, "marketing@vidushop.com", "tam-duc", A.CLIENT, self.admin, settings=S)
+        self.assertIsNone(A.login(self.con, S, "marketing@vidushop.com", "mat-khau-moi-1")[0])
+
+    def test_admin_cannot_demote_or_reset_other_admin(self):
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "admin2@abc.vn", A.MEMBER, self.admin, settings=S)
+        with self.assertRaises(ValueError):
+            A.set_password(self.con, A.effective(self.con, S), "admin2@abc.vn", "mat-khau-moi-1",
+                           must_change=False, by=self.admin)
+        with self.assertRaises(ValueError):
+            A.remove_user(self.con, "admin2@abc.vn", self.admin, settings=S)
+        self.assertIn("admin2@abc.vn", A.effective(self.con, S).admins)
+
+    def test_admin_cannot_grant_admin_but_can_manage_members(self):
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "mem@abc.vn", A.ADMIN, self.admin, settings=S)
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "admin1@abc.vn", A.ADMIN, self.admin, settings=S)  # cũng không tự nâng quyền
+        A.set_user(self.con, "mem@abc.vn", A.MEMBER, self.admin, "ghi chú", settings=S)
+        A.set_member(self.con, "mem@abc.vn", "tam-duc", A.EDITOR, self.admin, settings=S)
+        A.set_password(self.con, A.effective(self.con, S), "mem@abc.vn", "mat-khau-moi-1", must_change=False,
+                       by=self.admin)
+        A.remove_member(self.con, "mem@abc.vn", "tam-duc", self.admin, settings=S)
+
+    def test_owner_can_manage_admin_and_self_service_still_works(self):
+        A.set_user(self.con, "admin2@abc.vn", A.MEMBER, self.owner, settings=S)
+        A.set_user(self.con, "mem@abc.vn", A.ADMIN, self.owner, settings=S)
+        self.assertIn("mem@abc.vn", A.effective(self.con, S).admins)
+        # Admin tự đổi mật khẩu của mình (không qua màn Phân quyền): không bị chặn
+        A.set_password(self.con, A.effective(self.con, S), "mem@abc.vn", "mat-khau-moi-2", must_change=False,
+                       by=A.User("mem@abc.vn", A.ADMIN_ACCT))
+
+
 class PasswordTest(unittest.TestCase):
     def setUp(self):
         import sqlite3

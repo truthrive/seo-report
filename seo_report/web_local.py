@@ -65,8 +65,11 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
         body.refresh()
 
     async def link_dialog() -> None:
-        """Chọn các hồ sơ (chi nhánh) thuộc dự án này trong danh sách hồ sơ tài khoản Google của tool quản lý."""
-        if not ed:
+        """Chọn các hồ sơ (chi nhánh) thuộc dự án này trong danh sách hồ sơ tài khoản Google của tool quản lý.
+
+        Danh sách này là hồ sơ của MỌI khách hàng mà tài khoản Google chung của tool quản lý, nên chỉ Owner / Admin
+        được xem và gắn (Member chỉ lấy số của hồ sơ đã gắn)."""
+        if not A.is_admin(user):
             return
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; width:620px; max-width:94vw"):
             ui.label("Gắn chi nhánh Google Business Profile").classes("text-base font-semibold")
@@ -114,6 +117,8 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
                             .classes("text-xs muted ellipsis")
 
         def save():
+            if not A.is_admin(user):  # chặn cả sự kiện giả từ trình duyệt
+                return
             chosen = [x for x in locs if checks[x["name"]].value]
             with connect() as c:
                 G.link(c, chosen, str(user))
@@ -127,8 +132,9 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
 
     if ed:
         with right, ui.row().classes("items-center no-wrap gap-2"):
-            ui.button("Chi nhánh", icon="storefront", on_click=link_dialog).props(
-                "outline no-caps color=grey-9").tooltip("Gắn / bỏ các hồ sơ Google Business Profile của dự án")
+            if A.is_admin(user):
+                ui.button("Chi nhánh", icon="storefront", on_click=link_dialog).props(
+                    "outline no-caps color=grey-9").tooltip("Gắn / bỏ các hồ sơ Google Business Profile của dự án")
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary")
             b.on_click(lambda _, b=b: fetch(b))
             b.tooltip("Lấy lại hồ sơ, hiệu suất và từ khóa từ Google (miễn phí)")

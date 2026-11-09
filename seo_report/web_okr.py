@@ -2,6 +2,7 @@
 import json
 from datetime import date, datetime, timedelta
 
+from . import access as A
 from . import okr as O
 from . import ui_theme as T
 
@@ -84,10 +85,16 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                     "text-xs muted")
                 create_btn = ui.button("Tạo sheet dự án", icon="add").props("unelevated no-caps color=primary").classes(
                     "q-mt-sm")
-            with ui.element("div").classes("sr-card q-pa-md w-full"):
-                ui.label("Hoặc gắn sheet đã có").classes("text-sm font-semibold")
-                link = ui.input(placeholder="Dán link Google Sheet").props("outlined dense").classes("w-full q-mt-xs")
-                attach_btn = ui.button("Gắn sheet", icon="link").props("outline no-caps color=grey-9").classes("q-mt-sm")
+            can_attach = A.is_admin(user)  # gắn sheet có sẵn dùng token Google chung của chủ: chỉ Owner / Admin
+            if can_attach:
+                with ui.element("div").classes("sr-card q-pa-md w-full"):
+                    ui.label("Hoặc gắn sheet đã có").classes("text-sm font-semibold")
+                    link = ui.input(placeholder="Dán link Google Sheet").props("outlined dense").classes(
+                        "w-full q-mt-xs")
+                    attach_btn = ui.button("Gắn sheet", icon="link").props("outline no-caps color=grey-9").classes(
+                        "q-mt-sm")
+            else:
+                ui.label("Gắn sheet đã có: nhờ Admin hoặc Owner.").classes("text-xs muted q-mt-sm")
             err = ui.label("").classes("text-sm text-negative")
             err.props["role"] = "alert"
 
@@ -110,6 +117,9 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                     create_btn.props(remove="loading")
 
             async def attach():
+                if not A.is_admin(user):  # chặn cả sự kiện giả từ trình duyệt
+                    err.text = "Chỉ Owner hoặc Admin gắn được sheet có sẵn"
+                    return
                 attach_btn.props("loading")
                 err.text = ""
                 try:
@@ -128,7 +138,8 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                 finally:
                     attach_btn.props(remove="loading")
             create_btn.on_click(create)
-            attach_btn.on_click(attach)
+            if can_attach:
+                attach_btn.on_click(attach)
             with ui.row().classes("w-full justify-end"):
                 ui.button("Đóng", on_click=dlg.close).props("flat no-caps")
         dlg.on("hide", lambda: dlg.delete())

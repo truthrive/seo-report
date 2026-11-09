@@ -177,10 +177,14 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                 chart = ui.echart({
                     "animation": False, "grid": {"left": 44, "right": 16, "top": 16, "bottom": 26},
                     "legend": {"show": False},
+                    # Tên thương hiệu do Member nhập: bắt buộc mã hoá HTML trước khi đưa vào tooltip (ECharts chèn chuỗi
+                    # trả về từ formatter như HTML).
                     "tooltip": {"trigger": "axis", ":formatter": (
-                        "ps => ps[0].axisValueLabel + '<br/>' + ps.map(p => p.marker + p.seriesName + ': <b>' + "
-                        "(p.value == null ? '–' : p.value + '%') + '</b> (' + p.data.n + '/' + p.data.d + ')')"
-                        ".join('<br/>')")},
+                        "ps => { const esc = s => String(s).replace(/[&<>\"']/g, "
+                        "c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;'}[c])); "
+                        "return esc(ps[0].axisValueLabel) + '<br/>' + ps.map(p => p.marker + esc(p.seriesName) + "
+                        "': <b>' + (p.value == null ? '–' : p.value + '%') + '</b> (' + p.data.n + '/' + p.data.d + ')')"
+                        ".join('<br/>'); }")},
                     "xAxis": {"type": "category", "data": labels, "axisTick": {"show": False},
                               "axisLabel": {"color": "#6B6A5E", "fontSize": 11}},
                     "yAxis": {"type": "value", "min": 0, "max": 100,

@@ -3,6 +3,7 @@ kết là một dòng (kpi.py), màn hình vẽ một ô cho mỗi dòng."""
 from contextlib import closing
 from datetime import date
 
+from . import access as A
 from . import ai_format as F
 from . import kpi as KP
 from . import ui_theme as T
@@ -739,6 +740,9 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
                         "unelevated no-caps")
 
     def use_link():
+        if not A.is_admin(user):  # sheet có sẵn đọc / ghi bằng token Google chung của chủ: chỉ Owner / Admin
+            ui.notify("Chỉ Owner hoặc Admin gắn được sheet có sẵn", type="warning")
+            return
         try:
             with connect() as c:
                 KP.set_sheet(c, link.value)
@@ -748,9 +752,13 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
 
     with T.section(ui, "Đã có sheet", "link", "Sheet có 2 tab 'KPI cam kết' và 'Từ khóa cam kết' (mẫu cũ hay mới "
                                               "đều đọc được)"):
-        with ui.row().classes("items-center gap-3"):
-            link = ui.input(placeholder="Dán link Google Sheet đã có").props("outlined dense").classes("w-96")
-            ui.button("Dùng sheet này", on_click=use_link).props("outline no-caps")
+        if A.is_admin(user):
+            with ui.row().classes("items-center gap-3"):
+                link = ui.input(placeholder="Dán link Google Sheet đã có").props("outlined dense").classes("w-96")
+                ui.button("Dùng sheet này", on_click=use_link).props("outline no-caps")
+        else:
+            ui.label("Gắn sheet có sẵn: nhờ Admin hoặc Owner (sheet được đọc và ghi bằng tài khoản Google của chủ tool)."
+                     ).classes("text-sm muted")
 
 
 # ---- Sửa cam kết trên tool ----

@@ -349,7 +349,26 @@ def is_username(login: str) -> bool:
     return "@" not in str(login)
 
 
-def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, team_role=KEEP) -> str:
+def _require_manage(con, settings, email: str, by, *, grant_admin: bool = False) -> None:
+    """Chốt ở tầng dữ liệu: Admin không sửa được Chủ tool hay Admin khác (kể cả khi gõ email vào ô "Thêm người"),
+    không cấp quyền Admin. Chỉ Owner làm được những việc đó. Chỉ áp dụng khi `by` là người đang mở trang (User);
+    lệnh CLI và test truyền chuỗi thường thì không bị chặn. Người tự sửa chính mình thì được."""
+    if not isinstance(by, User) or is_owner(by):
+        return
+    email = str(email or "").strip().lower()
+    if email == str(by).strip().lower() and not grant_admin:
+        return
+    if grant_admin:
+        raise ValueError("Chỉ Owner cấp quyền Admin")
+    if settings is not None and email in _norm(settings.editors):
+        raise ValueError("Chỉ Owner sửa được tài khoản Owner")
+    row = con.execute("SELECT role FROM access_users WHERE email = ? AND removed_at IS NULL", (email,)).fetchone()
+    if row and row[0] in (ADMIN_ACCT, EDITOR):
+        raise ValueError("Chỉ Owner sửa được tài khoản Admin")
+
+
+def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, team_role=KEEP,
+             settings: "AccessSettings | None" = None) -> str:
     """Thêm hoặc sửa tài khoản (loại tài khoản, ghi chú, chức danh, quyền Team mọi dự án). Ghi nhật ký thay đổi."""
     email = _clean_email(email)
     if role not in (ADMIN_ACCT, VIEWER):
@@ -357,6 +376,7 @@ def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, te
     if team_role is not KEEP and team_role not in (None, *TEAM_ROLES):
         raise ValueError("Quyền Team không hợp lệ")
     _ensure(con)
+    _require_manage(con, settings, email, by, grant_admin=(role == ADMIN_ACCT))
     old = con.execute("SELECT role, removed_at, title, team_role FROM access_users WHERE email = ?",
                       (email,)).fetchone()
     title = (old[2] if old else "") if title is KEEP else (title or "").strip()
@@ -384,10 +404,11 @@ def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, te
     return email
 
 
-def remove_user(con, email: str, by: str) -> None:
+def remove_user(con, email: str, by: str, settings: "AccessSettings | None" = None) -> None:
     """Gỡ quyền (đánh dấu, giữ lịch sử). Phiên đăng nhập của người đó hết hiệu lực ngay ở lần mở trang kế tiếp."""
     _ensure(con)
     email = email.strip().lower()
+    _require_manage(con, settings, email, by)
     with con:
         n = con.execute("UPDATE access_users SET removed_by = ?, removed_at = ?, pw_hash = NULL, pw_set_at = NULL "
                         "WHERE email = ? AND removed_at IS NULL", (str(by), _now(), email)).rowcount
@@ -403,6 +424,7 @@ def purge_user(con, settings: AccessSettings, email: str, by: str) -> None:
     email = (email or "").strip().lower()
     if email in _norm(settings.editors):
         raise ValueError("Tài khoản Chủ tool khai báo trong config.toml: bỏ trong file đó, không xóa ở đây được")
+    _require_manage(con, settings, email, by)
     if email in _norm(settings.viewers):  # xóa ở đây thì lần mở sau lại hiện từ config.toml
         raise ValueError("Tài khoản này còn khai báo trong config.toml (viewers): bỏ trong file đó trước")
     if email == str(by).strip().lower():
@@ -426,12 +448,14 @@ def members(con) -> dict[str, dict[str, str]]:
     return out
 
 
-def set_member(con, email: str, project: str, role: str, by: str) -> None:
+def set_member(con, email: str, project: str, role: str, by: str,
+               settings: "AccessSettings | None" = None) -> None:
     """Gắn (hoặc đổi quyền) một tài khoản vào một dự án."""
     email = _clean_email(email)
     if role not in PROJECT_ROLES:
         raise ValueError("Quyền trong dự án không hợp lệ")
     _ensure(con)
+    _require_manage(con, settings, email, by)
     old = con.execute("SELECT role FROM project_members WHERE email = ? AND project = ? AND removed_at IS NULL",
                       (email, project)).fetchone()
     if old and old[0] == role:
@@ -445,10 +469,11 @@ def set_member(con, email: str, project: str, role: str, by: str) -> None:
              f"{project}: {PROJECT_ROLES[old[0]] + ' → ' if old else ''}{PROJECT_ROLES[role]}")
 
 
-def remove_member(con, email: str, project: str, by: str) -> None:
+def remove_member(con, email: str, project: str, by: str, settings: "AccessSettings | None" = None) -> None:
     """Gỡ một dự án khỏi tài khoản (đánh dấu, giữ lịch sử). Có hiệu lực ở lần mở trang kế tiếp của người đó."""
     _ensure(con)
     email = email.strip().lower()
+    _require_manage(con, settings, email, by)
     with con:
         n = con.execute("UPDATE project_members SET removed_by = ?, removed_at = ? WHERE email = ? AND project = ? "
                         "AND removed_at IS NULL", (str(by), _now(), email, project)).rowcount
@@ -593,6 +618,7 @@ def set_password(con, settings: AccessSettings, email: str, pw: str, must_change
     u = next((x for x in users(con, settings) if x["email"] == email), None)
     if not u:
         raise ValueError("Email chưa được cấp quyền")
+    _require_manage(con, settings, email, by)
     with con:
         con.execute("INSERT INTO access_users (email, role, note, added_by, added_at) VALUES (?, ?, '', 'config.toml', ?) "
                     "ON CONFLICT(email) DO NOTHING", (email, u["role"], _now()))
