@@ -566,6 +566,17 @@ HEAD = """
   .sr-op-card-ok { color: #1E7C31; }
   .sr-op-card-sub { font-size: 12px; color: #6B6A5E; line-height: 1.35; margin-top: 2px; }
   .sr-op-panel { padding: 16px 18px; }
+  /* Máy tính điểm (trang Điểm của tôi) */
+  .sr-pt-calc { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
+  @media (max-width: 1000px) { .sr-pt-calc { grid-template-columns: minmax(0, 1fr); } }
+  .sr-pt-crow { display: grid; grid-template-columns: minmax(0, 1fr) auto 64px; gap: 12px; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #F0EFE8; }
+  .sr-pt-crow:first-child { grid-column: 1 / -1; }
+  .sr-pt-cpts { text-align: right; font-size: 15px; font-weight: 600; color: #1F221E; }
+  .sr-pt-total { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: #F3F3ED; }
+  .sr-pt-tnum { font-family: var(--head); font-size: 22px; font-weight: 700; color: #1F221E; }
+  @media (max-width: 600px) { .sr-pt-crow { grid-template-columns: minmax(0, 1fr) 56px; }
+    .sr-pt-crow .sr-pt-cin { grid-column: 1 / -1; grid-row: 2; flex-wrap: wrap; } }
   .sr-op-head { margin-bottom: 12px; }
   .sr-op-head-ico { color: #1E7C31; flex: none; margin-top: 2px; }
   .sr-op-head-title { font-size: 16px; font-weight: 600; color: #1F221E; }

@@ -51,8 +51,28 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
     right = T.page_header(ui, "add_link", "Backlink",
                           "Ai đang link về website, link mới / mất, anchor" + ("." if cl else " và việc cần xử lý. Số của DataForSEO."))
 
-    async def fetch(btn):
+    async def fetch(btn, points_ok: bool = False):
         if not ed:  # tốn tiền DataForSEO: chặn ở server, nút bị ẩn chưa đủ
+            return
+        if PT.member(user) and not points_ok:  # Member: báo số điểm trước khi lấy
+            bal = PT.my_balance(user) or {"left": 0, "limit": 0}
+            need = PT.cost("backlink")
+            with ui.dialog() as d, ui.card().style("max-width: 440px; border-radius: 14px"):
+                ui.label("Lấy số backlink mới?").classes("text-lg font-semibold")
+                with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
+                    ui.icon("toll", size="18px")
+                    ui.label(f"Trừ {need} điểm (số tổng, lịch sử và các danh sách). Còn {bal['left']:,} / "
+                             f"{bal['limit']:,} điểm tháng này.".replace(",", ".")).classes("text-sm")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                    async def ok():
+                        d.close()
+                        await fetch(btn, points_ok=True)
+                    b_ok = ui.button("Lấy số", icon="refresh", on_click=ok).props("unelevated no-caps")
+                    if need > bal["left"]:
+                        b_ok.disable()
+            d.open()
             return
         from contextlib import closing
 

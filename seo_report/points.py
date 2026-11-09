@@ -259,3 +259,19 @@ def by_action(rows: list[dict]) -> list[dict]:
         a["times"] += 1
         a["points"] += r["points"]
     return sorted(out.values(), key=lambda a: -a["points"])
+
+
+DEPTHS = (10, 20, 30, 50, 100)
+
+
+def calc(rank_keywords: int = 0, rank_depth: int = 20, rank_times: int = 1, **counts) -> dict:
+    """Máy tính điểm: check rank (số từ khóa × số lần, theo độ sâu) + số lần / số từ khóa của các tác vụ khác.
+    Trả {"lines": [(tác vụ, tên, số lượng, điểm)], "total"}."""
+    lines = []
+    if rank_keywords and rank_times:
+        n = int(rank_keywords) * int(rank_times)
+        lines.append(("rank", COSTS["rank"][0], n, rank_points([rank_depth]) * n))
+    for k, v in counts.items():
+        if k in COSTS and k != "rank" and v:
+            lines.append((k, COSTS[k][0], int(v), cost(k, int(v))))
+    return {"lines": lines, "total": sum(x[3] for x in lines)}

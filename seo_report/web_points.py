@@ -125,3 +125,67 @@ def build_points_page(ui, app_connect, user) -> None:
                      "thêm ở trang Phân quyền.").classes("text-xs muted q-mt-xs")
 
     body()
+    calculator(ui, user)
+
+
+CALC_ROWS = (("aio", "Check AIO", "từ khóa"), ("serp", "Xem kết quả Google", "từ khóa"),
+             ("backlink", "Lấy backlink", "lần"), ("research", "Research từ khóa", "lần"),
+             ("overview", "Tổng quan từ khóa (từ khóa mới)", "từ khóa"), ("volume", "Thêm từ khóa vào bộ", "lần"),
+             ("audit", "Quét audit kỹ thuật", "lần"), ("pagespeed", "Lấy số tốc độ trang", "lần"),
+             ("local", "Lấy số Local SEO", "lần"), ("merchant", "Lấy số Merchant Center", "lần"),
+             ("kg", "Kiểm tra Knowledge Graph", "lần"), ("sheets", "Lưu Google Sheets / Drive", "lần"))
+
+
+def calculator(ui, user) -> None:
+    """Máy tính điểm: nhập số từ khóa / số lần để biết trước bị trừ bao nhiêu điểm và còn lại bao nhiêu."""
+    member = A.is_member(user)
+    st = {"rank_keywords": 0, "rank_depth": 20, "rank_times": 1, **{k: 0 for k, _, _ in CALC_ROWS}}
+
+    with T.section(ui, "Máy tính điểm", "calculate", "Nhập số từ khóa / số lần để biết trước bị trừ bao nhiêu điểm"):
+        with ui.element("div").classes("sr-pt-calc"):
+            with ui.element("div").classes("sr-pt-crow"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Check rank (bấm Check ngay)").classes("text-sm font-medium")
+                    ui.label("1 điểm mỗi 10 kết quả của độ sâu").classes("text-xs muted")
+                with ui.row().classes("items-center gap-2 no-wrap sr-pt-cin"):
+                    ui.number("Số từ khóa", value=0, min=0, step=10, format="%.0f",
+                              on_change=lambda e: upd("rank_keywords", e.value)).props("outlined dense").classes(
+                        "w-28")
+                    ui.select({d: f"Top {d}" for d in PT.DEPTHS}, value=20, label="Độ sâu",
+                              on_change=lambda e: upd("rank_depth", e.value)).props("outlined dense").classes("w-28")
+                    ui.number("Số lần", value=1, min=0, step=1, format="%.0f",
+                              on_change=lambda e: upd("rank_times", e.value)).props("outlined dense").classes("w-24")
+                pts_rank = ui.label("0").classes("num sr-pt-cpts")
+            labels = {"rank": pts_rank}
+            for k, name, unit in CALC_ROWS:
+                with ui.element("div").classes("sr-pt-crow"):
+                    with ui.column().classes("gap-0"):
+                        ui.label(name).classes("text-sm font-medium")
+                        ui.label(f"{PT.COSTS[k][1]} điểm mỗi {unit}").classes("text-xs muted")
+                    ui.number(f"Số {unit}", value=0, min=0, step=1, format="%.0f",
+                              on_change=lambda e, k=k: upd(k, e.value)).props("outlined dense").classes(
+                        "w-28 sr-pt-cin")
+                    labels[k] = ui.label("0").classes("num sr-pt-cpts")
+        with ui.row().classes("w-full items-center gap-3 sr-pt-total"):
+            ui.label("Tổng").classes("text-sm font-semibold col")
+            total = ui.label("0 điểm").classes("sr-pt-tnum num")
+        after = ui.label().classes("text-sm q-mt-xs")
+
+    def upd(key, value) -> None:
+        st[key] = int(value or 0) if key != "rank_depth" else int(value or 20)
+        r = PT.calc(**st)
+        got = {x[0]: x[3] for x in r["lines"]}
+        for k, lab in labels.items():
+            lab.text = _n(got.get(k, 0))
+        total.text = f"{_n(r['total'])} điểm"
+        if member:
+            b = PT.my_balance(user) or {"left": 0, "limit": 0}
+            left = b["left"] - r["total"]
+            after.text = (f"Còn lại sau khi chạy: {_n(max(left, 0))} / {_n(b['limit'])} điểm" if left >= 0 else
+                          f"Thiếu {_n(-left)} điểm: còn {_n(b['left'])} điểm tháng này")
+            after.style(f"color:{T.RED if left < 0 else T.MUTED}")
+        else:
+            after.text = (f"Owner / Admin không giới hạn điểm · tương đương khoảng "
+                          f"{r['total'] * PT.POINT_USD:.3f} USD".replace(".", ","))
+            after.style(f"color:{T.MUTED}")
+    upd("rank_depth", 20)

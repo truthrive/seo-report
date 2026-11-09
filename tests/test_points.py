@@ -52,6 +52,12 @@ class PointsTest(unittest.TestCase):
         rows = PT.usage(self.con, "2026-11")
         self.assertEqual([(r["email"], r["member"], r["points"]) for r in rows], [("ad@x.vn", False, 999_999)])
 
+    def test_calc(self):
+        r = PT.calc(rank_keywords=100, rank_depth=30, rank_times=4, aio=25, backlink=1, research=0)
+        self.assertEqual([x[3] for x in r["lines"]], [100 * 4 * 3, 50, 150])
+        self.assertEqual(r["total"], 1400)
+        self.assertEqual(PT.calc()["total"], 0)
+
     def test_label_only_for_members(self):
         self.assertEqual(PT.label(member(), "aio", 3), " · 6 điểm")
         self.assertEqual(PT.label(A.User("o@x.vn", A.EDITOR), "aio", 3), "")

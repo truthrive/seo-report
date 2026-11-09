@@ -2301,7 +2301,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                     "unelevated no-caps color=negative")
         d.open()
 
-    async def check_now(only: list[int] | None = None, confirmed: bool = False):
+    async def check_now(only: list[int] | None = None, confirmed: bool = False, points_ok: bool = False):
         if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
             return
         from nicegui import background_tasks
@@ -2351,8 +2351,33 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                 "unelevated no-caps")
                 d.open()
                 return
-        if PT.take(ui, user, cfg, "rank", points=PT.rank_points([20] * len(ids)),
-                   detail=f"{len(ids)} từ khóa · {cur['name']}") is False:
+        # điểm theo độ sâu thật của từng từ khóa (1 điểm mỗi 10 kết quả)
+        with connect() as c:
+            depth_of = {k["id"]: k["depth"] for k in R.keywords(c, site, end, sid)}
+        pts = PT.rank_points([depth_of.get(i, 20) for i in ids])
+        if PT.member(user) and not points_ok:
+            bal = PT.my_balance(user) or {"left": 0, "limit": 0}
+            with ui.dialog() as d, ui.card().style("max-width: 440px; border-radius: 14px"):
+                ui.label(f"Check ngay {len(ids)} từ khóa?").classes("text-lg font-semibold")
+                with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
+                    ui.icon("toll", size="18px")
+                    ui.label(f"Trừ {pts:,} điểm (1 điểm mỗi 10 kết quả theo độ sâu của từng từ khóa). Còn "
+                             f"{bal['left']:,} / {bal['limit']:,} điểm tháng này.".replace(",", ".")).classes("text-sm")
+                if pts > bal["left"]:
+                    ui.label("Không đủ điểm: bỏ bớt từ khóa hoặc nhờ Owner / Admin cấp thêm.").classes(
+                        "text-sm").style(f"color:{T.RED}")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                    async def ok():
+                        d.close()
+                        await check_now(ids, confirmed=True, points_ok=True)
+                    b_ok = ui.button("Check", icon="play_arrow", on_click=ok).props("unelevated no-caps")
+                    if pts > bal["left"]:
+                        b_ok.disable()
+            d.open()
+            return
+        if PT.take(ui, user, cfg, "rank", points=pts, detail=f"{len(ids)} từ khóa · {cur['name']}") is False:
             return
         _RUNNING.add(site)
         _PAUSED.pop((site, sid), None)
