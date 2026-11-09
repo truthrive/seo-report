@@ -6,6 +6,7 @@ import math
 from datetime import date
 from types import SimpleNamespace
 
+from . import points as PT
 from . import keywords as K
 from . import rank as R
 from . import ui_theme as T
@@ -2189,6 +2190,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         items = parse_items(paste.value or "")
         if not items:
             return
+        if PT.take(ui, user, cfg, "volume", detail=f"thêm {len(items)} từ khóa") is False:
+            return
         if is_kpi:  # bộ Cam kết: thêm lên sheet trước, rồi đọc lại sheet
             add_btn.props("loading")
             try:
@@ -2333,6 +2336,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                 "unelevated no-caps")
                 d.open()
                 return
+        if PT.take(ui, user, cfg, "rank", points=PT.rank_points([20] * len(ids)),
+                   detail=f"{len(ids)} từ khóa · {cur['name']}") is False:
+            return
         _RUNNING.add(site)
         _PAUSED.pop((site, sid), None)
         _PROGRESS[site] = {"set": cur["name"], "total": len(ids), "posted": 0, "done": 0, "failed": 0,

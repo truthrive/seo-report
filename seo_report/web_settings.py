@@ -21,7 +21,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
     về sau khi đăng nhập (None khi mở qua tên miền)."""
     from nicegui import run
 
-    owner = A.is_admin(user) or getattr(user, "role", None) == A.LOCAL
+    owner = A.is_owner(user)
     T.page_header(ui, "settings", "Cài đặt tích hợp",
                   "Tài khoản và mã API tool dùng chung cho mọi website. Chỉ Chủ tool thấy màn này.", eyebrow="Quản trị",
                   tone="grey")

@@ -7,6 +7,7 @@ Khách hàng xem được; người sửa được mới gắn chi nhánh và b�
 import io
 from datetime import date, timedelta
 
+from . import points as PT
 from . import access as A
 from . import ai_format as F
 from . import gbp as G
@@ -41,6 +42,9 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "local")
+        if _pt is False:
+            return
         btn.props("loading")
 
         def work():
@@ -54,6 +58,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
                       caption=" · ".join(bad)[:300] or None, type="warning" if bad else "positive",
                       position="bottom-right", classes="sr-toast", multi_line=True)
         except (Exception, SystemExit) as e:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify("Không lấy được số Google Business Profile", caption=G.explain(e), type="negative",
                       position="bottom-right", classes="sr-toast", timeout=0, close_button="Đóng")
         btn.props(remove="loading")

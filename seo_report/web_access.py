@@ -1,13 +1,15 @@
-"""Màn Phân quyền (Quản trị): ai được đăng nhập, vào được website nào, làm được gì.
+"""Màn Phân quyền (Owner / Admin): ai được đăng nhập, vào được website nào, làm được gì.
 
-Người dùng chia hai nhóm: Team nội bộ (Chủ tool, team mọi website, team theo từng website) và Khách hàng (chỉ có quyền
-Khách hàng ở website của họ). Thêm / sửa quyền qua một hộp thoại, gắn nhiều website một lần; hạ quyền hoặc gỡ website
+Bốn nhóm: Owner (khai trong config.toml), Admin (mọi website, quản lý Member / Guest), Member (team theo từng website
+hoặc mọi website) và Guest (khách hàng: chỉ các màn báo cáo ở website của họ). Chỉ Owner cấp / gỡ Admin; Admin không
+sửa được Owner / Admin khác. Thêm / sửa quyền qua một hộp thoại, gắn nhiều website một lần; hạ quyền hoặc gỡ website
 phải xác nhận. Mọi thay đổi ghi vào Nhật ký.
 """
 from datetime import datetime
 
 from . import access as A
 from . import live as LIVE
+from . import points as PT
 from . import presence as PR
 from . import projects as PJ
 from . import ui_theme as T
@@ -134,12 +136,24 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
 
     # ---------------- Thêm / sửa quyền ----------------
 
+    owner = A.is_owner(user)
+
+    def can_manage(u: dict | None) -> bool:
+        """Owner sửa được mọi người (trừ Owner khai trong config.toml); Admin chỉ sửa Member / Guest."""
+        if not u:
+            return True
+        if u["role"] == A.OWNER:
+            return False
+        return owner or u["role"] != A.ADMIN
+
     def edit_dialog(u: dict | None, restore: dict | None = None) -> None:
         """Thêm người (u None), sửa quyền một người, hoặc cấp lại tài khoản đã gỡ (restore)."""
+        if not can_manage(u) and not (u and u["role"] == A.OWNER):
+            return
         with connect() as c:
             mine = dict(A.members(c).get(u["email"], {})) if u else {}
         base = u or restore or {}
-        locked_admin = bool(u and u["source"] == "config" and u["role"] == A.ADMIN)
+        locked_admin = bool(u and u["role"] == A.OWNER)
         if u is None and not restore and current in names:
             mine_default = {current: A.CLIENT}  # thêm mới: chọn sẵn website đang mở, quyền Khách hàng
         else:
@@ -165,17 +179,24 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 "w-full")
             if locked_admin:
                 with ui.row().classes("q-mt-sm"):
-                    T.status_chip(ui, "Chủ tool: toàn quyền mọi website (khai trong config.toml)", "green", "lock")
+                    T.status_chip(ui, "Owner: toàn quyền (khai trong config.toml)", "green", "lock")
                 kind = None
             else:
-                kind = ui.radio({"project": "Theo từng website", "team_all": "Team · mọi website"},
-                                value=start_kind if start_kind != "admin" else "team_all").props(
+                kinds = {"project": "Theo từng website", "team_all": "Member · mọi website"}
+                if owner:
+                    kinds["admin"] = "Admin"
+                kind = ui.radio(kinds, value=start_kind if start_kind in kinds else "project").props(
                     "dense inline").classes("q-mt-sm")
                 with ui.row().classes("items-center gap-2") as team_box:
-                    ui.label("Quyền chung ở mọi website, kể cả website thêm sau:").classes("text-sm")
-                    team_role = ui.select(A.TEAM_ROLES, value=base.get("team_role") or A.VIEWER).props(
+                    ui.label("Member ở mọi website, kể cả website thêm sau.").classes("text-sm")
+                    team_role = ui.select(A.TEAM_ROLES, value=A.EDITOR).props(
                         "outlined dense options-dense").classes("w-36")
+                    team_role.set_visibility(False)
                 team_box.bind_visibility_from(kind, "value", value="team_all")
+                with ui.row().classes("items-center gap-2") as admin_box:
+                    ui.label("Mọi website, được sửa, quản lý dự án và Member / Guest, xem ngân sách. Không vào được "
+                             "Cài đặt tích hợp, không đổi hạn mức ngân sách, không xóa dự án.").classes("text-sm")
+                admin_box.bind_visibility_from(kind, "value", value="admin")
 
                 with ui.column().classes("w-full gap-0 q-mt-xs") as proj_box:
                     hint = ui.label().classes("text-xs muted q-mb-xs")
@@ -197,16 +218,34 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                             cb.on_value_change(lambda e, s_=slug: rows[s_].update(on=e.value))
                             sel.on_value_change(lambda e, s_=slug: rows[s_].update(role=e.value))
                 kind.on_value_change(lambda _: sync_hint())
+                proj_box.bind_visibility_from(kind, "value", backward=lambda v: v != "admin")
+                with connect() as c:
+                    bal = PT.balance(c, base["email"]) if base.get("email") else None
+                with ui.column().classes("w-full gap-1 q-mt-sm sr-pt-box") as pts_box:
+                    ui.label("Hạn mức điểm của Member (mọi tác vụ bấm tay trừ điểm, ngày 1 đặt lại)").classes(
+                        "text-sm font-medium")
+                    with ui.row().classes("items-end gap-2"):
+                        lim = ui.number("Hạn mức / tháng", value=bal["monthly"] if bal else PT.DEFAULT_MONTHLY,
+                                        min=0, step=100, format="%.0f", suffix="điểm").props(
+                            "outlined dense").classes("w-44")
+                        extra = ui.number("Cấp thêm tháng này", value=0, min=0, step=100, format="%.0f",
+                                          suffix="điểm").props("outlined dense").classes("w-44")
+                    if bal:
+                        ui.label(f"Tháng này đã dùng {bal['used']:,} / {bal['limit']:,} điểm"
+                                 + (f" (gồm {bal['granted']:,} điểm cấp thêm)" if bal["granted"] else "")
+                                 .replace(",", ".")).classes("text-xs muted")
+                pts_box.bind_visibility_from(kind, "value", backward=lambda v: v != "admin")
             with ui.column().classes("gap-0 q-mt-sm"):
-                for name, what in (("Khách hàng", "chỉ xem Tổng quan, Báo cáo, KPI cam kết, Công việc & OKR"),
-                                   ("Team xem", "người nội bộ: xem thêm mọi màn SEO / AI (URL, từ khóa, index, "
-                                                "chất lượng dữ liệu), không sửa"),
-                                   ("Được sửa", "thêm check rank (tốn tiền, có trần ngân sách), sửa từ khóa, nhóm "
-                                                "URL, nhận xét, lưu Drive")):
+                for name, what in (("Guest", "khách hàng: xem các màn báo cáo, không thấy số nội bộ, chi phí"),
+                                   ("Member", "team SEO: mọi màn của website, sửa, chạy check / research; dùng hạn "
+                                              "mức điểm mỗi tháng"),
+                                   ("Admin", "mọi website, quản lý dự án và Member / Guest, xem ngân sách (Owner "
+                                             "cấp)")):
                     with ui.row().classes("no-wrap gap-1 items-baseline"):
                         ui.label(name + ":").classes("text-xs font-semibold").style("white-space:nowrap")
                         ui.label(what).classes("text-xs muted")
-                ui.label("Dự án, Phân quyền, Ngân sách: chỉ Chủ tool.").classes("text-xs muted q-mt-xs")
+                ui.label("Cài đặt tích hợp, hạn mức ngân sách, xóa dự án, cấp Admin: chỉ Owner.").classes(
+                    "text-xs muted q-mt-xs")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
             def plan() -> dict:
@@ -217,10 +256,9 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 downs = [f"{names.get(s_, s_)}: {A.PROJECT_ROLES[mine[s_]]} → {A.PROJECT_ROLES[want[s_]]}"
                          for s_ in want if s_ in mine and RANK[want[s_]] < RANK[mine[s_]]]
                 if u and u["role"] == A.ADMIN and k != "admin":
-                    downs.append("Quản trị → không còn quản trị")
-                if u and u.get("team_role") and (k != "team_all" or RANK[team_role.value] < RANK[u["team_role"]]):
-                    downs.append("Quyền Team mọi website: " + A.TEAM_ROLES[u["team_role"]] + " → "
-                                 + (A.TEAM_ROLES[team_role.value] if k == "team_all" else "bỏ"))
+                    downs.append("Admin → không còn Admin")
+                if u and u.get("team_role") and k != "team_all":
+                    downs.append("Member · mọi website → bỏ")
                 return {"kind": k, "want": want, "drops": drops, "downs": downs}
 
             def apply(pl: dict) -> None:
@@ -236,6 +274,11 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                             for s_ in mine:
                                 if s_ not in pl["want"]:
                                     A.remove_member(c, e, s_, user)
+                            if kind is not None:  # hạn mức điểm Member
+                                if int(lim.value or 0) != PT.monthly_limit(c, e):
+                                    PT.set_limit(c, e, int(lim.value or 0), user)
+                                if int(extra.value or 0) > 0:
+                                    PT.grant(c, e, int(extra.value), user)
                     LIVE.kick(email=e, keep=ui.context.client.id)  # quyền đổi: trang đang mở của người này dựng lại
                 except ValueError as ex:
                     err.text = str(ex)
@@ -254,8 +297,11 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     err.text = "Chưa nhập email hoặc tên đăng nhập"
                     return
                 pl = plan()
+                if pl["kind"] == "admin" and not owner:
+                    err.text = "Chỉ Owner cấp quyền Admin"
+                    return
                 if pl["kind"] == "project" and not pl["want"]:
-                    err.text = "Chọn ít nhất một website (hoặc chọn Team · mọi website)"
+                    err.text = "Chọn ít nhất một website (hoặc chọn Member · mọi website)"
                     return
                 if not (pl["drops"] or pl["downs"]):
                     apply(pl)
@@ -277,6 +323,10 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
         dlg.open()
 
     def ask_remove(em: str) -> None:
+        with connect() as c:
+            target = next((x for x in A.users(c, cfg.access) if x["email"] == em), None)
+        if not can_manage(target):
+            return
         with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:420px"):
             ui.label(f"Gỡ tài khoản {em}?").classes("text-base font-semibold")
             ui.label("Người này không vào được tool nữa và bị đăng xuất. Tài khoản chuyển xuống mục Đã gỡ, cấp lại "
@@ -327,14 +377,18 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
 
     def access_chips(u: dict, mine: dict, k: str) -> None:
         with ui.row().classes("items-center gap-1 q-mt-xs").style("padding-left:44px"):
-            if k == "admin":
-                T.status_chip(ui, "Chủ tool · toàn quyền: mọi website, dự án, phân quyền, ngân sách", "green",
+            if k == "owner":
+                T.status_chip(ui, "Owner · toàn quyền: tích hợp, ngân sách, dự án, phân quyền", "green",
                               "admin_panel_settings")
                 return
+            if k == "admin":
+                T.status_chip(ui, "Admin · mọi website, quản lý dự án và Member / Guest", "blue",
+                              "manage_accounts")
+                return
             if u.get("team_role"):
-                T.status_chip(ui, f"Mọi website · {A.TEAM_ROLES[u['team_role']]}", "blue", "public")
+                T.status_chip(ui, "Member · mọi website", "blue", "public")
             if u["source"] == "config" and not mine and first:  # email config.toml chưa chuyển vào tool
-                mine = {first: A.VIEWER}
+                mine = {first: A.EDITOR}
             for slug, role in mine.items():
                 p = by_slug.get(slug)
                 with ui.row().classes("items-center no-wrap gap-1").style(
@@ -343,9 +397,14 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                         T.project_icon(ui, p, 20)
                     ui.label(names.get(slug, f"{slug} (đã lưu trữ)")).classes("text-xs font-medium")
                     ui.label("·").classes("text-xs muted")
-                    ui.label(A.PROJECT_ROLES[role]).classes("text-xs muted")
+                    ui.label(A.PROJECT_ROLES.get(role, "Member")).classes("text-xs muted")
             if not mine and not u.get("team_role"):
                 ui.label("Chưa gắn website nào: chưa vào được tool").classes("text-xs").style(f"color:{T.RED}")
+            elif u.get("team_role") or any(r_ != A.CLIENT for r_ in mine.values()):  # Member: điểm tháng này
+                with connect() as c:
+                    b = PT.balance(c, u["email"])
+                T.status_chip(ui, f"Điểm {b['used']:,} / {b['limit']:,}".replace(",", "."),
+                              "amber" if b["limit"] and b["used"] >= 0.8 * b["limit"] else "grey", "toll")
 
     # Chấm trạng thái (online / vắng mặt / offline) tự cập nhật mỗi 20 giây, không dựng lại cả danh sách
     @ui.refreshable
@@ -363,7 +422,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
     ui.timer(20, lambda: (presence_avatar.refresh(), presence_text.refresh()))
 
     def person_row(u: dict, mine: dict, k: str) -> None:
-        tone = {"admin": "green", "team": "blue", "client": "amber"}[k]
+        tone = {"owner": "green", "admin": "green", "team": "blue", "client": "amber"}[k]
         with connect() as c:
             pf = A.profiles(c).get(u["email"], {})  # tên / ảnh người dùng tự đặt ở màn Hồ sơ
         with ui.column().classes("sr-access-row w-full gap-0"):
@@ -387,15 +446,19 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                                 f"đăng nhập lần cuối {_when(u['last_login'])}" if u["last_login"] else
                                 "chưa đăng nhập lần nào")
                     ui.label(" · ".join(meta)).classes("text-xs muted ellipsis")
-                ui.button(icon="key", on_click=lambda _, em=u["email"]: issue_password(em)).props(
-                    "flat round dense color=grey-8").tooltip(
-                    "Đặt mật khẩu" if not u["has_password"] else "Đặt lại mật khẩu (đăng xuất người này khỏi mọi máy)")
-                ui.button(icon="edit", on_click=lambda _, x=u: edit_dialog(x)).props(
-                    "flat round dense color=grey-8").tooltip("Sửa quyền, chức danh, ghi chú")
-                if u["source"] == "config" and u["role"] == A.ADMIN:
+                if not can_manage(u):
+                    if owner and u["role"] == A.OWNER:  # Owner tự đặt mật khẩu cho tài khoản của mình
+                        ui.button(icon="key", on_click=lambda _, em=u["email"]: issue_password(em)).props(
+                            "flat round dense color=grey-8").tooltip("Đặt mật khẩu")
                     ui.icon("lock", size="18px").classes("muted").style("margin:0 6px").tooltip(
-                        "Chủ tool khai trong config.toml (không gỡ được ở đây)")
+                        "Owner khai trong config.toml" if u["role"] == A.OWNER else "Chỉ Owner sửa được Admin")
                 else:
+                    ui.button(icon="key", on_click=lambda _, em=u["email"]: issue_password(em)).props(
+                        "flat round dense color=grey-8").tooltip(
+                        "Đặt mật khẩu" if not u["has_password"] else
+                        "Đặt lại mật khẩu (đăng xuất người này khỏi mọi máy)")
+                    ui.button(icon="edit", on_click=lambda _, x=u: edit_dialog(x)).props(
+                        "flat round dense color=grey-8").tooltip("Sửa quyền, chức danh, ghi chú")
                     ui.button(icon="person_remove", on_click=lambda _, em=u["email"]: ask_remove(em)).props(
                         "flat round dense color=grey-8").tooltip("Gỡ tài khoản")
             access_chips(u, mine, k)
@@ -414,7 +477,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
             def tab(e):
                 view["tab"] = e.value
                 body.refresh()
-            ui.toggle({"team": f"Team nội bộ · {counts['team']}", "client": f"Khách hàng · {counts['client']}",
+            ui.toggle({"team": f"Team nội bộ · {counts['team']}", "client": f"Guest · {counts['client']}",
                        "log": "Nhật ký"}, value=view["tab"], on_change=tab).props(
                 "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
                 "sr-seg")
@@ -461,20 +524,20 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 return False
             if proj:  # người vào được website đang lọc (quản trị và team mọi website luôn vào được)
                 legacy = u["source"] == "config" and not mine and first == proj
-                return k == "admin" or bool(u.get("team_role")) or proj in mine or legacy
+                return k in ("owner", "admin") or bool(u.get("team_role")) or proj in mine or legacy
             return True
 
         shown = [x for x in people if visible(*x)]
         client_tab = view["tab"] == "client"
-        title = ("Khách hàng" if client_tab else "Team nội bộ") + f" · {len(shown)}"
+        title = ("Guest" if client_tab else "Team nội bộ") + f" · {len(shown)}"
         sub = (f"Người vào được {names[proj]}" if proj else
-               "Người chỉ có quyền Khách hàng ở website của họ" if client_tab else
-               "Chủ tool, team mọi website và team theo từng website")
+               "Khách hàng: chỉ có quyền Guest ở website của họ" if client_tab else
+               "Owner, Admin và Member (mọi website hoặc theo từng website)")
         with T.section(ui, title, "storefront" if client_tab else "groups", sub):
             if not shown:
                 ui.label("Không có ai khớp bộ lọc." if (q or proj) else
                          "Chưa có ai. Bấm Thêm người ở góc trên.").classes("text-sm muted")
-            order = {"admin": 0, "team": 1, "client": 2}
+            order = {"owner": 0, "admin": 1, "team": 2, "client": 3}
             for u, mine, k in sorted(shown, key=lambda x: (order[x[2]], x[0]["email"])):
                 person_row(u, mine, k)
 

@@ -63,8 +63,7 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
         prof = A.profiles(c).get(email, {"name": "", "avatar": ""})
         row = next((u for u in A.users(c, settings) if u["email"] == email), None)
     state = {"avatar": prof["avatar"]}
-    role_text = ("Chủ tool · toàn quyền" if A.is_admin(user) or user.role == A.LOCAL
-                 else A.PROJECT_ROLES.get(user.role, "Theo từng website"))
+    role_text = A.GROUPS[A.group(user)]
 
     with ui.tabs().classes("w-full sr-tabs").props("align=left no-caps dense inline-label") as tabs:
         t_info = ui.tab("Thông tin", icon="badge")

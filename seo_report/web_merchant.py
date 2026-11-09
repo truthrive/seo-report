@@ -7,6 +7,7 @@ khoản và bấm lấy số mới (API miễn phí).
 import io
 from datetime import date, timedelta
 
+from . import points as PT
 from . import access as A
 from . import ai_format as F
 from . import merchant as M
@@ -42,6 +43,9 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "merchant")
+        if _pt is False:
+            return
         btn.props("loading")
 
         def work():
@@ -56,6 +60,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
                       position="bottom-right", classes="sr-toast", multi_line=True, timeout=0 if bad else 4500,
                       close_button="Đóng" if bad else None)
         except (Exception, SystemExit) as e:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify("Không lấy được số Merchant Center", caption=M.explain(e), type="negative",
                       position="bottom-right", classes="sr-toast", timeout=0, close_button="Đóng")
         btn.props(remove="loading")

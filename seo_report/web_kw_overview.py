@@ -4,6 +4,7 @@ từ khóa ở trang Research."""
 from datetime import datetime
 from urllib.parse import quote
 
+from . import points as PT
 from . import access as A
 from . import keyword_overview as KO
 from . import keyword_research as KR
@@ -474,6 +475,9 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "serp", detail=state["kw"])
+        if _pt is False:
+            return
         note = ui.notification("Đang lấy trang kết quả Google…", spinner=True, timeout=None, type="ongoing",
                                position="bottom-right")
 
@@ -485,6 +489,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
             state["data"] = await run.io_bound(work)
             body.refresh()
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(str(ex), type="warning", multi_line=True, position="bottom-right")
         finally:
             note.dismiss()
@@ -493,11 +498,15 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "research", detail=state["kw"])
+        if _pt is False:
+            return
         try:
             with closing(db.connect(cfg.db_path)) as c:
                 rec = KR.research(c, cfg, "keywords", state["kw"], str(user))
             ui.navigate.to(f"/research?id={rec['id']}")
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(str(ex), type="warning")
 
     def add_to_set() -> None:
@@ -514,6 +523,8 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                             value=sets[0]["id"], label="Bộ từ khóa").props("outlined dense").classes("w-full")
 
             def do():
+                if PT.take(ui, user, cfg, "volume", detail=state["kw"]) is False:
+                    return
                 with connect() as c:
                     res = R.add_keywords(c, site, cfg.rank, K.latest_date(c, site), [(state["kw"], None)],
                                          str(user), set_id=sel.value)
@@ -529,6 +540,14 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        with closing(db.connect(cfg.db_path)) as c:
+            need = refresh or not KO.cached(c, state["kw"])
+        _pt = PT.take(ui, user, cfg, "overview", detail=state["kw"]) if need else None
+        if _pt is False:
+            state["err"] = "Không đủ điểm để phân tích từ khóa mới tháng này."
+            head.refresh()
+            body.refresh()
+            return
         state["loading"], state["err"] = True, ""
         head.refresh()
         body.refresh()
@@ -539,6 +558,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         try:
             state["data"] = await run.io_bound(work)
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             state["err"] = str(ex)
         state["loading"] = False
         head.refresh()

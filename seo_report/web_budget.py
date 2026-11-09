@@ -7,6 +7,7 @@ import calendar
 from contextlib import closing
 from datetime import date
 
+from . import access as A
 from . import db
 from . import keywords as K
 from . import live as LIVE
@@ -145,6 +146,38 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         ui.button("Chuyển sang check hằng tháng", icon="event_repeat", on_click=apply).props(
                             "unelevated no-caps")
 
+    def points_usage() -> None:
+        """Điểm tháng này: Member (có hạn mức) và Owner / Admin (không giới hạn, chỉ ghi lại), tách theo tác vụ."""
+        from . import points as PT
+        with app_connect() as c:
+            rows = PT.usage(c)
+            for r in rows:
+                r["bal"] = PT.balance(c, r["email"]) if r["member"] else None
+        with T.section(ui, "Điểm tác vụ tháng này", "toll",
+                       f"Member có hạn mức điểm mỗi tháng (mặc định {PT.DEFAULT_MONTHLY:,}, đặt riêng ở Phân quyền); "
+                       "mọi tác vụ bấm tay trừ điểm, việc chạy theo lịch không trừ. 1 điểm ≈ 0,001 USD. Owner / "
+                       "Admin không giới hạn.".replace(",", ".", 1)):
+            if not rows:
+                ui.label("Tháng này chưa ai dùng điểm.").classes("text-sm muted")
+                return
+            names = {k: v[0] for k, v in PT.COSTS.items()}
+            data = [{"id": i, "email": r["email"], "group": "Member" if r["member"] else "Owner / Admin",
+                     "points": r["points"], "limit": r["bal"]["limit"] if r["bal"] else None,
+                     "left": r["bal"]["left"] if r["bal"] else None,
+                     "detail": " · ".join(f"{names.get(a, a)} {p:,}".replace(",", ".")
+                                          for a, p in sorted(r["by_action"].items(), key=lambda x: -x[1]))}
+                    for i, r in enumerate(rows)]
+            num = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
+            ui.table(columns=[
+                {"name": "email", "label": "Người dùng", "field": "email", "align": "left"},
+                {"name": "group", "label": "Nhóm", "field": "group", "align": "left"},
+                {"name": "points", "label": "Đã dùng", "field": "points", "align": "right", ":format": num,
+                 "sortable": True},
+                {"name": "limit", "label": "Hạn mức", "field": "limit", "align": "right", ":format": num},
+                {"name": "left", "label": "Còn lại", "field": "left", "align": "right", ":format": num},
+                {"name": "detail", "label": "Theo tác vụ", "field": "detail", "align": "left"},
+            ], rows=data, row_key="id").props("flat dense").classes("w-full sr-bl-table")
+
     def ads_quota() -> None:
         """Hạn mức Google Ads API: lượt đã dùng hôm nay / mức trần tool tự dừng / hạn mức Basic; 14 ngày theo loại."""
         from . import google_ads as GA
@@ -166,11 +199,13 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                       hint=f"còn {max(0, limit - today_n):,} lượt hôm nay".replace(",", "."), tone="blue")
                 T.kpi(ui, "verified", "Hạn mức Google (Basic)", f"{GA.DAILY_LIMIT:,} lượt/ngày".replace(",", "."),
                       hint="không tốn tiền", tone="lime")
-            with ui.row().classes("items-end gap-2 q-mt-sm"):
+            with ui.row().classes("items-end gap-2 q-mt-sm") as cap_row:
                 box = ui.number("Mức trần mỗi ngày", value=limit, min=0, max=GA.DAILY_LIMIT, step=500,
                                 format="%.0f").props("outlined dense").classes("w-48")
 
                 def save_cap():
+                    if not A.is_owner(user):
+                        return
                     n = GA.set_cap(int(box.value or 0))
                     ui.notify(f"Tool sẽ dừng gọi Google Ads khi đạt {n:,} lượt/ngày".replace(",", "."),
                               type="positive")
@@ -178,6 +213,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                 ui.button("Lưu", on_click=save_cap).props("unelevated no-caps")
                 ui.label("Chạm mức trần: research tạm khóa, lấy volume để hôm sau (không chuyển sang DataForSEO "
                          "tốn tiền).").classes("text-xs muted col")
+            cap_row.set_visibility(A.is_owner(user))  # đổi hạn mức: chỉ Owner
             kinds = list(GA.KINDS)
             colors = [T.GREEN, T.BLUE, "#7C3AED", "#8C8A7E"]
             ui.echart({
@@ -268,6 +304,8 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     T.status_chip(ui, text, tone, icon)
 
                     def save(box, s_=p["slug"], name=p["name"]):
+                        if not A.is_owner(user):
+                            return
                         try:
                             with app_connect() as c:
                                 PJ.set_budget(c, s_, box.value, user)
@@ -292,7 +330,8 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     # Ô ngân sách + nút Lưu (chỉ sáng khi đã đổi số); công tắc chạy / tạm ngưng có hiệu lực ngay
                     with ui.row().classes("items-center gap-1 no-wrap"):
                         inp = ui.number(value=r["budget"], min=0, step=5, format="%.0f", suffix="USD").props(
-                            "outlined dense").classes("w-28").tooltip("Ngân sách USD/tháng")
+                            "outlined dense" + ("" if A.is_owner(user) else " readonly")).classes("w-28").tooltip(
+                            "Ngân sách USD/tháng" + ("" if A.is_owner(user) else " (chỉ Owner đổi được)"))
                         btn = ui.button(icon="check", on_click=lambda _, box=inp, f=save: f(box)).props(
                             "flat round dense color=positive").tooltip("Lưu ngân sách")
                         btn.disable()
@@ -312,6 +351,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
         # ---- Google Ads API (miễn phí, giới hạn lượt gọi mỗi ngày) ----
         cost_advice(projects)
         ads_quota()
+        points_usage()
 
         # ---- Chi phí 6 tháng ----
         labels = [f"{m[5:]}/{m[2:4]}" for m in months]

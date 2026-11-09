@@ -317,14 +317,16 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                     dlg.close()
                     ui.notify(f"Đã lưu trữ {p['name']}", type="positive")
                     body.refresh()
-                if not PJ.is_root(base, p):
+                if not PJ.is_root(base, p) and A.is_owner(user):  # xóa dự án: chỉ Owner
                     ui.button("Xóa vĩnh viễn…", on_click=lambda: (dlg.close(), ask_delete(p))).props(
                         "flat color=negative no-caps").tooltip("Xóa hẳn dự án và dữ liệu, không khôi phục được")
                 ui.button("Lưu trữ", on_click=go).props("unelevated color=negative no-caps")
         dlg.open()
 
     def ask_delete(p: dict) -> None:
-        """Xóa vĩnh viễn (không hoàn tác được trên tool): hộp cảnh báo, bấm nút đỏ để xóa."""
+        """Xóa vĩnh viễn (không hoàn tác được trên tool): hộp cảnh báo, bấm nút đỏ để xóa. Chỉ Owner."""
+        if not A.is_owner(user):
+            return
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:460px; max-width:94vw"):
             with ui.row().classes("items-center gap-2 no-wrap"):
                 ui.icon("delete_forever", size="22px").style(f"color:{T.RED}")
@@ -402,7 +404,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
             for p in active:
                 st = PJ.status(base, p)
                 n_clients = sum(1 for m in mem.values() if m.get(p["slug"]) == A.CLIENT)
-                n_team = sum(1 for m in mem.values() if m.get(p["slug"]) in (A.VIEWER, A.EDITOR)) + team_all
+                n_team = sum(1 for m in mem.values() if m.get(p["slug"]) == A.EDITOR) + team_all
                 steps = PJ.setup_steps(base, p, st, n_clients + n_team)
                 todo = [name for name, done in steps if not done]
                 with ui.element("div").classes("sr-access-row sr-proj-row w-full"):
@@ -475,7 +477,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                             body.refresh()
                         ui.button(icon="unarchive", on_click=restore).props("flat round dense color=grey-8").tooltip(
                             "Khôi phục dự án")
-                        if not PJ.is_root(base, p):
+                        if not PJ.is_root(base, p) and A.is_owner(user):  # xóa dự án: chỉ Owner
                             ui.button(icon="delete_forever", on_click=lambda _, p=p: ask_delete(p)).props(
                                 "flat round dense color=negative").tooltip("Xóa vĩnh viễn dự án")
         with ui.element("div").classes("sr-card q-pa-md w-full").style(f"background:{T.TONES['amber'][0]};"

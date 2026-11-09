@@ -2,6 +2,7 @@
 Không gọi API, không tốn tiền. Team xem (người sửa và người chỉ xem); khách hàng không thấy."""
 from datetime import date
 
+from . import points as PT
 from . import access as A
 from . import brand_entity as BE
 from . import keywords as K
@@ -435,6 +436,9 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         key = str(cfg.db_path)
         if not ed or key in SA.running:
             return
+        _pt = PT.take(ui, user, cfg, "audit")
+        if _pt is False:
+            return
         SA.running[key] = {"n": 0, "total": 0, "by": str(user)}
         btn.props("loading")
         note = ui.notification("Đang quét các trang quan trọng (khoảng 5 phút, có thể rời trang)…", spinner=True,
@@ -451,6 +455,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             ui.notify(f"Đã quét {r['pages']} trang" + (f" ({r['errors']} trang không mở được)" if r["errors"]
                                                          else ""), type="positive", position="bottom-right")
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(f"Quét chưa xong: {ex}", type="warning", position="bottom-right")
         finally:
             SA.running.pop(key, None)
@@ -543,6 +548,9 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         from .cwv import load_key
         if not ed:
             return
+        _pt = PT.take(ui, user, cfg, "kg")
+        if _pt is False:
+            return
         btn.props("loading")
 
         def work():
@@ -557,6 +565,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                 ui.notify(f"{r['found']}/{r['brands']} thương hiệu có thực thể trên Google", type="positive",
                           position="bottom-right")
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(f"Chưa kiểm tra được: {ex}", type="warning", position="bottom-right")
         with connect() as c:
             state["data"] = {**state["data"], "kg": BE.latest(c, cfg)}

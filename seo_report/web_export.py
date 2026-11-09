@@ -5,6 +5,8 @@ nào đang bấm. Việc nặng (tạo file, gọi Drive) chạy bằng run.io_b
 """
 from typing import Callable
 
+from . import points as PT
+
 
 def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Callable,
                 make_pptx: Callable | None = None, label: str = "Xuất", user=None, icon_only: bool = False,
@@ -61,6 +63,9 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
         dlg.open()
 
     async def to_drive(kind: str):
+        _pt = PT.take(ui, user, cfg, "sheets", detail=name) if user is not None else None
+        if _pt is False:
+            return
         try:
             async def work():
                 xlsx = await produce(make_xlsx) if kind == "sheet" else None
@@ -90,6 +95,7 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 ui.download.content(pdf, f"{name}.pdf")
             done(links, folder_name)
         except (Exception, SystemExit) as e:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(f"Không lưu được lên Drive: {D.explain(e)}", type="negative", multi_line=True, timeout=12000,
                       close_button="Đóng")
 

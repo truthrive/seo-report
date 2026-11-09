@@ -24,7 +24,8 @@ from .web_access import build_access_page
 from .web_url import build_url_page
 
 PRIMARY = T.GREEN
-ADMIN_PAGES = ("/projects", "/access", "/budget", "/cai-dat")  # chỉ quản trị thấy trong menu
+ADMIN_PAGES = ("/projects", "/access", "/budget", "/cai-dat")  # chỉ Owner / Admin thấy trong menu
+OWNER_PAGES = ("/cai-dat",)  # chỉ Owner
 NUMBER = "val => val.toLocaleString('vi-VN')"
 # Menu chia nhóm: (tên nhóm hoặc None, [(nhãn, đường dẫn, icon)])
 NAV = [
@@ -91,7 +92,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         PJ.ensure(c, base)
         first_slug = PJ.list_projects(c)[0]["slug"]
         A.migrate_members(c, base.access, first_slug)
+        A.migrate_four_groups(c)  # Team xem cũ → Member
         A.adopt_config(c, base.access, first_slug)  # email viewers trong config.toml → quản lý trên màn Phân quyền
+    from . import points as PT
+    PT.set_app_db(base.db_path)  # điểm của Member nằm ở file dữ liệu chính
 
     def app_connect():
         """File dữ liệu chính: danh sách dự án, tài khoản, phân quyền."""
@@ -146,12 +150,13 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 ui.button("Đăng xuất", on_click=lambda: (app.storage.user.pop("auth", None),
                                                          ui.navigate.to("/login"))).props("flat no-caps")
 
-    def open_page(request: Request, *, client_ok: bool = False, edit: bool = False, admin: bool = False):
+    def open_page(request: Request, *, client_ok: bool = False, edit: bool = False, admin: bool = False,
+                  owner: bool = False):
         """Mở một trang: đã đăng nhập, có dự án được vào, đủ quyền cho trang này. Trả (người dùng trong dự án, dự án)
         hoặc None (đã chuyển hướng / hiện thông báo, không dựng nội dung trang)."""
         if not (acct := gate(request)):
             return None
-        if admin and not A.is_admin(acct):
+        if (admin and not A.is_admin(acct)) or (owner and not A.is_owner(acct)):
             ui.navigate.to("/")
             return None
         P = project_scope(acct)
@@ -215,7 +220,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         """Nhóm avatar trên thanh trên cùng: mọi người vào được website đang mở (trừ chính mình), người đang online
         xếp trước, rồi theo thứ tự cố định quản trị → được sửa → chỉ xem → khách hàng → email. Bấm mở danh sách đầy đủ.
         Tự cập nhật trạng thái mỗi 30 giây."""
-        role_label = {"admin": "Chủ tool", **A.PROJECT_ROLES}
+        role_label = {"owner": "Owner", "admin": "Admin", **A.PROJECT_ROLES}
         rank = {PR.AVAILABLE: 0, PR.AWAY: 1, PR.OFFLINE: 2}
 
         @ui.refreshable
@@ -277,6 +282,26 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         render()
         ui.timer(30, render.refresh)
 
+    def points_card(user) -> None:
+        """Member: điểm đã dùng / hạn mức tháng này (mọi tác vụ bấm tay trừ điểm, ngày 1 đặt lại)."""
+        from . import points as PT
+        b = PT.my_balance(user)
+        if not b:
+            return
+        ratio = b["used"] / b["limit"] if b["limit"] else 1
+        warn = ratio >= 0.8
+        with ui.element("div").classes("sr-acct-budget" + (" warn" if warn else "")):
+            with ui.row().classes("items-center gap-1 no-wrap w-full"):
+                ui.icon("toll", size="16px").classes("muted").props('aria-hidden="true"')
+                ui.label("Điểm tháng này").classes("text-xs muted col ellipsis")
+            with ui.row().classes("items-baseline gap-1 no-wrap"):
+                ui.label(f"{b['left']:,}".replace(",", ".")).classes("sr-acct-budget-num num")
+                ui.label(f"còn lại / {b['limit']:,} điểm".replace(",", ".")).classes("text-xs muted")
+            color = "#B7791F" if warn else T.GREEN
+            ui.html(f'<div class="sr-kp-bar thin" role="img" aria-label="Đã dùng {min(ratio, 1) * 100:.0f}% điểm">'
+                    f'<i style="width:{min(ratio, 1) * 100:.1f}%;background:{color}"></i></div>').classes("w-full")
+            ui.label(f"Đã dùng {b['used']:,} điểm · đặt lại ngày 1".replace(",", ".")).classes("text-xs muted")
+
     def account_menu(user, P, active: str, budget: dict | None = None) -> None:
         """Góc dưới menu trái: avatar + tên + trạng thái; bấm vào mở menu tài khoản (thông tin, website của tôi, đổi
         mật khẩu / đăng xuất, lối tắt quản trị)."""
@@ -285,8 +310,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             prof = A.profiles(c).get(str(user), {})
         name, photo = A.display_name(prof, user), prof.get("avatar", "")
         href = page_href(active)
-        role_text = ("Chủ tool · trên máy chạy tool" if user.role == A.LOCAL else
-                     "Chủ tool · toàn quyền" if A.is_admin(user) else A.PROJECT_ROLES.get(user.role, ""))
+        role_text = ("Owner · trên máy chạy tool" if user.role == A.LOCAL else A.GROUPS[A.group(user)])
 
         def go_project(slug: str) -> None:
             app.storage.user["project"] = slug
@@ -334,6 +358,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             ui.label(st_text)
                 if budget:
                     budget["render"]()
+                points_card(user)
                 ui.label(f"Website của tôi · {len(P.projects)}").classes("sr-nav-group sr-acct-group")
                 with ui.column().classes("gap-0 w-full").style("max-height: 260px; overflow-y: auto"):
                     for p in P.projects:
@@ -474,6 +499,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                              if (href != "/yeu-cau" or A.is_client(user))  # trang yêu cầu của khách: chỉ khách
                              and (not A.is_client(user) or href.split("?")[0] in A.CLIENT_PAGES)
                              and (href not in ADMIN_PAGES or A.is_admin(user))
+                             and (href not in OWNER_PAGES or A.is_owner(user))
                              and (href not in EDIT_PAGES or A.can_edit(user))]
                     if not items:
                         continue
@@ -658,8 +684,6 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             bell(ui, P.cfg, P.connect, user, P.project["slug"])
             if not A.is_client(user):  # khách hàng không thấy ai khác có quyền (tránh lộ email team / khách khác)
                 people_group(user, P)
-            if not A.can_edit(user) and not A.is_client(user):  # khách hàng: không cần nhãn quyền của chính mình
-                T.status_chip(ui, A.PROJECT_ROLES.get(user.role, "Team xem"), "grey", "visibility")
             if ctx:  # điện thoại: ẩn (đã có trong chú thích chỉ báo dữ liệu), để thanh đầu trang không xuống 3 dòng
                 with ui.row().classes("items-center gap-1 no-wrap gt-xs"):
                     ui.icon("schedule", size="16px").classes("muted")
@@ -876,7 +900,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     @ui.page("/cai-dat")
     def settings_page(request: Request):
         from .web_settings import build_settings_page
-        if not (opened := open_page(request, admin=True)):
+        if not (opened := open_page(request, owner=True)):
             return
         user, P = opened
         shell("Cài đặt tích hợp", user, P, page_ctx(P), period=False, group=False)

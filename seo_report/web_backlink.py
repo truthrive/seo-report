@@ -7,6 +7,7 @@ import re
 from datetime import date
 from urllib.parse import quote, urlparse
 
+from . import points as PT
 from . import access as A
 from . import ai_format as F
 from . import backlink_audit as AU
@@ -56,6 +57,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "backlink")
+        if _pt is False:
+            return
         btn.props("loading")
 
         def work():
@@ -70,6 +74,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                       caption=" · ".join(bad)[:300] or None, type="warning" if bad else "positive",
                       position="bottom-right", classes="sr-toast", multi_line=True)
         except Exception as e:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify("Không lấy được số backlink", caption=str(e)[:200], type="negative", position="bottom-right",
                       classes="sr-toast", timeout=0, close_button="Đóng")
         btn.props(remove="loading")

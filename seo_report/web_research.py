@@ -5,6 +5,7 @@ import io
 import json
 from datetime import datetime
 
+from . import points as PT
 from . import access as A
 from . import keyword_overview as KO
 from . import keyword_research as KR
@@ -61,6 +62,9 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         except ValueError as ex:
             ui.notify(str(ex), type="warning")
             return
+        _pt = PT.take(ui, user, cfg, "research", detail=state["seed"][:80])
+        if _pt is False:
+            return
         state["busy"] = True
         results.refresh()
         if btn:
@@ -79,6 +83,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             reset_view()
             ui.run_javascript(f"history.replaceState(null, '', '/research?id={state['rec']['id']}')")
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(str(ex), type="warning", multi_line=True)
         finally:
             state["busy"] = False
@@ -212,6 +217,8 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             inp.on_value_change(on_seed)
             if ed:
                 b = ui.button("Tìm", icon="search").props("unelevated no-caps")
+                if PT.label(user, "research"):
+                    b.tooltip("Mỗi lần tìm" + PT.label(user, "research"))
                 b.on_click(lambda: go(b))
                 # Enter = Tìm; Shift+Enter = xuống dòng (ô danh sách từ khóa)
                 inp.on("keydown", lambda: go(b), js_handler="(e) => { if (e.key === 'Enter' && !e.shiftKey && "
@@ -479,6 +486,9 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                          .replace("0.002", "0,002")).classes("text-sm")
             if len(keywords) > len(kws):
                 ui.label(f"Mỗi lần tối đa 50 từ khóa: lần này check 50/{len(keywords)}.").classes("text-sm muted")
+            if PT.label(user, "aio", len(kws)):
+                ui.label(f"Trừ{PT.label(user, 'aio', len(kws))[2:]} trong hạn mức tháng của bạn (hoàn lại phần "
+                         "không check được).").classes("text-sm muted")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
                 ui.button("Check", icon="auto_awesome", on_click=lambda: (dlg.close(), run_aio(kws))).props(
@@ -489,6 +499,9 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "aio", n=len(kws), detail=f"{len(kws)} từ khóa")
+        if _pt is False:
+            return
         note = ui.notification(f"Đang check AI Overview 0/{len(kws)}…", spinner=True, timeout=None, type="ongoing",
                                position="bottom-right")
         prog = {"n": 0}
@@ -501,12 +514,16 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         try:
             res, rec = await run.io_bound(work)
             state["rec"] = rec
+            if res["done"] < len(kws):  # chỉ tính điểm phần đã check
+                PT.give_back(_pt)
+                PT.take(ui, user, cfg, "aio", n=res["done"], detail=f"{res['done']}/{len(kws)} từ khóa")
             msg = f"Đã check {res['done']} từ khóa"
             if res["error"]:
                 ui.notify(f"{msg}; dừng lại: {res['error']}", type="warning", multi_line=True, position="bottom-right")
             else:
                 ui.notify(msg, type="positive", position="bottom-right")
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(str(ex), type="warning", position="bottom-right")
         finally:
             timer.cancel()
@@ -537,6 +554,8 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             update_est()
 
             def do_add():
+                if PT.take(ui, user, cfg, "volume", detail=f"thêm {len(kws)} từ khóa") is False:
+                    return
                 with connect() as c:
                     res = R.add_keywords(c, site, cfg.rank, K.latest_date(c, site), [(k, None) for k in kws],
                                          str(user), set_id=sel.value)

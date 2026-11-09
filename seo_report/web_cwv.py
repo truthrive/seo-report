@@ -4,6 +4,7 @@ import io
 from datetime import date, datetime
 from urllib.parse import urlparse
 
+from . import points as PT
 from . import access as A
 from . import cwv as C
 from . import cwv_audit as CA
@@ -41,6 +42,9 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "pagespeed")
+        if _pt is False:
+            return
         state["running"] = True
         btn.props("loading")
         note = ui.notification("Đang kiểm tra tốc độ các trang (vài phút)…", spinner=True, timeout=None,
