@@ -6,9 +6,9 @@ from seo_report import keywords as K
 from seo_report import urls as U
 from seo_report.config import KeywordSettings
 
-SITE = "https://matkinhtamduc.com/"
-A = "https://matkinhtamduc.com/gong-kinh/"
-B = "https://matkinhtamduc.com/"
+SITE = "https://vidushop.com/"
+A = "https://vidushop.com/gong-kinh/"
+B = "https://vidushop.com/"
 DAY = "2026-10-20"
 
 
@@ -22,7 +22,7 @@ class KeywordTest(unittest.TestCase):
         rows = [
             q(A, "gọng kính", 50, 900),           # head
             q(A, "gong kinh nam", 10, 300),       # phụ
-            q(A, "gọng kính tâm đức", 40, 100),   # thương hiệu
+            q(A, "gọng kính ví dụ shop", 40, 100),   # thương hiệu
             q(A, "gọng kính titan", 0, 20),       # impression thấp
             q(A, "kính cận", 3, 400, pos=45),     # position quá xa
             q(A, "mắt kính", 2, 200),             # URL khác mạnh hơn + cannibalization
@@ -32,7 +32,7 @@ class KeywordTest(unittest.TestCase):
         U.assign_urls(self.con, SITE)
         self.ids = dict(self.con.execute("SELECT url, id FROM urls").fetchall())
         self.settings = KeywordSettings(window_days=28, min_impressions=50, max_position=30, max_secondary=5,
-                                        brand_terms=("tâm đức",))
+                                        brand_terms=("ví dụ shop",))
         self.res = K.analyze(self.con, SITE, [self.ids[A]], date(2026, 10, 28), self.settings)[self.ids[A]]
 
     def test_head_skips_brand(self):
@@ -43,7 +43,7 @@ class KeywordTest(unittest.TestCase):
         self.assertEqual([k.query for k in self.res.secondary][:1], ["gong kinh nam"])
         self.assertEqual(len(self.res.secondary), 5)
         reasons = {k.query: k.reason for k in self.res.excluded}
-        self.assertEqual(reasons["gọng kính tâm đức"], K.R_BRAND)
+        self.assertEqual(reasons["gọng kính ví dụ shop"], K.R_BRAND)
         self.assertEqual(reasons["gọng kính titan"], K.R_LOW_IMPR)
         self.assertEqual(reasons["kính cận"], K.R_FAR)
         self.assertEqual(reasons["mắt kính"], K.R_OTHER_URL)
@@ -69,7 +69,7 @@ class KeywordTest(unittest.TestCase):
         self.assertEqual(wks, [(date(2026, 10, 19), date(2026, 10, 25)), (date(2026, 10, 12), date(2026, 10, 18))])
 
     def test_fold(self):
-        self.assertEqual(K.fold("Mắt Kính Tâm Đức!"), "matkinhtamduc")
+        self.assertEqual(K.fold("Ví Dụ Shop!"), "vidushop")
 
 
 if __name__ == "__main__":

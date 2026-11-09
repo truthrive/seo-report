@@ -1,6 +1,7 @@
 """Lệnh dòng lệnh: login, sync, stats."""
 import argparse
 import sys
+from pathlib import Path
 
 from . import db
 from .config import load_config
@@ -21,9 +22,12 @@ def cmd_login(cfg) -> None:
     if not any(s["siteUrl"] == cfg.site_url for s in sites):
         print(f"\nCảnh báo: site_url = '{cfg.site_url}' không có trong danh sách trên. "
               "Sửa config.toml cho đúng một dòng ở trên.")
-    if auth.DRIVE_SCOPE not in (creds.scopes or []):
-        print("\nCHƯA có quyền Google Drive (để lưu Google Sheets / Slides / PDF): ô 'Xem, sửa, tạo và xóa các tệp "
-              "Google Drive mà bạn dùng với ứng dụng này' chưa được tích. Chạy lại lệnh login nếu cần chức năng này.")
+    if auth.missing_scopes(creds.scopes or [], (auth.DRIVE_SCOPE,)):
+        print("\nCHƯA có quyền Google Drive (để lưu Google Sheets / Slides / PDF): ô Google Drive chưa được tích. "
+              "Chạy lại lệnh login nếu cần chức năng này.")
+    elif auth.missing_scopes(creds.scopes or [], (auth.DRIVE_FULL_SCOPE, auth.SHEETS_WRITE_SCOPE)):
+        print("\nCHƯA có quyền Google Drive đầy đủ / ghi Google Sheets: chưa tạo được sheet dự án từ sheet mẫu gốc "
+              "(xuất báo cáo và đọc sheet vẫn chạy). Chạy lại lệnh login và tích đủ các ô nếu cần.")
     if auth.GA4_SCOPE not in (creds.scopes or []):
         print("\nCHƯA có quyền đọc Google Analytics: trên màn hình đồng ý của Google, ô 'Xem dữ liệu Google "
               "Analytics' chưa được tích. Chạy lại lệnh login và tích đủ cả hai ô.")
@@ -75,6 +79,44 @@ def cmd_ga4_check(cfg) -> None:
         raise SystemExit(ga4.explain(e))
 
 
+def cmd_ads_check(cfg) -> None:
+    """Thử Google Ads API với vài keyword đang theo dõi, in cạnh số đã lưu (DataForSEO) để so. Không tốn tiền."""
+    from contextlib import closing
+
+    from . import auth, db, google_ads as GA, keywords, rank, volume
+    if GA.write_template(cfg.google_ads_secret):
+        print(f"Đã tạo file mẫu {cfg.google_ads_secret}: mở file, điền developer_token, login_customer_id, "
+              "customer_id rồi chạy lại lệnh này.")
+        return
+    settings = GA.load_settings(cfg.google_ads_secret)
+    if not settings:
+        print(f"Chưa điền đủ developer_token và customer_id trong {cfg.google_ads_secret}.")
+        return
+    try:
+        creds = auth.get_credentials(cfg, need=(auth.ADS_SCOPE,))
+    except SystemExit as e:
+        print(e)
+        return
+    with closing(db.connect(cfg.db_path)) as con:
+        kws = rank.primary_keywords(con, cfg.site_url, keywords.latest_date(con, cfg.site_url))[:8]
+        old = volume.latest(con)
+    if not kws:
+        print("Chưa có keyword theo dõi để thử.")
+        return
+    try:
+        res = GA.historical_metrics(creds, settings, [k["keyword"] for k in kws], cfg.rank.location_code,
+                                    cfg.rank.language_code)
+    except RuntimeError as e:
+        print(f"Lỗi: {e}")
+        return
+    got = {r["keyword"].strip().lower(): r for r in res["result"]}
+    print(f"Google Ads trả về {len(res['result'])} dòng. So với số đã lưu (DataForSEO):")
+    for k in kws:
+        g = got.get(k["keyword"].strip().lower()) or {}
+        o = (old.get(k["id"]) or {}).get("volume")
+        print(f"  {k['keyword'][:40]:40}  Google Ads: {g.get('search_volume', '–')!s:>8}   đã lưu: {o!s:>8}")
+
+
 def cmd_sync(cfg, backfill: bool) -> None:
     from googleapiclient.errors import HttpError
 
@@ -88,8 +130,8 @@ def cmd_sync(cfg, backfill: bool) -> None:
     except HttpError as e:
         if e.resp.status == 403:
             raise SystemExit(
-                f"Tài khoản không có quyền trên '{cfg.site_url}'. Chạy lệnh login để xem danh sách "
-                "property đúng, rồi sửa site_url trong config.toml."
+                f"Tài khoản Google của tool không có quyền trên '{cfg.site_url}'. Nhờ chủ website thêm email đó vào "
+                "Search Console, hoặc chọn lại property ở màn Dự án."
             )
         raise
     print(f"Xong: đã lấy {n} ngày.")
@@ -127,7 +169,7 @@ def cmd_rank(cfg, wait_minutes: int) -> None:
         hint = " Vào https://app.dataforseo.com/ để xác minh tài khoản." if "40104" in str(e) else ""
         raise SystemExit(f"Check rank thất bại: {e}{hint}")
     st = rank.budget_status(con, cfg.site_url, cfg.rank, end)
-    print(f"Lịch: {rank.describe_schedule(rank.get_schedule(con))}. Ngân sách: đã dùng {rank.usd(st['spent'], 3)} USD "
+    print(f"Lịch: {rank.describe_sets(con, cfg.site_url)}. Ngân sách: đã dùng {rank.usd(st['spent'], 3)} USD "
           f"tháng này; {st['stars']} keyword ước tính {rank.usd(st['estimate'])}/{st['budget']:.0f} USD/tháng. "
           f"Số dư DataForSEO: {client.balance()} USD.")
 
@@ -202,26 +244,100 @@ def cmd_ai_summary(cfg, days: int) -> None:
                                           for r in ai.countries(start, end, limit=5)["data"]["rows"]))
 
 
-def cmd_daily(cfg) -> None:
-    """Chạy bởi Task Scheduler qua pythonw (không có cửa sổ): lấy dữ liệu rồi phân loại URL mới, ghi log ra file."""
-    import traceback
+def cmd_backup(base, root: Path) -> Path:
+    from . import backup
+    out = backup.run(root, base.db_path.parent, base.backup_dir, base.backup_keep)
+    print(f"Sao lưu: {out} ({out.stat().st_size / 1e6:.1f} MB), giữ {base.backup_keep} bản gần nhất", flush=True)
+    return out
+
+
+def cmd_daily(base, project_cfgs, root: Path | None = None) -> None:
+    """Chạy bởi Task Scheduler qua pythonw (không có cửa sổ): làm việc hằng ngày cho từng dự án đang chạy, ghi log ra
+    file. Một dự án lỗi không chặn các dự án sau."""
     from datetime import datetime
 
-    log = open(cfg.db_path.parent / "sync.log", "a", encoding="utf-8", buffering=1)
+    log = open(base.db_path.parent / "sync.log", "a", encoding="utf-8", buffering=1)
     sys.stdout = sys.stderr = log
     print(f"===== {datetime.now():%Y-%m-%d %H:%M} =====")
+    failed = []
+    for name, cfg in project_cfgs:
+        print(f"----- Dự án {name} ({cfg.site_url}) -----")
+        try:
+            _daily_one(cfg)
+        except (Exception, SystemExit):  # noqa: BLE001  (_daily_one đã ghi lỗi vào log)
+            failed.append(name)
+    if root:  # sao lưu sau khi đã lấy dữ liệu mới
+        try:
+            cmd_backup(base, root)
+        except Exception:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            failed.append("sao lưu")
+    if failed:
+        raise SystemExit(f"Lỗi ở dự án: {', '.join(failed)} (xem chi tiết phía trên)")
+
+
+def _daily_one(cfg) -> None:
+    import traceback
     try:
         cmd_sync(cfg, backfill=False)
-        try:
-            cmd_rank(cfg, wait_minutes=15)
-        except (Exception, SystemExit):  # lỗi check rank không được chặn các việc sau
-            traceback.print_exc()
+        # Check rank không chạy ở đây nữa: máy chủ web tự check theo ngày + giờ của từng bộ (web_rank.schedule_loop);
+        # chạy cả hai thì cùng một bộ có thể bị gửi hai lần.
         try:
             from . import keywords, volume
             with db.connect(cfg.db_path) as con:
                 volume.refresh(con, cfg.site_url, cfg, keywords.latest_date(con, cfg.site_url),
                                log=lambda m: print(m, flush=True))
         except Exception:
+            traceback.print_exc()
+        try:  # Search Console ngoài tìm kiếm web (Discover, hình ảnh, video, tin tức) + sitemap
+            from . import auth, gsc_types
+            with db.connect(cfg.db_path) as con:
+                gsc_types.refresh(con, cfg.site_url, auth.build_service(auth.get_credentials(cfg)),
+                                  log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Tốc độ & Core Web Vitals (CrUX + PageSpeed, miễn phí): mỗi tuần một lần
+            from . import cwv
+            with db.connect(cfg.db_path) as con:
+                cwv.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Audit kỹ thuật (tool tự mở các trang quan trọng, miễn phí): mỗi tuần một lần
+            from . import site_audit
+            with db.connect(cfg.db_path) as con:
+                site_audit.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Thực thể thương hiệu (Knowledge Graph Search API + schema trang chủ, miễn phí): mỗi tuần một lần
+            from . import brand_entity
+            with db.connect(cfg.db_path) as con:
+                brand_entity.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Giá thầu Google Ads của từ khóa mang click SEO về (giá trị traffic SEO, miễn phí)
+            from . import keyword_research
+            with db.connect(cfg.db_path) as con:
+                keyword_research.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Local SEO (Google Business Profile, miễn phí): hồ sơ đã gắn, số nối tiếp từ ngày cuối đã có
+            from . import gbp
+            with db.connect(cfg.db_path) as con:
+                gbp.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # Merchant Center (Merchant API, miễn phí): sản phẩm, hiệu suất 90 ngày, vấn đề tài khoản
+            from . import merchant
+            with db.connect(cfg.db_path) as con:
+                merchant.refresh(con, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
+            traceback.print_exc()
+        try:  # backlink (DataForSEO): lấy lại khi lần gần nhất đã cũ hơn 7 ngày
+            from . import backlinks
+            with db.connect(cfg.db_path) as con:
+                backlinks.refresh(con, cfg.site_url, cfg, log=lambda m: print(m, flush=True))
+        except (Exception, SystemExit):
             traceback.print_exc()
         try:  # báo cáo công việc: chép sheet OKR / Weekly Task về, ghi trạng thái hôm nay
             from . import okr
@@ -230,11 +346,10 @@ def cmd_daily(cfg) -> None:
                     print("OKR:", okr.sync(con, cfg), flush=True)
         except (Exception, SystemExit):
             traceback.print_exc()
-        try:  # KPI cam kết: đọc sheet KPI, lưu phiên bản mới nếu đổi, thêm từ khóa cam kết vào check rank
-            from . import kpi
+        try:  # sheet dự án là nơi xem: tool ghi tab KPI cam kết, tab từng bộ, tab Dữ liệu check (nếu dữ liệu đổi)
+            from . import sheet_view
             with db.connect(cfg.db_path) as con:
-                if kpi.sheet_id(con):
-                    print("KPI:", kpi.sync(con, cfg, "tool (daily)"), flush=True)
+                print("Sheet:", sheet_view.publish_if_changed(con, cfg), flush=True)
         except (Exception, SystemExit):
             traceback.print_exc()
         try:
@@ -252,6 +367,10 @@ def cmd_daily(cfg) -> None:
 
 def cmd_web(cfg, port: int, show: bool) -> None:
     from .web import run
+
+    if sys.stdout is None or sys.stderr is None:  # chạy nền bằng pythonw (task "SEO Report web"): không có cửa sổ để in
+        log = open(cfg.db_path.parent / "web.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
 
     run(cfg, port, show)
 
@@ -360,14 +479,30 @@ def cmd_migrate(cfg) -> None:
     print(f"Khớp. Đã xóa file cũ. Dung lượng mới: {new.stat().st_size / 1024 / 1024:.0f} MB")
 
 
+def _projects(base, slug: str | None):
+    """(dự án được chọn, mọi dự án đang chạy) dưới dạng (tên, cấu hình). Không ghi --project thì là dự án đầu tiên."""
+    from contextlib import closing
+
+    from . import projects as PJ
+    with closing(db.connect(base.db_path)) as c:
+        PJ.ensure(c, base)
+        active = PJ.list_projects(c)
+    if slug and not any(p["slug"] == slug for p in active):
+        raise SystemExit(f"Không có dự án '{slug}'. Dự án đang chạy: {', '.join(p['slug'] for p in active)}")
+    chosen = next(p for p in active if p["slug"] == slug) if slug else active[0]
+    return PJ.config_for(base, chosen), [(p["name"], PJ.config_for(base, p)) for p in active]
+
+
 def main(argv=None) -> None:
     if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(prog="python -m seo_report")
     p.add_argument("--config", default="config.toml")
+    p.add_argument("--project", help="Mã dự án (slug, xem ở màn Dự án). Bỏ trống: dự án đầu tiên")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="Đăng nhập Google, liệt kê property GSC và GA4")
     sub.add_parser("ga4-check", help="Kiểm tra kết nối GA4 cho module AI Search & GEO")
+    sub.add_parser("ads-check", help="Thử lấy volume từ Google Ads API (miễn phí), so với số đã lưu")
     ais = sub.add_parser("ai-summary", help="In số liệu traffic AI từ GA4 (đối soát)")
     ais.add_argument("--days", type=int, default=28)
     s = sub.add_parser("sync", help="Lấy dữ liệu GSC về máy")
@@ -376,7 +511,8 @@ def main(argv=None) -> None:
     sub.add_parser("migrate", help="Chuyển file dữ liệu cách lưu cũ sang cách lưu mới")
     c = sub.add_parser("classify", help="Mở các trang chưa phân loại và đọc schema để biết loại trang")
     c.add_argument("--limit", type=int, help="Số trang tối đa cho lần chạy này")
-    sub.add_parser("daily", help="Việc hằng ngày: sync + check rank + phân loại URL mới (dùng cho Task Scheduler)")
+    sub.add_parser("daily", help="Việc hằng ngày: sync + check rank + phân loại URL mới + sao lưu (dùng cho Task Scheduler)")
+    sub.add_parser("backup", help="Sao lưu dữ liệu (file .db và config.toml) thành một file zip")
     ix = sub.add_parser("index", help="Đọc sitemap và check index các URL đến hạn (URL Inspection API)")
     ix.add_argument("--limit", type=int, default=1500, help="Số URL tối đa mỗi ngày (quota Google ~2.000)")
     r = sub.add_parser("rank", help="Check rank các keyword ★ đến hạn")
@@ -387,9 +523,12 @@ def main(argv=None) -> None:
     st = sub.add_parser("export-static", help="Xuất bản xem tĩnh có mật khẩu để đưa lên Vercel")
     st.add_argument("--out", default="dist", help="Thư mục xuất (bị xóa và tạo lại)")
     args = p.parse_args(argv)
-    cfg = load_config(args.config)
+    base = load_config(args.config)
+    cfg, all_projects = _projects(base, args.project)
     if args.cmd == "login":
         cmd_login(cfg)
+    elif args.cmd == "ads-check":
+        cmd_ads_check(cfg)
     elif args.cmd == "ga4-check":
         cmd_ga4_check(cfg)
     elif args.cmd == "ai-summary":
@@ -405,9 +544,12 @@ def main(argv=None) -> None:
     elif args.cmd == "rank":
         cmd_rank(cfg, args.wait)
     elif args.cmd == "daily":
-        cmd_daily(cfg)
+        cmd_daily(base, [x for x in all_projects if not args.project or x[1].site_url == cfg.site_url],
+                  None if args.project else Path(args.config).resolve().parent)
+    elif args.cmd == "backup":
+        cmd_backup(base, Path(args.config).resolve().parent)
     elif args.cmd == "web":
-        cmd_web(cfg, args.port, not args.no_open)
+        cmd_web(base, args.port, not args.no_open)
     elif args.cmd == "export-static":
         cmd_export_static(cfg, args.out)
     else:

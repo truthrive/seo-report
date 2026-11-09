@@ -21,7 +21,7 @@ R_OVER_LIMIT = "Ngoài top keyword phụ"
 
 
 def fold(text: str) -> str:
-    """Bỏ dấu, chữ hoa, khoảng trắng và ký tự đặc biệt: 'Mắt kính Tâm Đức' → 'matkinhtamduc'."""
+    """Bỏ dấu, chữ hoa, khoảng trắng và ký tự đặc biệt: 'Công ty ABC' → 'congtyabc'."""
     text = unicodedata.normalize("NFD", text.lower().replace("đ", "d"))
     return re.sub(r"[^a-z0-9]", "", "".join(c for c in text if unicodedata.category(c) != "Mn"))
 
@@ -58,8 +58,17 @@ class UrlKeywords:
 
 
 def latest_date(con: sqlite3.Connection, site: str) -> date:
+    """Ngày GSC mới nhất đã chốt: tool lấy cả dữ liệu sơ bộ (ngày chưa đếm xong) nhưng mọi khung thời gian chỉ tính
+    tới trước ngày đầu tiên còn sơ bộ, giống màn hiệu suất của GSC."""
     d = con.execute("SELECT MAX(date) FROM gsc_fetch_log WHERE site = ?", (site,)).fetchone()[0]
-    return date.fromisoformat(d) if d else date.today() - timedelta(days=3)
+    last = date.fromisoformat(d) if d else date.today() - timedelta(days=3)
+    try:
+        row = con.execute("SELECT first_incomplete FROM gsc_final WHERE site = ?", (site,)).fetchone()
+    except sqlite3.OperationalError:  # file dữ liệu cũ chưa có bảng
+        row = None
+    if row and row[0]:
+        last = min(last, date.fromisoformat(row[0]) - timedelta(days=1))
+    return last
 
 
 def weeks(end: date, count: int = 12) -> list[tuple[date, date]]:

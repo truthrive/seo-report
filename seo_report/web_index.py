@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 from . import indexing as IX
+from .projects import domain
 
 
 def _vn(iso: str | None) -> str:
@@ -16,9 +17,8 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không thêm URL kiểm tra (dùng quota GSC), không bỏ theo dõi
     from . import ui_theme as T
-    T.page_header(ui, "travel_explore", "Index", "Dán URL cần kiểm tra, ví dụ bài mới đăng. Tool kiểm tra ngay, rồi tự "
-                  "kiểm tra lại sau 3, 7 và 14 ngày cho đến khi Google index. Tool chỉ kiểm tra, không gửi yêu cầu "
-                  "index.", tone="blue")
+    T.page_header(ui, "travel_explore", "Index", "Tình trạng Google index của toàn site, URL chưa index theo lý do, và "
+                  "theo dõi bài mới đến khi được index. Tool chỉ kiểm tra, không gửi yêu cầu index.", tone="blue")
 
     # ---- Tổng quan index: nhóm SEO chủ lực + toàn bộ URL đã kiểm tra ----
     from . import urls as U
@@ -28,21 +28,76 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
         members = U.group_members(c, gid)
         latest = IX.latest(c, [m["id"] for m in members])
         coverage = IX.summary(c, site)
+        missing = IX.not_indexed(c, site)
+    fmt = lambda n: f"{n:,}".replace(",", ".")  # noqa: E731
+    checked = sum(n for _, n in coverage)
+    to_fix = [x for x in missing if not x["intentional"]]
+    on_purpose = [x for x in missing if x["intentional"]]
     ok = sum(1 for m in members if m["id"] in latest and latest[m["id"]]["indexed"])
-    bad = sum(1 for m in members if m["id"] in latest and not latest[m["id"]]["indexed"])
     dropped = sum(1 for m in members if m["id"] in latest and latest[m["id"]]["dropped"])
-    with T.kpi_row(ui):
-        T.kpi(ui, "task_alt", f"Đã index · nhóm {group_name}", f"{ok}/{len(members)}", tone="green",
-              hint=f"{len(members) - len(latest)} URL chưa kiểm tra" if len(latest) < len(members) else "")
-        T.kpi(ui, "report", "Chưa index", str(bad), tone="red" if bad else "green",
-              hint=f"{dropped} URL vừa rớt index" if dropped else "")
-        T.kpi(ui, "inventory_2", "URL đã kiểm tra (toàn site)", f"{sum(n for _, n in coverage):,}".replace(",", "."),
-              tone="blue", hint=" · ".join(f"{k or 'không rõ'}: {n:,}".replace(",", ".") for k, n in coverage[:2]))
+    with T.kpi_row(ui):  # cùng cách đếm với khối Index ở Tổng quan: lần kiểm tra gần nhất của mỗi URL
+        T.kpi(ui, "task_alt", "Đã index · toàn site", f"{fmt(checked - len(missing))}/{fmt(checked)}", tone="green",
+              hint=(f"{(checked - len(missing)) / checked * 100:.1f}% URL đã kiểm tra".replace(".", ",")
+                    if checked else "chưa kiểm tra URL nào"))
+        reasons = {}
+        for x in to_fix:
+            reasons[x["coverage"]] = reasons.get(x["coverage"], 0) + 1
+        top = max(reasons.items(), key=lambda kv: kv[1]) if reasons else None
+        T.kpi(ui, "report", "Chưa index · cần xem", fmt(len(to_fix)), tone="red" if to_fix else "green",
+              hint=(f"nhiều nhất: {top[0]} ({fmt(top[1])}) · {fmt(len(on_purpose))} URL loại trừ có chủ ý"
+                    if top else f"{fmt(len(on_purpose))} URL loại trừ có chủ ý (noindex, chuyển hướng…)"))
+        T.kpi(ui, "star", f"Nhóm {group_name}", f"{ok}/{len(members)} đã index", tone="lime",
+              hint=" · ".join(x for x in (
+                  f"{len(members) - len(latest)} URL chưa kiểm tra" if len(latest) < len(members) else "",
+                  f"{dropped} URL vừa rớt index" if dropped else "") if x))
         quota_card = T.kpi(ui, "speed", "Quota kiểm tra hôm nay", "…", tone="amber", hint="gồm cả lịch chạy tự động")
+
+    # ---- URL chưa index theo lý do ----
+    with T.section(ui, "URL chưa index", "report",
+                   "Theo lần kiểm tra gần nhất của mỗi URL. \"Cần xem\": lỗi hoặc Google chưa index. \"Có chủ ý\": "
+                   "website tự loại trừ (noindex, chuyển hướng, trang thay thế có chính tắc), thường không cần sửa."):
+        with ui.row().classes("items-center gap-3 w-full"):
+            kind = ui.toggle({"fix": f"Cần xem · {fmt(len(to_fix))}", "intent": f"Có chủ ý · {fmt(len(on_purpose))}"},
+                             value="fix").props("unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
+            reason = ui.select({}, label="Lý do", clearable=True).props("outlined dense options-dense").classes(
+                "w-72")
+        miss_table = ui.table(columns=[
+            {"name": "url", "label": "URL", "field": "url", "align": "left", "sortable": True,
+             "classes": "ellipsis", "style": "max-width: 420px"},
+            {"name": "reason", "label": "Lý do", "field": "reason", "align": "left", "sortable": True},
+            {"name": "crawl", "label": "Crawl gần nhất", "field": "crawl", "align": "left", "sortable": True},
+            {"name": "checked", "label": "Kiểm tra lần cuối", "field": "checked", "align": "left", "sortable": True},
+            {"name": "gsc", "label": "GSC", "field": "gsc", "align": "center"},
+        ], rows=[], row_key="url", pagination=25).classes("w-full").props("flat dense")
+        miss_table.add_slot("no-data", """
+            <div class="full-width row items-center justify-center q-pa-md text-grey-7" style="gap:6px">
+              <q-icon name="check_circle" color="green-7" size="20px" /> Không có URL nào trong mục này</div>""")
+        miss_table.add_slot("body-cell-gsc", """
+            <q-td :props="props">
+              <a :href="props.value" target="_blank" rel="noopener" aria-label="Mở URL này trong Search Console">
+                <q-icon name="open_in_new" color="grey-7" /></a>
+            </q-td>""")
+
+        def show_missing():
+            items = to_fix if kind.value == "fix" else on_purpose
+            counts = {}
+            for x in items:
+                counts[x["coverage"]] = counts.get(x["coverage"], 0) + 1
+            reason.options = {k: f"{k} · {fmt(n)}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1])}
+            if reason.value not in counts:
+                reason.value = None
+            reason.update()
+            miss_table.rows = [{"url": x["url"].replace(site.rstrip("/"), "") or "/", "reason": x["coverage"],
+                                "crawl": _vn(x["last_crawl"]), "checked": _vn(x["checked_at"]),
+                                "gsc": IX.gsc_inspect_link(site, x["url"])}
+                               for x in items if not reason.value or x["coverage"] == reason.value]
+        kind.on_value_change(lambda _: show_missing())
+        reason.on_value_change(lambda _: show_missing())
+        show_missing()
 
     if ed:
         with T.section(ui, "Kiểm tra URL mới", "add_link", "Mỗi dòng một URL. Kiểm tra ngay rồi theo dõi đến khi index"):
-            paste = ui.textarea(placeholder="https://matkinhtamduc.com/bai-moi/\nhttps://matkinhtamduc.com/bai-moi-2/").props(
+            paste = ui.textarea(placeholder=f"https://{domain(cfg.site_url)}/bai-moi/\nhttps://{domain(cfg.site_url)}/bai-moi-2/").props(
                 "outlined autogrow").classes("w-full")
             with ui.row().classes("items-center gap-3"):
                 check_btn = ui.button("Kiểm tra và theo dõi", icon="travel_explore", on_click=lambda: check()).props(
@@ -77,9 +132,9 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
           <a :href="props.value" target="_blank" rel="noopener" aria-label="Mở URL này trong Search Console">
             <q-icon name="open_in_new" color="grey-7" /></a>
         </q-td>""")
-    if ed:
+    if ed:  # chỉ hiện khi đã tích chọn URL
         ui.button("Bỏ theo dõi các URL đã chọn", icon="visibility_off", on_click=lambda: unwatch()).props(
-            "outline no-caps")
+            "outline no-caps").bind_visibility_from(table, "selected", backward=bool)
     ui.label("Trạng thái màu đỏ: quá 14 ngày vẫn chưa index. Nên kiểm tra URL có trong sitemap không, có link nội bộ "
              "trỏ tới không, rồi mở GSC để yêu cầu lập chỉ mục.").classes("text-xs muted")
 
@@ -159,3 +214,51 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
         refresh()
 
     refresh()
+    sitemap_section(ui, connect, site)
+
+
+def sitemap_section(ui, connect, site: str) -> None:
+    """Sitemap đã gửi cho Search Console (lấy cùng lượt Nguồn tìm kiếm): lần gửi / Google đọc, số URL, lỗi."""
+    from datetime import date
+
+    from . import gsc_types as GT
+    from . import ui_theme as T
+    with connect() as c:
+        maps = GT.sitemaps(c, site)
+        fetched = GT.last_date(c, site)
+    if not maps and not fetched:
+        return  # chưa lấy lần nào (lượt chạy sáng mai sẽ lấy)
+    checks = GT.sitemap_checks(maps)
+    levels = {"high": ("Cần sửa", "red", "error"), "medium": ("Nên xem", "amber", "warning"),
+              "info": ("Tham khảo", "blue", "info")}
+    with T.section(ui, f"Sitemap · {len(maps)}", "account_tree",
+                   "Sitemap đã gửi cho Search Console: Google đọc lần cuối khi nào, có lỗi không"):
+        for ch in checks:
+            label, tone, icon = levels[ch["level"]]
+            with ui.row().classes("items-center gap-2 no-wrap w-full q-mb-xs"):
+                T.status_chip(ui, label, tone, icon)
+                ui.label((ch["path"].replace(site.rstrip("/"), "") + ": " if ch["path"] else "") + ch["text"])                     .classes("text-sm")
+        if not maps:
+            return
+
+        def d(v):
+            return f"{date.fromisoformat(v[:10]):%d/%m/%Y}" if v else "–"
+        rows = []
+        for i, m in enumerate(maps):
+            sub = sum(int(x.get("submitted") or 0) for x in m.get("contents") or [])
+            rows.append({"id": i, "path": m.get("path", "").replace(site.rstrip("/"), "") or m.get("path", ""),
+                         "url": m.get("path", ""), "kind": "Sitemap index" if m.get("isSitemapsIndex") else "Sitemap",
+                         "submitted": d(m.get("lastSubmitted")), "read": d(m.get("lastDownloaded")),
+                         "urls": sub or "–", "errors": int(m.get("errors") or 0),
+                         "warnings": int(m.get("warnings") or 0)})
+        cols = [{"name": "path", "label": "Sitemap", "field": "path", "align": "left"},
+                {"name": "kind", "label": "Loại", "field": "kind", "align": "left"},
+                {"name": "submitted", "label": "Gửi lúc", "field": "submitted", "align": "left"},
+                {"name": "read", "label": "Google đọc lúc", "field": "read", "align": "left"},
+                {"name": "urls", "label": "URL đã gửi", "field": "urls", "align": "right"},
+                {"name": "errors", "label": "Lỗi", "field": "errors", "align": "right"},
+                {"name": "warnings", "label": "Cảnh báo", "field": "warnings", "align": "right"}]
+        tb = ui.table(columns=cols, rows=rows, row_key="id").props("flat dense").classes("w-full")
+        tb.add_slot("body-cell-path", """
+            <q-td :props="props"><a :href="props.row.url" target="_blank" rel="noopener" class="sr-bl-link">
+              {{ props.value }}</a></q-td>""")

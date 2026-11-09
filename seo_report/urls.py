@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 HOME = "Trang chủ"
 CATEGORY = "Danh mục"
-BRAND = "Danh mục con"  # thương hiệu (trong-kinh-zeiss) hoặc tính năng (kinh-da-trong)
+BRAND = "Danh mục con"  # danh mục cấp 2: thương hiệu, tính năng…
 PRODUCT = "Sản phẩm"
 BLOG = "Blog"
 STORE = "Cửa hàng"
@@ -22,15 +22,10 @@ DEFAULT_GROUP = "SEO chủ lực"
 
 TRACKING_PARAMS = {"gclid", "fbclid", "gbraid", "wbraid", "srsltid", "msclkid", "_gl"}
 
-# Quy tắc riêng cho matkinhtamduc.com. Trang cấp 1 không khớp quy tắc nào thì đọc schema để phân loại.
-CATEGORY_ROOTS = {"gong-kinh", "kinh-mat", "trong-kinh-chinh-hang", "kinh-ap-trong-chinh-hang"}
-COLLECTION_ROOT = "bo-suu-tap"
-INFO_PAGES = {
-    "lien-he", "gioi-thieu", "dat-lich-hen", "tuyen-dung", "cart", "profile", "huong-dan-mua-hang",
-    "tich-diem-thanh-vien", "chuong-trinh-khuyen-mai-thang", "disclaimer", "do-pd",
-    "chon-kinh-theo-khuon-mat", "quiz", "tin-tuc",
-}
-INFO_PREFIXES = ("chinh-sach-", "dieu-khoan-", "mo-phong-")
+# Trang thông tin thường gặp ở mọi website. Quy tắc riêng của từng website (danh mục, cửa hàng…) đặt ở màn Dự án.
+GENERIC_INFO = {"lien-he", "gioi-thieu", "tuyen-dung", "cart", "gio-hang", "thanh-toan", "checkout", "contact",
+                "about", "about-us", "privacy-policy", "terms", "my-account", "tai-khoan", "huong-dan-mua-hang"}
+GENERIC_INFO_PREFIXES = ("chinh-sach-", "dieu-khoan-")
 LEGACY_PATH = re.compile(r"^/(\d{4}/\d{2}/|category/|tag/|author/|wp-|feed/)|/page/\d+/?$")
 
 
@@ -47,8 +42,64 @@ def normalize(raw: str) -> str:
     return urlunsplit((s.scheme.lower(), s.netloc.lower(), s.path or "/", "&".join(kept), ""))
 
 
-def classify_by_rules(url: str) -> tuple[str | None, str]:
-    """Trả về (loại, ghi chú); loại None nghĩa là cần đọc schema của trang."""
+# ---- Quy tắc theo đường dẫn của từng website (lưu trong file dữ liệu của dự án) ----
+# Mỗi dòng "mẫu đường dẫn = Loại", ví dụ "/gong-kinh/ = Danh mục", "/gong-kinh/* = Danh mục con". Dấu * thay cho bất
+# kỳ chuỗi nào (kể cả /). Dòng đầu tiên khớp được dùng. Dòng bắt đầu bằng # là ghi chú.
+RULES_KEY = "url_rules"
+
+
+def parse_rules(text: str) -> list[tuple[str, str]]:
+    """Đọc ô quy tắc trên màn Dự án. Sai thì báo lỗi kèm số dòng."""
+    out = []
+    lower = {t.lower(): t for t in TYPES}
+    for n, line in enumerate((text or "").splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ValueError(f"Dòng {n}: thiếu dấu =, ví dụ /gong-kinh/ = Danh mục")
+        pattern, type_ = (x.strip() for x in line.rsplit("=", 1))
+        if not pattern.startswith("/"):
+            raise ValueError(f"Dòng {n}: mẫu đường dẫn phải bắt đầu bằng /")
+        if type_.lower() not in lower:
+            raise ValueError(f"Dòng {n}: loại '{type_}' không có. Dùng một trong: {', '.join(TYPES)}")
+        out.append((pattern, lower[type_.lower()]))
+    return out
+
+
+def get_rules(con: sqlite3.Connection) -> dict:
+    """{"rules": [(mẫu, loại)], "deep_legacy": bool} của website trong file dữ liệu này."""
+    import json
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    row = con.execute("SELECT value FROM app_settings WHERE key = ?", (RULES_KEY,)).fetchone()
+    data = json.loads(row[0]) if row else {}
+    return {"rules": [tuple(r) for r in data.get("rules", [])], "deep_legacy": bool(data.get("deep_legacy"))}
+
+
+def rules_text(rules: dict) -> str:
+    return "\n".join(f"{p} = {t}" for p, t in rules["rules"])
+
+
+def set_rules(con: sqlite3.Connection, site: str, text: str, deep_legacy: bool, user: str) -> int:
+    """Lưu quy tắc và chạy lại cho các URL đang phân loại theo quy tắc. Trả về số URL đổi loại."""
+    import json
+    rules = parse_rules(text)
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    with con:
+        con.execute("INSERT OR REPLACE INTO app_settings VALUES (?, ?)",
+                    (RULES_KEY, json.dumps({"rules": rules, "deep_legacy": deep_legacy}, ensure_ascii=False)))
+    changed = reapply_rules(con, site)
+    with con:
+        log_change(con, user, site, "Sửa quy tắc phân loại URL", None, f"{len(rules)} quy tắc · đổi loại {changed} URL")
+    return changed
+
+
+def classify_by_rules(url: str, rules: dict | None = None) -> tuple[str | None, str]:
+    """Trả về (loại, ghi chú); loại None nghĩa là cần đọc schema của trang.
+
+    Thứ tự: quy tắc chung (tham số, trang chủ, đường dẫn kiểu WordPress cũ, trang thông tin thường gặp) → quy tắc
+    riêng của website → (nếu bật) đường dẫn nhiều cấp không khớp quy tắc nào là URL cũ/kỹ thuật → đọc schema."""
+    from fnmatch import fnmatchcase
     s = urlsplit(url)
     if s.query:
         return LEGACY, "Có tham số"
@@ -59,28 +110,26 @@ def classify_by_rules(url: str) -> tuple[str | None, str]:
         return LEGACY, "Đường dẫn kiểu WordPress cũ"
     parts = [p for p in path.split("/") if p]
     first = parts[0]
-    if first == COLLECTION_ROOT:
-        return CATEGORY, ""
-    if first in CATEGORY_ROOTS:
-        return (CATEGORY, "") if len(parts) == 1 else (BRAND, "")
-    if first.startswith("cua-hang") or path.startswith("/ve-tam-duc/he-thong-cua-hang"):
-        return STORE, ""
-    if first == "ve-tam-duc":
+    if first in GENERIC_INFO or first.startswith(GENERIC_INFO_PREFIXES):
         return INFO, ""
-    if first in INFO_PAGES or first.startswith(INFO_PREFIXES):
-        return INFO, ""
-    if len(parts) > 1:
-        return LEGACY, "Đường dẫn nhiều cấp không thuộc danh mục"
+    rules = rules or {"rules": [], "deep_legacy": False}
+    candidates = {path, path.rstrip("/") + "/"}  # có hay không có / cuối đều khớp
+    for pattern, type_ in rules["rules"]:
+        if any(fnmatchcase(c, pattern) for c in candidates):
+            return type_, ""
+    if rules["deep_legacy"] and len(parts) > 1:
+        return LEGACY, "Đường dẫn nhiều cấp không khớp quy tắc nào"
     return None, ""
 
 
 def reapply_rules(con: sqlite3.Connection, site: str) -> int:
     """Chạy lại quy tắc cho URL đang phân loại theo quy tắc (sau khi sửa quy tắc). Không đụng loại sửa tay hay từ schema."""
     changed = 0
+    rules = get_rules(con)
     with con:
         for url_id, url, old in con.execute(
                 "SELECT id, url, type FROM urls WHERE site = ? AND type_source = 'rule'", (site,)).fetchall():
-            type_, note = classify_by_rules(url)
+            type_, note = classify_by_rules(url, rules)
             if type_ != old:
                 con.execute("UPDATE urls SET type = ?, type_source = ?, note = ? WHERE id = ?",
                             (type_, "rule" if type_ else None, note, url_id))
@@ -97,11 +146,11 @@ def log_change(con: sqlite3.Connection, user: str, site: str, action: str, url: 
                 (_now(), user, site, action, url, detail))
 
 
-def _get_or_create_url(con: sqlite3.Connection, site: str, url: str) -> int:
+def _get_or_create_url(con: sqlite3.Connection, site: str, url: str, rules: dict | None = None) -> int:
     row = con.execute("SELECT id FROM urls WHERE site = ? AND url = ?", (site, url)).fetchone()
     if row:
         return row[0]
-    type_, note = classify_by_rules(url)
+    type_, note = classify_by_rules(url, rules if rules is not None else get_rules(con))
     cur = con.execute("INSERT INTO urls (site, url, type, type_source, note) VALUES (?, ?, ?, ?, ?)",
                       (site, url, type_, "rule" if type_ else None, note))
     return cur.lastrowid
@@ -113,9 +162,11 @@ def assign_urls(con: sqlite3.Connection, site: str) -> int:
         "SELECT p.id, p.url FROM pages p LEFT JOIN page_url pu ON pu.page_id = p.id "
         "WHERE p.site = ? AND pu.page_id IS NULL", (site,)
     ).fetchall()
+    rules = get_rules(con)
     with con:
         for page_id, raw in pending:
-            con.execute("INSERT INTO page_url VALUES (?, ?)", (page_id, _get_or_create_url(con, site, normalize(raw))))
+            con.execute("INSERT INTO page_url VALUES (?, ?)",
+                        (page_id, _get_or_create_url(con, site, normalize(raw), rules)))
     return len(pending)
 
 

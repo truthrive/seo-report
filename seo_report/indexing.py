@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from googleapiclient.errors import HttpError
 
 from . import urls as U
+from .projects import domain
 
 NEW_URL_MILESTONES = (3, 7, 14)
 OLD = "2000-01-01"  # first_seen của URL đã có trong sitemap ngay lần đọc đầu tiên: không coi là URL mới
@@ -231,13 +232,13 @@ def add_watch(con: sqlite3.Connection, site: str, text: str, user: str) -> tuple
     """Thêm các link dán vào danh sách theo dõi. Trả về ([(url_id, url)], [dòng không phải link])."""
     ensure_tables(con)
     picked, invalid, seen = [], [], set()
-    host = site.split("//")[-1].strip("/").removeprefix("www.")
+    host = domain(site)
     with con:
         for raw in re.split(r"\s+", text.strip()):
             if not raw:
                 continue
             url = U.normalize(raw)
-            if url.split("//")[-1].split("/")[0].removeprefix("www.") != host:
+            if domain(url) != host:
                 invalid.append(raw)  # URL Inspection chỉ kiểm tra được URL thuộc property này
                 continue
             url_id = U._match_existing(con, site, url) or U._get_or_create_url(con, site, url)
@@ -341,6 +342,28 @@ def latest(con: sqlite3.Connection, url_ids: list[int]) -> dict[int, dict]:
 
 def canonical_mismatch(check: dict | None, url: str) -> bool:
     return bool(check and check.get("google_canonical") and U.normalize(check["google_canonical"]) != url)
+
+
+# Lý do chưa index do website chủ động (noindex, chuyển hướng, trang thay thế có chính tắc): không phải lỗi cần sửa
+INTENTIONAL = ("noindex", "chuyển hướng", "redirect", "chính tắc thích hợp", "proper canonical")
+
+
+def intentional(coverage: str | None) -> bool:
+    c = (coverage or "").lower()
+    return any(k in c for k in INTENTIONAL)
+
+
+def not_indexed(con: sqlite3.Connection, site: str) -> list[dict]:
+    """URL có lần kiểm tra gần nhất chưa được index (verdict khác PASS), kèm lý do và lần crawl."""
+    ensure_tables(con)
+    rows = con.execute(
+        """SELECT u.url, c.coverage, c.checked_at, c.last_crawl FROM index_checks c JOIN urls u ON u.id = c.url_id
+           JOIN (SELECT url_id, MAX(checked_at) m FROM index_checks GROUP BY url_id) l
+             ON l.url_id = c.url_id AND l.m = c.checked_at
+           WHERE u.site = ? AND (c.verdict IS NULL OR c.verdict != 'PASS') ORDER BY c.coverage, u.url""",
+        (site,)).fetchall()
+    return [{"url": r[0], "coverage": r[1] or "Không rõ", "checked_at": r[2], "last_crawl": r[3],
+             "intentional": intentional(r[1])} for r in rows]
 
 
 def summary(con: sqlite3.Connection, site: str) -> list[tuple[str, int]]:

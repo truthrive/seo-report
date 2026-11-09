@@ -10,11 +10,11 @@ from seo_report import urls as U
 from seo_report.config import Config
 from seo_report.report_excel import build_report_excel
 
-SITE = "https://matkinhtamduc.com/"
-A = "https://matkinhtamduc.com/gong-kinh/"
-B = "https://matkinhtamduc.com/blog-a/"
-C = "https://matkinhtamduc.com/blog-nho/"
-OTHER = "https://matkinhtamduc.com/ngoai-nhom/"
+SITE = "https://vidushop.com/"
+A = "https://vidushop.com/gong-kinh/"
+B = "https://vidushop.com/blog-a/"
+C = "https://vidushop.com/blog-nho/"
+OTHER = "https://vidushop.com/ngoai-nhom/"
 
 
 def page(url, c):
@@ -64,7 +64,9 @@ class ReportTest(unittest.TestCase):
         texts = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
         self.assertIn("Báo cáo SEO & GEO tuần 19/10/2026 – 25/10/2026", texts)
         self.assertIn("Tuần ổn định.", texts)
-        self.assertIn("Sai URL mục tiêu", texts)
+        self.assertIn("⚠ 1 từ khóa đang xếp hạng bằng trang khác trang mục tiêu", texts)
+        self.assertIn("Kết quả SEO · traffic từ Google Search", texts)
+        self.assertNotIn("CTR", texts)  # chỉ số vận hành không đưa vào báo cáo gửi đi
         self.assertEqual(len(ws._charts), 1)
 
 
@@ -84,12 +86,12 @@ class ReportAiBlockTest(unittest.TestCase):
                   "paid": {"sessions": 33}, "sources": [{"source": "CHATGPT", "sessions": 60}], "warnings": []}
         texts = [c.value for row in load_workbook(io.BytesIO(build_report_excel(rep, "t")))["Báo cáo"].iter_rows()
                  for c in row if isinstance(c.value, str)]
-        self.assertIn("Phiên từ AI", texts)
-        self.assertIn("Theo nguồn: ChatGPT 60", texts)
+        self.assertIn("Phiên từ AI assistant (GA4)", texts)
+        self.assertIn("Nguồn AI: ChatGPT 100%", texts)
         rep.ai = {"error": "Tài khoản chưa cấp quyền"}
         texts = [c.value for row in load_workbook(io.BytesIO(build_report_excel(rep, "t")))["Báo cáo"].iter_rows()
                  for c in row if isinstance(c.value, str)]
-        self.assertTrue(any("Chưa lấy được số liệu GA4" in t for t in texts))
+        self.assertIn("chưa có", texts)  # lỗi kỹ thuật không đưa vào báo cáo gửi đi
 
 
 if __name__ == "__main__":
@@ -148,8 +150,9 @@ class MonthlyReportTest(unittest.TestCase):
         self.assertEqual(report.get_note(self.con, SITE, report.date(2026, 10, 1)), "")  # không lẫn với tuần
         ws = load_workbook(io.BytesIO(build_report_excel(rep, "test")))["Báo cáo"]
         texts = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
-        for t in ("Báo cáo SEO & GEO tháng 10/2026", "Kế hoạch tháng sau", "Viết 5 bài.", "Theo loại trang (cộng theo URL)",
-                  "Top 10 từ khóa (query) nhiều click nhất tháng", "Click tháng này"):
+        for t in ("Báo cáo SEO & GEO tháng 10/2026", "Kế hoạch tháng sau", "Viết 5 bài.",
+                  "Phụ lục · theo loại trang (cộng theo trang)", "Phụ lục · top 10 từ khóa (GSC) nhiều click nhất tháng",
+                  "Tháng 10/2026", "Tháng 09/2026", "Tháng báo cáo", "Tháng so sánh"):  # cột / dòng ghi đúng kỳ
             self.assertIn(t, texts)
 
 
@@ -178,6 +181,120 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(geo["Phiên AI"]["value"], "chưa có")  # chưa kết nối GA4: không ghi 0
         self.assertEqual(geo["AI Overviews"]["value"], "chưa có")
         notes = [n["long"] for n in sm["seo_notes"]]
-        self.assertIn("URL tăng click nhiều nhất: /gong-kinh/ (+20 click)", notes)
-        self.assertIn("1 keyword đang xếp hạng bằng URL khác URL mục tiêu", notes)
+        self.assertIn("Trang tăng click nhiều nhất: /gong-kinh/ (+20 click)", notes)
+        self.assertIn("1 từ khóa đang xếp hạng bằng trang khác trang mục tiêu", notes)
         self.assertEqual(sm["seo_notes"][0]["short"], "/gong-kinh/ +20")
+
+
+class CompareTest(unittest.TestCase):
+    def test_compare_period(self):
+        from datetime import date
+
+        from seo_report.report import compare_period, period_text
+        wk, prev = (date(2026, 10, 19), date(2026, 10, 25)), (date(2026, 10, 12), date(2026, 10, 18))
+        self.assertEqual(compare_period("week", wk, prev, "prev"), prev)
+        self.assertEqual(compare_period("week", wk, prev, "yoy"), (date(2025, 10, 20), date(2025, 10, 26)))  # cùng thứ
+        self.assertEqual(compare_period("week", wk, prev, "2026-09-07"), (date(2026, 9, 7), date(2026, 9, 13)))
+        self.assertEqual(compare_period("week", wk, prev, "2026-10-26"), prev)  # kỳ sau kỳ báo cáo: bỏ qua
+        self.assertEqual(compare_period("week", wk, prev, "rác"), prev)
+        mo, mprev = (date(2026, 2, 1), date(2026, 2, 28)), (date(2026, 1, 1), date(2026, 1, 31))
+        self.assertEqual(compare_period("month", mo, mprev, "yoy"), (date(2025, 2, 1), date(2025, 2, 28)))
+        self.assertEqual(compare_period("month", mo, mprev, "2025-11-01"), (date(2025, 11, 1), date(2025, 11, 30)))
+        self.assertEqual(period_text("week", (date(2025, 10, 20), date(2025, 10, 26)), 2026), "tuần 20/10 – 26/10/2025")
+        self.assertEqual(period_text("week", prev, 2026), "tuần 12/10 – 18/10")
+        self.assertEqual(period_text("month", mprev), "tháng 01/2026")
+
+
+class DashboardWindowTest(unittest.TestCase):
+    def test_windows_and_buckets(self):
+        from datetime import date
+
+        from seo_report.web_dashboard import buckets, windows
+        cur, prev = windows(date(2026, 10, 31), 28)
+        self.assertEqual(cur, (date(2026, 10, 4), date(2026, 10, 31)))
+        self.assertEqual(prev, (date(2026, 9, 6), date(2026, 10, 3)))
+        self.assertEqual(len(buckets(cur, 28)), 28)  # 28 ngày: từng ngày
+        cur90, _ = windows(date(2026, 10, 31), 90)
+        b = buckets(cur90, 90)
+        # 90 ngày: biểu đồ phủ đủ 90 ngày như số tổng của ô (mỗi ngày một điểm, không bỏ ngày nào)
+        self.assertEqual((len(b), b[0][0], b[-1][1]), (90, cur90[0], cur90[1]))
+
+
+class FinalDateTest(unittest.TestCase):
+    def test_latest_date_stops_before_first_incomplete_day(self):
+        import sqlite3
+        from datetime import date
+
+        from seo_report import db
+        from seo_report import keywords as K
+        con = sqlite3.connect(":memory:")
+        con.executescript(db.SCHEMA)
+        site = "https://x.vn/"
+        for d in ("2026-10-30", "2026-10-31", "2026-11-01"):
+            con.execute("INSERT INTO gsc_fetch_log VALUES (?, ?, 1, 1, 'x')", (site, d))
+        self.assertEqual(K.latest_date(con, site), date(2026, 11, 1))  # chưa biết ngày sơ bộ: như cũ
+        db.save_first_incomplete(con, site, "2026-10-31")
+        self.assertEqual(K.latest_date(con, site), date(2026, 10, 30))
+        db.save_first_incomplete(con, site, None)  # mọi ngày đã chốt
+        self.assertEqual(K.latest_date(con, site), date(2026, 11, 1))
+
+
+class CompareLineTest(unittest.TestCase):
+    def test_vs(self):
+        from seo_report import ai_format as F
+        self.assertEqual(F.vs(88, 70), "Kỳ trước: 70 · +18")
+        self.assertEqual(F.vs(4402, 4570, label="Tuần 14/09–20/09"), "Tuần 14/09–20/09: 4.570 · −168")
+        self.assertEqual(F.vs(0.263, 0.2253, "pct"), "Kỳ trước: 22,5%")
+        self.assertEqual(F.vs(5, None), "")
+
+
+    def test_change_text_next_to_main_number(self):
+        from seo_report import ui_theme as T
+        prev = {"label": "Tuần 14/09", "value": "5.373", "diff": "+177"}
+        self.assertEqual(T.change_text("+3,3%", prev), "+177 (+3,3%)")
+        self.assertEqual(T.change_text("kỳ trước 0", {**prev, "diff": "+12"}), "+12")
+        self.assertEqual(T.change_text("+0,4 điểm", {"label": "x", "value": "22%", "diff": ""}), "+0,4 điểm")
+        self.assertEqual(T.change_text("-2%", None), "-2%")
+
+
+class PeriodLabelTest(unittest.TestCase):
+    def test_labels(self):
+        from datetime import date
+
+        from seo_report.report import period_short, trend_label
+        wk = (date(2026, 9, 14), date(2026, 9, 20))
+        self.assertEqual(period_short("week", wk), "Tuần 14/09–20/09")
+        self.assertEqual(period_short("week", wk, 2027), "Tuần 14/09–20/09/2026")
+        self.assertEqual(period_short("month", (date(2026, 9, 1), date(2026, 9, 30))), "Tháng 09/2026")
+        self.assertEqual(trend_label("week", wk), "14/09")
+        self.assertEqual(trend_label("month", (date(2026, 9, 1), date(2026, 9, 30))), "T9/26")
+
+
+class ComparepartsTest(unittest.TestCase):
+    def test_vs_parts(self):
+        from seo_report import ai_format as F
+        self.assertEqual(F.vs_parts(5661, 5535, label="Tuần 28/09"),
+                         {"label": "Tuần 28/09", "value": "5.535", "diff": "+126"})
+        self.assertEqual(F.vs_parts(0.263, 0.2253, "pct")["diff"], "")
+        self.assertIsNone(F.vs_parts(1, None))
+
+
+class DayValuesTest(unittest.TestCase):
+    def test_days_after_last_data_are_empty(self):
+        from datetime import date
+        daily = {date(2026, 10, 1): 5, date(2026, 10, 3): 7}
+        self.assertEqual(report.day_values(daily, (date(2026, 10, 1), date(2026, 10, 5))), [5, 0, 7, None, None])
+        self.assertEqual(report.day_values({}, (date(2026, 10, 1), date(2026, 10, 2))), [None, None])
+        self.assertEqual(len(report.day_list((date(2026, 7, 1), date(2026, 7, 31)))), 31)
+
+
+class MetricHelpTest(unittest.TestCase):
+    def test_dashboard_metrics_have_help(self):
+        from seo_report.metric_help import help_for
+        for label in ("Click từ Google", "Lượt hiển thị", "Lượt truy cập (mọi kênh)", "Lượt truy cập Organic",
+                      "Truy cập từ AI", "Tỷ lệ hiện trong AI", "Lượt truy cập", "Click", "Lượt hiện trong AI",
+                      "Trong top 10", "Xong trong tuần", "Nhóm SEO chủ lực", "Session key event rate"):
+            got = help_for(label)
+            self.assertIsNotNone(got, label)
+            self.assertEqual(len(got), 3)
+        self.assertIsNone(help_for("Chỉ số lạ"))

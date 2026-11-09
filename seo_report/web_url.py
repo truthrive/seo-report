@@ -2,6 +2,7 @@
 from . import indexing as IX
 from . import keywords as K
 from . import rank as R
+from . import ui_theme as T
 from . import urls as U
 
 GREEN, RED, MUTED = "#1E7C31", "#C2410C", "#6B6A5E"
@@ -139,7 +140,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             from .web_export import export_menu
             with ui.row().classes("w-full"):
                 export_menu(ui, cfg, connect, f"du-lieu-seo_tuan-{wks[state['week']][0]:%Y-%m-%d}",
-                            lambda: export(), "Xuất dữ liệu", user=user)
+                            lambda: export(), "Xuất dữ liệu", user=user, category="url")
             url_list = ui.column().classes("w-full gap-1 no-wrap").style(
                 "flex: 1 1 auto; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 6px")
         detail = ui.column().classes("col gap-4").style("min-width: 0")
@@ -168,9 +169,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             elif ix and not ix["indexed"]:
                 flags.append(("#C2410C", "Chưa được Google index"))
             text, color = _delta(r["clicks_w"], r["clicks_prev"], percent=False)
-            with ui.element("div").classes("sr-url-item" + (" selected" if selected else "")).props(
-                    f'title="{r["url"]}" tabindex="0" role="button"').on(
-                    "click", lambda _, rid=r["id"]: select(rid)):
+            item = ui.element("div").classes("sr-url-item" + (" selected" if selected else "")).props(
+                'tabindex="0" role="button"')
+            # Gán thẳng vào props (không ghép chuỗi): URL có dấu " không thể chèn thêm thuộc tính / JavaScript
+            item.props["title"] = r["url"]
+            with item.on("click", lambda _, rid=r["id"]: select(rid)):
                 with ui.element("div").classes("sr-url-line"):
                     ui.label(r["path"]).classes("sr-url-path")
                     ui.label(_n(r["clicks_w"])).classes("sr-url-clicks num")
@@ -199,6 +202,9 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             prev = K.url_period(c, [rid], *wks[state["week"] + 1]).get(rid, (0, 0, None)) if has_prev else None
             week_q = K.query_period(c, rid, s, e)
             series = K.weekly_series(c, rid, wks)
+            from . import web_events as EV
+            spans = list(reversed(wks))
+            ev_marks = EV.mark_line(EV.marks(EV.site_events(c, site), spans, [f"{a_:%d/%m}" for a_, _ in spans]))
         target = state["targets"].get(rid, "")
 
         with ui.row().classes("w-full items-start justify-between"):
@@ -207,12 +213,18 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.label(row["path"]).classes("text-xl font-semibold")
                     with ui.link(target=row["url"], new_tab=True).props('aria-label="Mở trang trên site"'):
                         ui.icon("open_in_new", color="grey-7")
+                    from urllib.parse import quote
+                    ui.button("Mọi từ khóa của URL", icon="manage_search",
+                              on_click=lambda u=row["url"]: ui.navigate.to(f"/research?tra={quote(u, safe='')}")
+                              ).props("flat dense no-caps size=sm color=primary").tooltip(
+                        "Mở ở trang Research: mọi từ khóa trang này đang có hạng, kèm volume, CPC, mục đích; lọc, "
+                        "sao chép, xuất file")
                 with ui.row().classes("gap-2"):
-                    ui.badge(row["type"] or "Chưa phân loại").props("outline color=grey-8")
-                    ui.badge(groups.get(state["group"], "")).props("color=green-1 text-color=green-10")
+                    T.tag(ui, row["type"] or "Chưa phân loại", "grey")
+                    if groups.get(state["group"]):
+                        T.tag(ui, groups[state["group"]], "green")
             ui.label(f"{week_options[state['week']]} · so với tuần trước").classes("text-sm muted")
 
-        from . import ui_theme as T
 
         labels = [p["week"] for p in series]
 
@@ -278,14 +290,16 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.label(f"Crawl gần nhất: {crawl} · kiểm tra ngày {_vn_date(ix['checked_at'])}").classes(
                         "text-xs muted")
                     if IX.canonical_mismatch(ix, row["url"]):
-                        ui.badge(f"Google chọn canonical khác: {_short(ix['google_canonical'], site)}").props(
-                            "color=orange-2 text-color=orange-10")
+                        T.pill(ui, f"Google chọn canonical khác: {_short(ix['google_canonical'], site)}", "amber",
+                               "warning")
                 ui.space()
                 if ed:
                     check_btn = ui.button("Kiểm tra ngay", icon="refresh", on_click=lambda: check_now()).props(
                         "flat dense no-caps")
 
         async def check_now():
+            if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                return
             from nicegui import run as nrun
 
             from . import auth
@@ -316,6 +330,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 "outlined dense" + ("" if ed else " readonly")).classes("col")
 
             def save_target():
+                if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                    return
                 with connect() as c:
                     K.set_target(c, site, rid, target_input.value or "", user)
                     state["targets"] = K.targets(c, [r["id"] for r in state["rows"]])
@@ -332,11 +348,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.label(a.head.query if a.head else "Chưa có query nào").classes("text-base font-medium")
                     match = K.head_matches_target(a.head, target)
                     if match is True:
-                        ui.badge("✓ khớp target").props("color=green-1 text-color=green-10")
+                        T.pill(ui, "Khớp target", "green", "check")
                     elif match is False:
-                        ui.badge("lệch target").props("color=orange-2 text-color=orange-10")
+                        T.pill(ui, "Lệch target", "amber", "warning")
                     elif not target:
-                        ui.badge("chưa gán target").props("outline color=grey-8")
+                        T.pill(ui, "Chưa gán target", "grey")
                 if a.head and a.head_basis == "impression":
                     ui.label("Không query nào có click; chọn theo impression.").classes("text-xs muted")
 
@@ -349,7 +365,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         from . import volume as V
         from .report import rank_change
         with connect() as c:
-            committed = [k for k in R.keywords(c, site, end) if k["target_url"] == row["url"]]
+            committed = [k for k in R.primary_keywords(c, site, end) if k["target_url"] == row["url"]]
             vols = V.latest(c)
             ranks = R.latest_by_keyword(c, site)
         starred = set(ranks)
@@ -415,13 +431,13 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                       </div>
                     </q-td>""")
                 ui.label("Volume: Google Ads, Việt Nam, cập nhật mỗi tháng. Google gộp các biến thể gần nhau (ví dụ "
-                         "'mắt kính' và 'kính mắt') thành cùng một số.").classes("text-xs muted")
+                         "'giày nữ' và 'giày cho nữ') thành cùng một số.").classes("text-xs muted")
 
         with ui.dialog() as add_dialog, ui.card().style("min-width: 560px; border-radius: 14px"):
             ui.label(f"Thêm keyword SEO cho {row['path']}").classes("text-lg font-semibold")
             ui.label("Mỗi dòng một keyword. URL mục tiêu là URL này. Volume lấy ngay sau khi thêm.").classes(
                 "text-sm muted")
-            new_kw = ui.textarea(placeholder="tròng kính chống ánh sáng xanh\ntròng kính đổi màu").props(
+            new_kw = ui.textarea(placeholder="từ khóa 1\ntừ khóa 2").props(
                 "outlined autogrow").classes("w-full")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Đóng", on_click=add_dialog.close).props("flat no-caps")
@@ -429,24 +445,26 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     "unelevated no-caps")
 
         async def add_committed():
-            from nicegui import run as nrun
+            if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                return
             items = [(line.split("|")[0].strip(), row["url"]) for line in (new_kw.value or "").splitlines()
                      if line.split("|")[0].strip()]
             if not items:
                 return
             with connect() as c:
                 r = R.add_keywords(c, site, cfg.rank, end, items, user)
-                ids = [k["id"] for k in R.keywords(c, site, end) if k["keyword"] in {i[0] for i in items}]
-            add_btn.props("loading")
-            try:
-                def work():
-                    with connect() as c:
-                        return V.refresh(c, site, cfg, end, only_ids=ids, log=lambda m: None)
-                await nrun.io_bound(work)
-            except Exception as e:  # noqa: BLE001  (thêm keyword vẫn thành công, chỉ thiếu volume)
-                ui.notify(f"Đã thêm keyword nhưng chưa lấy được volume: {e}", type="warning", multi_line=True)
-            finally:
-                add_btn.props(remove="loading")
+            if r["added"]:  # volume lấy một lần duy nhất khi thêm (cả lượt chung một lần gọi)
+                from nicegui import run as nrun
+                add_btn.props("loading")
+                try:
+                    def work():
+                        with connect() as c:
+                            return V.refresh(c, site, cfg, end, log=lambda m: None)
+                    await nrun.io_bound(work)
+                except Exception as e:  # noqa: BLE001  (thêm keyword vẫn thành công; lượt chạy hằng ngày lấy bù)
+                    ui.notify(f"Đã thêm keyword nhưng chưa lấy được volume: {e}", type="warning", multi_line=True)
+                finally:
+                    add_btn.props(remove="loading")
             msg = f"Đã thêm {len(r['added'])} keyword"
             if r["updated"]:
                 msg += f", đổi URL mục tiêu {len(r['updated'])}"
@@ -486,10 +504,12 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 </q-td>""")
 
             def on_star(e):
+                if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
+                    return
                 with connect() as c:
                     ok, msg = R.toggle_star(c, site, cfg.rank, end, rid, e.args["query"], user)
                 ui.notify(msg, type="positive" if ok else "negative", multi_line=True, timeout=6000)
-                if ok:
+                if ok:  # từ khóa vừa gắn ★: lấy volume một lần (đã có số thì không gọi)
                     from nicegui import background_tasks as bt
 
                     async def vol():
@@ -500,7 +520,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                                 return V.refresh(c, site, cfg, end, log=lambda m: None)
                         try:
                             await nrun.io_bound(work)
-                        except Exception:  # noqa: BLE001
+                        except Exception:  # noqa: BLE001  (lượt chạy hằng ngày lấy bù)
                             pass
                     bt.create(vol())
                 if on_budget_change:
@@ -544,12 +564,13 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                       {"type": "value", "name": "Impression", "splitLine": {"show": False}}],
             "series": [
                 {"name": "Click", "type": "bar", "data": [p["clicks"] for p in series],
-                 "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}},
+                 "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}, **ev_marks},
                 {"name": "Impression", "type": "line", "yAxisIndex": 1, "data": [p["impressions"] for p in series],
                  "itemStyle": {"color": "#2563EB"}, "smooth": True, "symbol": "circle", "symbolSize": 5},
             ],
         }).classes("w-full").style("height: 260px")
-        ui.label("12 tuần gần nhất (GSC).").classes("text-xs muted")
+        ui.label("12 tuần gần nhất (GSC)." + (" Vạch tím: mốc sự kiện của website (thêm ở Tổng quan → Click theo "
+                 "ngày → Mốc sự kiện)." if ev_marks else "")).classes("text-xs muted")
 
     with detail:
         render_detail()

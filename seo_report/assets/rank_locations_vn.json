@@ -1,0 +1,867 @@
+[
+{
+"code": 2704,
+"name": "Vietnam",
+"type": "Country"
+},
+{
+"code": 1028580,
+"name": "Hanoi,Ha Noi,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 1028581,
+"name": "Ho Chi Minh City,Ho Chi Minh,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 1028805,
+"name": "Haiphong,Hai Phong,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 1028806,
+"name": "Quang Ngai,Quang Ngai,Vietnam",
+"type": "City"
+},
+{
+"code": 1028807,
+"name": "Vung Tau,Ba Ria - Vung Tau,Vietnam",
+"type": "City"
+},
+{
+"code": 1028808,
+"name": "Nha Trang,Nha Trang,Khanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 1028809,
+"name": "Da Nang,Da Nang,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040323,
+"name": "Kien Giang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040324,
+"name": "An Giang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040325,
+"name": "Cao Lanh,Cao Lanh,Dong Thap,Vietnam",
+"type": "City"
+},
+{
+"code": 9040326,
+"name": "Dong Thap,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040327,
+"name": "Long Xuyen,Long Xuyen,An Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9040328,
+"name": "My Tho,My Tho,Dong Thap,Vietnam",
+"type": "City"
+},
+{
+"code": 9040329,
+"name": "Tien Giang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040330,
+"name": "Thai Nguyen,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040331,
+"name": "Ha Noi,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040332,
+"name": "Thai Nguyen,Thai Nguyen,Vietnam",
+"type": "City"
+},
+{
+"code": 9040333,
+"name": "Hai Duong,Hai Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9040334,
+"name": "Nam Dinh,Nam Dinh,Ninh Binh,Vietnam",
+"type": "City"
+},
+{
+"code": 9040335,
+"name": "Thai Binh,Thai Binh,Hung Yen,Vietnam",
+"type": "City"
+},
+{
+"code": 9040336,
+"name": "Thai Binh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040337,
+"name": "Nam Dinh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040338,
+"name": "Ninh Binh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040339,
+"name": "Hoa Lu,Hoa Lu,Ninh Binh,Vietnam",
+"type": "City"
+},
+{
+"code": 9040340,
+"name": "Thanh Hoa,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040341,
+"name": "Thanh Hoa,Thanh Hoa,Thanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 9040342,
+"name": "Ha Tinh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040343,
+"name": "Ha Tinh,Ha Tinh,Vietnam",
+"type": "City"
+},
+{
+"code": 9040344,
+"name": "Quang Binh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040345,
+"name": "Nghe An,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040346,
+"name": "Thanh Vinh,Thanh Vinh,Nghe An,Vietnam",
+"type": "City"
+},
+{
+"code": 9040347,
+"name": "Quang Tri,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040348,
+"name": "Dong Ha,Dong Ha,Quang Tri,Vietnam",
+"type": "City"
+},
+{
+"code": 9040349,
+"name": "Hue,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040350,
+"name": "Hue,Hue,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040351,
+"name": "Quang Nam,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040352,
+"name": "Dong Hoi,Dong Hoi,Quang Tri,Vietnam",
+"type": "City"
+},
+{
+"code": 9040353,
+"name": "Hai Phong,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040354,
+"name": "Hai Duong,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040355,
+"name": "Quang Ngai,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040356,
+"name": "Kon Tum,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040357,
+"name": "Kon Tum,Kon Tum,Quang Ngai,Vietnam",
+"type": "City"
+},
+{
+"code": 9040358,
+"name": "Pleiku,Pleiku,Gia Lai,Vietnam",
+"type": "City"
+},
+{
+"code": 9040359,
+"name": "Gia Lai,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040360,
+"name": "Binh Dinh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040361,
+"name": "Quy Nhon,Quy Nhon,Gia Lai,Vietnam",
+"type": "City"
+},
+{
+"code": 9040362,
+"name": "Phu Yen,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040363,
+"name": "Tuy Hoa,Tuy Hoa,Dak Lak,Vietnam",
+"type": "City"
+},
+{
+"code": 9040364,
+"name": "Khanh Hoa,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040365,
+"name": "Ninh Thuan,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040366,
+"name": "Phan Rang,Phan Rang,Khanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 9040367,
+"name": "Dalat,Lam Dong,Vietnam",
+"type": "City"
+},
+{
+"code": 9040368,
+"name": "Lam Dong,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040369,
+"name": "Buon Ma Thuot,Buon Ma Thuot,Dak Lak,Vietnam",
+"type": "City"
+},
+{
+"code": 9040370,
+"name": "Dak Lak,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040371,
+"name": "Bien Hoa,Bien Hoa,Dong Nai City,Vietnam",
+"type": "City"
+},
+{
+"code": 9040372,
+"name": "Dong Nai City,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040373,
+"name": "Ho Chi Minh,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040374,
+"name": "Ba Ria - Vung Tau,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040375,
+"name": "Phan Thiet,Phan Thiet,Lam Dong,Vietnam",
+"type": "City"
+},
+{
+"code": 9040376,
+"name": "Binh Thuan,Vietnam",
+"type": "Province"
+},
+{
+"code": 9040377,
+"name": "Can Tho,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9040378,
+"name": "Rach Gia,Rach Gia,An Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9047161,
+"name": "Bac Giang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047162,
+"name": "Bac Kan,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047163,
+"name": "Bac Lieu,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047164,
+"name": "Bac Ninh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047165,
+"name": "Ben Tre,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047166,
+"name": "Binh Duong,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047167,
+"name": "Binh Phuoc,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047168,
+"name": "Ca Mau,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047169,
+"name": "Cao Bang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047170,
+"name": "Da Nang,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9047171,
+"name": "Dak Nong,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047172,
+"name": "Dien Bien,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047173,
+"name": "Ha Giang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047174,
+"name": "Ha Nam,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047175,
+"name": "Hau Giang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047176,
+"name": "Hoa Binh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047177,
+"name": "Hung Yen,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047178,
+"name": "Lai Chau,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047179,
+"name": "Lang Son,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047180,
+"name": "Lao Cai,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047181,
+"name": "Long An,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047182,
+"name": "Phu Tho,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047183,
+"name": "Soc Trang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047184,
+"name": "Son La,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047185,
+"name": "Tay Ninh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047186,
+"name": "Tra Vinh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047187,
+"name": "Tuyen Quang,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047188,
+"name": "Vinh Long,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047189,
+"name": "Vinh Phuc,Vietnam",
+"type": "Province"
+},
+{
+"code": 9047190,
+"name": "Yen Bai,Vietnam",
+"type": "Province"
+},
+{
+"code": 9053232,
+"name": "Ca Mau,Ca Mau,Vietnam",
+"type": "City"
+},
+{
+"code": 9053233,
+"name": "Can Tho,Can Tho,Vietnam",
+"type": "Municipality"
+},
+{
+"code": 9053234,
+"name": "Ha Giang 1,Ha Giang 1,Tuyen Quang,Vietnam",
+"type": "City"
+},
+{
+"code": 9053235,
+"name": "Lang Son,Lang Son,Vietnam",
+"type": "City"
+},
+{
+"code": 9053236,
+"name": "Soc Trang,Soc Trang,Vietnam",
+"type": "City"
+},
+{
+"code": 9053237,
+"name": "Hoi An,Quang Nam,Vietnam",
+"type": "City"
+},
+{
+"code": 9053238,
+"name": "Tra Vinh,Tra Vinh,Vinh Long,Vietnam",
+"type": "City"
+},
+{
+"code": 9053239,
+"name": "Tuyen Quang,Tuyen Quang,Vietnam",
+"type": "City"
+},
+{
+"code": 9053240,
+"name": "Vi Thanh,Hau Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9074052,
+"name": "La Gi,La Gi,Lam Dong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074053,
+"name": "Hung Yen,Hung Yen,Vietnam",
+"type": "City"
+},
+{
+"code": 9074054,
+"name": "Tan Uyen,Binh Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074055,
+"name": "Quang Yen,Quang Yen,Quang Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074056,
+"name": "Ben Cat,Binh Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074057,
+"name": "Dong Gia Nghia,Dong Gia Nghia,Lam Dong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074058,
+"name": "Bac Lieu,Bac Lieu,Ca Mau,Vietnam",
+"type": "City"
+},
+{
+"code": 9074059,
+"name": "Yen Bai,Yen Bai,Lao Cai,Vietnam",
+"type": "City"
+},
+{
+"code": 9074060,
+"name": "Phuoc Long,Phuoc Long,Dong Nai City,Vietnam",
+"type": "City"
+},
+{
+"code": 9074061,
+"name": "Tam Diep,Tam Diep,Ninh Binh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074062,
+"name": "Ha Long,Ha Long,Quang Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074063,
+"name": "Bim Son,Bim Son,Thanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 9074064,
+"name": "Chau Doc,Chau Doc,An Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9074065,
+"name": "Phu Tho,Phu Tho,Phu Tho,Vietnam",
+"type": "City"
+},
+{
+"code": 9074066,
+"name": "Cao Bang,Cao Bang,Vietnam",
+"type": "City"
+},
+{
+"code": 9074067,
+"name": "Mong Cai 1,Mong Cai 1,Quang Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074068,
+"name": "Cam Ranh,Cam Ranh,Khanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 9074069,
+"name": "Thai Hoa,Thai Hoa,Nghe An,Vietnam",
+"type": "City"
+},
+{
+"code": 9074070,
+"name": "Vinh Long,Vinh Long,Vietnam",
+"type": "City"
+},
+{
+"code": 9074071,
+"name": "Lao Cai,Lao Cai,Lao Cai,Vietnam",
+"type": "City"
+},
+{
+"code": 9074072,
+"name": "Ninh Hoa,Ninh Hoa,Khanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 9074073,
+"name": "Vinh Yen,Vinh Yen,Phu Tho,Vietnam",
+"type": "City"
+},
+{
+"code": 9074074,
+"name": "Song Cau,Song Cau,Dak Lak,Vietnam",
+"type": "City"
+},
+{
+"code": 9074075,
+"name": "Phu Ly,Phu Ly,Ninh Binh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074076,
+"name": "Song Cong,Song Cong,Thai Nguyen,Vietnam",
+"type": "City"
+},
+{
+"code": 9074077,
+"name": "Thuan An,Binh Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074078,
+"name": "Hoa Binh,Hoa Binh,Phu Tho,Vietnam",
+"type": "City"
+},
+{
+"code": 9074079,
+"name": "Phuc Yen,Phuc Yen,Phu Tho,Vietnam",
+"type": "City"
+},
+{
+"code": 9074080,
+"name": "Sam Son,Sam Son,Thanh Hoa,Vietnam",
+"type": "City"
+},
+{
+"code": 9074081,
+"name": "Bac Ninh,Bac Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074082,
+"name": "Bac Kan,Bac Kan,Thai Nguyen,Vietnam",
+"type": "City"
+},
+{
+"code": 9074083,
+"name": "Hong Ngu,Hong Ngu,Dong Thap,Vietnam",
+"type": "City"
+},
+{
+"code": 9074084,
+"name": "Di An,Binh Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074085,
+"name": "Son La,Son La,Vietnam",
+"type": "City"
+},
+{
+"code": 9074086,
+"name": "Tu Son,Tu Son,Bac Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074087,
+"name": "Go Cong,Go Cong,Dong Thap,Vietnam",
+"type": "City"
+},
+{
+"code": 9074088,
+"name": "Huong Tra,Hue City,Vietnam",
+"type": "City"
+},
+{
+"code": 9074089,
+"name": "Uong Bi,Uong Bi,Quang Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074090,
+"name": "Kien Tuong,Tay Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074091,
+"name": "Tan An,Tan An,Tay Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074092,
+"name": "Nga Bay,Hau Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9074093,
+"name": "Tan Chau,Tan Chau,An Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9074094,
+"name": "Viet Tri,Viet Tri,Phu Tho,Vietnam",
+"type": "City"
+},
+{
+"code": 9074095,
+"name": "Cam Pha,Cam Pha,Quang Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074096,
+"name": "Dien Bien Phu,Dien Bien Phu,Dien Bien,Vietnam",
+"type": "City"
+},
+{
+"code": 9074097,
+"name": "Cua Lo,Cua Lo,Nghe An,Vietnam",
+"type": "City"
+},
+{
+"code": 9074098,
+"name": "Chi Linh,Hai Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074099,
+"name": "Bac Giang,Bac Giang,Bac Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074100,
+"name": "Hoang Mai,Hoang Mai,Nghe An,Vietnam",
+"type": "City"
+},
+{
+"code": 9074101,
+"name": "1 Bao Loc,1 Bao Loc,Lam Dong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074102,
+"name": "Buon Ho,Buon Ho,Dak Lak,Vietnam",
+"type": "City"
+},
+{
+"code": 9074103,
+"name": "Ba Ria,Ba Ria - Vung Tau,Vietnam",
+"type": "City"
+},
+{
+"code": 9074104,
+"name": "Tam Ky,Quang Nam,Vietnam",
+"type": "City"
+},
+{
+"code": 9074105,
+"name": "Quang Tri,Quang Tri,Quang Tri,Vietnam",
+"type": "City"
+},
+{
+"code": 9074106,
+"name": "Sa Dec,Sa Dec,Dong Thap,Vietnam",
+"type": "City"
+},
+{
+"code": 9074107,
+"name": "Son Tay,Hanoi,Vietnam",
+"type": "City"
+},
+{
+"code": 9074108,
+"name": "Hong Linh,Ha Tinh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074109,
+"name": "Lai Chau,Lai Chau,Vietnam",
+"type": "City"
+},
+{
+"code": 9074110,
+"name": "Binh Minh,Binh Minh,Vinh Long,Vietnam",
+"type": "City"
+},
+{
+"code": 9074111,
+"name": "Huong Thuy,Hue City,Vietnam",
+"type": "City"
+},
+{
+"code": 9074112,
+"name": "Tay Ninh,Tay Ninh,Vietnam",
+"type": "City"
+},
+{
+"code": 9074113,
+"name": "Dong Xoai,Dong Xoai,Dong Nai City,Vietnam",
+"type": "City"
+},
+{
+"code": 9074114,
+"name": "Long Khanh,Long Khanh,Dong Nai City,Vietnam",
+"type": "City"
+},
+{
+"code": 9074115,
+"name": "Thu Dau Mot,Binh Duong,Vietnam",
+"type": "City"
+},
+{
+"code": 9074116,
+"name": "Binh Long,Binh Long,Dong Nai City,Vietnam",
+"type": "City"
+},
+{
+"code": 9074117,
+"name": "Ben Tre,Ben Tre,Vinh Long,Vietnam",
+"type": "City"
+},
+{
+"code": 9074118,
+"name": "An Nhon,An Nhon,Gia Lai,Vietnam",
+"type": "City"
+},
+{
+"code": 9074119,
+"name": "Phu Quoc,An Giang,Vietnam",
+"type": "City"
+},
+{
+"code": 9075989,
+"name": "Quang Ninh,Vietnam",
+"type": "Province"
+},
+{
+"code": 9196275,
+"name": "My Djinh,Hanoi,Vietnam",
+"type": "Municipality"
+}
+]

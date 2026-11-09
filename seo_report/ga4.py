@@ -46,6 +46,42 @@ def property_info(admin, prop: str) -> dict:
     return {"name": p.get("displayName"), "timezone": p.get("timeZone"), "currency": p.get("currencyCode")}
 
 
+def web_streams(admin, prop: str) -> list[dict]:
+    """Luồng dữ liệu web của property: [{name, url, measurement_id}]."""
+    resp = _execute(admin.properties().dataStreams().list(parent=prop, pageSize=50))
+    return [{"name": s.get("displayName", ""), "url": (s.get("webStreamData") or {}).get("defaultUri", ""),
+             "measurement_id": (s.get("webStreamData") or {}).get("measurementId", "")}
+            for s in resp.get("dataStreams", []) if s.get("type", "WEB_DATA_STREAM") == "WEB_DATA_STREAM"]
+
+
+def stream_check(site_url: str, streams: list[dict]) -> dict:
+    """Property GA4 có đúng là của website dự án không, đối chiếu tên miền của các luồng dữ liệu web.
+    {"status": ok | mixed | mismatch | no_stream, "domains": [tên miền các luồng], "message": câu tiếng Việt}.
+    - mismatch: không luồng nào là website dự án → số GA4 là của website khác.
+    - mixed: có luồng của website dự án nhưng kèm luồng website khác → số GA4 bị cộng lẫn.
+    Tên miền con (www., m.) coi như cùng website."""
+    from .projects import domain
+    want = domain(site_url)
+    doms = list(dict.fromkeys(domain(s["url"]) for s in streams if s.get("url")))
+
+    def same(d: str) -> bool:
+        return d == want or d.endswith("." + want) or want.endswith("." + d)
+    mine = [d for d in doms if same(d)]
+    others = [d for d in doms if not same(d)]
+    if not doms:
+        return {"status": "no_stream", "domains": [],
+                "message": "Property GA4 này chưa có luồng dữ liệu web nào: sẽ không có số truy cập."}
+    if not mine:
+        return {"status": "mismatch", "domains": doms,
+                "message": f"Property GA4 này thu số cho {', '.join(others)}, không phải {want}: số truy cập hiện "
+                           "trên tool sẽ là của website khác."}
+    if others:
+        return {"status": "mixed", "domains": doms,
+                "message": f"Property GA4 này có thêm luồng của {', '.join(others)}: số truy cập của {want} bị cộng "
+                           "lẫn. Nên xóa luồng thừa trong Google Analytics."}
+    return {"status": "ok", "domains": doms, "message": f"Đúng website {want}."}
+
+
 def key_events(admin, prop: str) -> list[str]:
     resp = _execute(admin.properties().keyEvents().list(parent=prop, pageSize=200))
     return [k["eventName"] for k in resp.get("keyEvents", [])]

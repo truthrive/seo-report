@@ -51,6 +51,12 @@ CREATE TABLE IF NOT EXISTS gsc_site_daily (
     position REAL NOT NULL,
     PRIMARY KEY (site, date)
 );
+-- Ngày đầu tiên GSC còn sơ bộ (metadata.firstIncompleteDate lúc lấy gần nhất): báo cáo chỉ tính tới ngày trước đó
+CREATE TABLE IF NOT EXISTS gsc_final (
+    site TEXT PRIMARY KEY,
+    first_incomplete TEXT,
+    checked_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS gsc_fetch_log (
     site TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -196,3 +202,11 @@ def migrate_v1(old_path: Path, new_path: Path) -> None:
         con.execute("INSERT INTO gsc_fetch_log SELECT * FROM old.gsc_fetch_log")
     con.execute("DETACH DATABASE old")
     con.close()
+
+
+def save_first_incomplete(con, site: str, day: str | None) -> None:
+    """Ghi ngày đầu tiên còn sơ bộ mà GSC báo (None: mọi ngày đã lấy đều đã chốt)."""
+    from datetime import datetime, timezone
+    with con:
+        con.execute("INSERT OR REPLACE INTO gsc_final VALUES (?, ?, ?)",
+                    (site, day, datetime.now(timezone.utc).isoformat(timespec="seconds")))

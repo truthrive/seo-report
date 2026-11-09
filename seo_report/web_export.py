@@ -7,9 +7,11 @@ from typing import Callable
 
 
 def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Callable,
-                make_pptx: Callable | None = None, label: str = "Xuất", user=None) -> None:
+                make_pptx: Callable | None = None, label: str = "Xuất", user=None, icon_only: bool = False,
+                category: str | None = None) -> None:
     """name: tên file (không đuôi). make_xlsx / make_pptx: hàm (có thể async) trả về bytes. Người chỉ xem (user) chỉ
-    tải file về máy, không lưu vào Drive của chủ tool."""
+    tải file về máy, không lưu vào Drive của chủ tool. icon_only: nút chỉ có icon (tên hiện khi rê chuột).
+    category: hạng mục (drive.CATEGORIES) → file lưu vào thư mục con của hạng mục đó trong folder dự án."""
     import inspect
 
     from nicegui import run
@@ -67,7 +69,9 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 def upload():
                     svc = D.build_service(cfg)
                     with connect() as c:
-                        folder, folder_name = D.target_folder(c, svc, cfg.site_url)
+                        folder, folder_name = (
+                            D.category_folder(c, svc, cfg.site_url, cfg.drive_parent, category) if category
+                            else D.target_folder(c, svc, cfg.site_url, cfg.drive_parent))
                     if kind == "sheet":
                         f = D.upload(svc, xlsx, name, D.XLSX, folder, D.SHEET)
                         return [("Mở Google Sheets", f["webViewLink"])], folder_name, None
@@ -93,8 +97,8 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
         def load():
             svc = D.build_service(cfg)
             with connect() as c:
-                root = D.root_folder(c, svc, cfg.site_url)
-                current, _ = D.target_folder(c, svc, cfg.site_url)
+                root = D.root_folder(c, svc, cfg.site_url, cfg.drive_parent)
+                current, _ = D.target_folder(c, svc, cfg.site_url, cfg.drive_parent)
             return svc, root, current, D.list_folders(svc, root)
 
         try:
@@ -135,8 +139,14 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 ui.button("Lưu", on_click=save).props("unelevated no-caps")
         dlg.open()
 
-    with ui.dropdown_button(label, icon="ios_share", auto_close=True).props(
-            "unelevated no-caps") as btn:
+    if icon_only:  # nút tròn chỉ có icon, bấm mở menu (không có mũi tên xổ xuống)
+        btn = ui.button(icon="ios_share").props("unelevated round dense").tooltip(label)
+        btn.props["aria-label"] = label
+        with btn:
+            holder = ui.menu().props("auto-close anchor='bottom right' self='top right'")
+    else:
+        btn = holder = ui.dropdown_button(label, icon="ios_share", auto_close=True).props("unelevated no-caps")
+    with holder:
         with ui.list().props("dense").style("min-width: 240px"):
             def item(icon, text, handler, caption=""):
                 with ui.item(on_click=handler):
@@ -152,9 +162,11 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 if make_pptx:
                     item("slideshow", "Tải PowerPoint về máy", download_pptx, "bộ slide báo cáo")
                 return
-            item("table_view", "Google Sheets", lambda: to_drive("sheet"), "lưu vào folder Drive")
+            where = f"lưu vào thư mục {D.CATEGORIES[category]}" if category else "lưu vào folder Drive"
+            item("table_view", "Google Sheets", lambda: to_drive("sheet"), where)
             if make_pptx:
-                item("slideshow", "Google Slides", lambda: to_drive("slides"), "bộ slide báo cáo")
-                item("picture_as_pdf", "PDF", lambda: to_drive("pdf"), "từ bộ slide, lưu Drive + tải về")
+                item("slideshow", "Google Slides", lambda: to_drive("slides"), where)
+                item("picture_as_pdf", "PDF", lambda: to_drive("pdf"), "từ bộ slide, " + where + " + tải về")
             ui.separator()
-            item("folder_open", "Chọn folder Drive…", choose_folder)
+            item("folder_open", "Chọn folder gốc trên Drive…", choose_folder,
+                 "các thư mục hạng mục nằm trong folder này")

@@ -1,4 +1,5 @@
 """Đọc cấu hình từ config.toml."""
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,7 +15,7 @@ class KeywordSettings:
     min_impressions: int = 50
     max_position: float = 30.0
     max_secondary: int = 5
-    brand_terms: tuple[str, ...] = ("tâm đức", "matkinhtamduc")
+    brand_terms: tuple[str, ...] = ()
 
 
 @dataclass
@@ -25,6 +26,8 @@ class RankSettings:
     location_code: int = 2704  # Việt Nam
     language_code: str = "vi"
     device: str = "mobile"
+    se_domain: str = "google.com.vn"  # tên miền Google dùng để tìm (vùng Google)
+    paused: bool = False  # tạm ngưng: không gửi yêu cầu DataForSEO nào (check rank, volume) cho website này
 
 
 @dataclass
@@ -38,9 +41,15 @@ class Config:
     keywords: KeywordSettings = field(default_factory=KeywordSettings)
     rank: RankSettings = field(default_factory=RankSettings)
     dataforseo_secret: Path = Path("secrets/dataforseo.toml")
+    google_ads_secret: Path = Path("secrets/google_ads.toml")  # developer token + Customer ID: volume miễn phí
     ga4_property: str = ""  # dạng properties/123456789; để trống khi chưa kết nối GA4
     okr: OkrSettings = field(default_factory=OkrSettings)  # sheet OKR / Weekly Task Tracker (báo cáo công việc)
     access: AccessSettings = field(default_factory=AccessSettings)  # ai được vào / sửa khi mở qua Cloudflare
+    logo: str = ""  # logo của website (data URI) cho báo cáo Excel / slide / bản tĩnh; đặt theo dự án
+    backup_dir: Path = Path("backups")  # nơi lưu bản sao lưu hằng ngày ([backup] dir)
+    config_path: Path = Path("config.toml")  # file cấu hình đã đọc (màn Cài đặt tích hợp ghi lại [drive])
+    drive_parent: str = ""  # ID folder Drive của bạn chứa mọi folder / file tool tạo ([drive] parent_folder); trống = My Drive
+    backup_keep: int = 7  # số bản sao lưu giữ lại ([backup] keep)
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -63,9 +72,14 @@ def load_config(path: str | Path = "config.toml") -> Config:
         }),
         rank=RankSettings(**raw.get("rank", {})),
         dataforseo_secret=base / raw.get("dataforseo_secret", "secrets/dataforseo.toml"),
+        google_ads_secret=base / raw.get("google_ads_secret", "secrets/google_ads.toml"),
         ga4_property=_ga4_property(raw.get("ga4_property", "")),
         okr=OkrSettings(**raw.get("okr", {})),
         access=AccessSettings(**raw.get("access", {})),
+        backup_dir=base / raw.get("backup", {}).get("dir", "backups"),
+        backup_keep=max(1, int(raw.get("backup", {}).get("keep", 7))),
+        drive_parent=_folder_id(raw.get("drive", {}).get("parent_folder", "")),
+        config_path=p.resolve(),
     )
 
 
@@ -73,3 +87,10 @@ def _ga4_property(value) -> str:
     """Chấp nhận '123456789' hoặc 'properties/123456789'."""
     value = str(value).strip()
     return value if not value or value.startswith("properties/") else f"properties/{value}"
+
+
+def _folder_id(value) -> str:
+    """Link folder Drive (https://drive.google.com/drive/folders/<id>) hoặc ID → ID; trống → ''."""
+    v = str(value or "").strip()
+    m = re.search(r"/folders/([A-Za-z0-9_-]+)", v)
+    return m.group(1) if m else v.split("?")[0]

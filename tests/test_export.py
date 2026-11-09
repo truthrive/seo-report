@@ -8,9 +8,9 @@ from seo_report import db, export
 from seo_report import urls as U
 from seo_report.config import Config
 
-SITE = "https://matkinhtamduc.com/"
-A = "https://matkinhtamduc.com/gong-kinh/"
-B = "https://matkinhtamduc.com/"
+SITE = "https://vidushop.com/"
+A = "https://vidushop.com/gong-kinh/"
+B = "https://vidushop.com/"
 
 
 def page(url, c, i):

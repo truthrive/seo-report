@@ -7,9 +7,9 @@ from seo_report import rank as R
 from seo_report import urls as U
 from seo_report.config import RankSettings
 
-SITE = "https://matkinhtamduc.com/"
-A = "https://matkinhtamduc.com/gong-kinh/"
-B = "https://matkinhtamduc.com/gong-kinh-nam/"
+SITE = "https://vidushop.com/"
+A = "https://vidushop.com/gong-kinh/"
+B = "https://vidushop.com/gong-kinh-nam/"
 END = date(2026, 10, 28)
 TUE = date(2026, 10, 27)  # thứ Ba
 
@@ -72,6 +72,26 @@ class RankTest(unittest.TestCase):
         self.assertIsNone(kws["kính mắt giá rẻ"]["target_url"])
         self.assertEqual(self.add(f"gọng kính | {B}")["updated"], ["gọng kính"])
 
+    def test_star_adds_keyword_without_target_and_team_sets_it(self):
+        self.assertTrue(R.toggle_star(self.con, SITE, self.s, END, self.a, "gọng kính", "test")[0])
+        k = R.keywords(self.con, SITE, END)[0]
+        self.assertIsNone(k["target_url"])  # không tự gán URL của màn ★
+        self.assertEqual(R.set_target_url(self.con, SITE, k["id"], B + "?utm_source=x", "test"), B)
+        self.assertEqual(R.keywords(self.con, SITE, END)[0]["target_url"], B)
+        with self.assertRaises(ValueError):
+            R.set_target_url(self.con, SITE, k["id"], "https://other.vn/a/", "test")
+        R.set_target_url(self.con, SITE, k["id"], "", "test")
+        self.assertIsNone(R.keywords(self.con, SITE, END)[0]["target_url"])
+
+    def test_url_suggestions_from_gsc(self):
+        self.assertEqual([x["url"] for x in R.url_suggestions(self.con, SITE, "Gọng kính", END)], [A])
+
+    def test_check_target_settings(self):
+        self.assertEqual(R.locations()[2704], "Toàn quốc (Việt Nam)")
+        self.assertIn(1028581, R.locations())  # Ho Chi Minh City
+        s = RankSettings(location_code=1028581, device="desktop")
+        self.assertEqual(R.describe_target(s), "google.com.vn · Máy tính · Ho Chi Minh City (nội thành) · Tiếng Việt")
+
     def test_schedule_weekdays_with_catch_up_and_monthly(self):
         sched = {"type": "weekdays", "weekdays": [1], "day": 1, "depth": "auto"}
         self.assertEqual(R.last_scheduled_day(sched, date(2026, 10, 29)), TUE)  # thứ Năm → check bù thứ Ba
@@ -84,16 +104,16 @@ class RankTest(unittest.TestCase):
     def test_run_follows_schedule_and_parses_ranks(self):
         self.add(f"gọng kính | {A}\ngọng kính nam | {A}")
         fake = FakeDataForSEO({
-            "gọng kính": [("other.vn", "https://other.vn/"), ("matkinhtamduc.com", A + "#top")],
-            "gọng kính nam": [("www.matkinhtamduc.com", B), ("matkinhtamduc.com", A)],
+            "gọng kính": [("other.vn", "https://other.vn/"), ("vidushop.com", A + "#top")],
+            "gọng kính nam": [("www.vidushop.com", B), ("vidushop.com", A)],
         })
         run(self.con, self.s, fake, date(2026, 10, 26))  # thứ Hai: lịch mặc định thứ Ba, chưa check lần nào → check
         self.assertEqual({(t["keyword"], t["depth"], t["device"], t["location_code"]) for t in fake.posted},
                          {("gọng kính", 30, "mobile", 2704), ("gọng kính nam", 30, "mobile", 2704)})
         run(self.con, self.s, fake, date(2026, 10, 26))  # cùng ngày: không gửi lại
         self.assertEqual(len(fake.posted), 2)
-        run(self.con, self.s, fake, TUE)  # đến ngày lịch: check lại, độ sâu theo vị trí lần trước (2 và 1)
-        self.assertEqual([t["depth"] for t in fake.posted[2:]], [10, 10])
+        run(self.con, self.s, fake, TUE)  # đến ngày lịch: check lại, độ sâu theo vị trí lần trước (2 và 1): tối thiểu 20
+        self.assertEqual([t["depth"] for t in fake.posted[2:]], [20, 20])
         kws = {k["keyword"]: k for k in R.keywords(self.con, SITE, END)}
         self.assertEqual((kws["gọng kính"]["rank"], kws["gọng kính"]["ranking_url"], kws["gọng kính"]["best"]), (2, A, 2))
         self.assertEqual((kws["gọng kính nam"]["rank"], kws["gọng kính nam"]["ranking_url"],
@@ -103,7 +123,8 @@ class RankTest(unittest.TestCase):
 
     def test_manual_schedule_only_runs_on_check_now(self):
         self.add("gọng kính")
-        R.set_schedule(self.con, SITE, {"type": "manual", "weekdays": [], "day": 1, "depth": 50}, "test")
+        R.set_schedule(self.con, SITE, {"type": "manual", "weekdays": [], "day": 1, "depth": 50}, "test",
+                       set_id=R.default_set(self.con, SITE)["id"])
         fake = FakeDataForSEO({})
         run(self.con, self.s, fake, TUE)
         self.assertEqual(fake.posted, [])
@@ -131,7 +152,7 @@ class RankTest(unittest.TestCase):
         con = sqlite3.connect(":memory:")
         con.executescript("""
             CREATE TABLE urls (id INTEGER PRIMARY KEY, site TEXT, url TEXT);
-            INSERT INTO urls VALUES (1, 's', 'https://matkinhtamduc.com/');
+            INSERT INTO urls VALUES (1, 's', 'https://vidushop.com/');
             CREATE TABLE rank_stars (url_id, query, frequency, starred_at, starred_by);
             INSERT INTO rank_stars VALUES (1, 'mắt kính', 'daily', 'x', 'test');
             CREATE TABLE rank_checks (url_id, query, check_date);
@@ -144,3 +165,37 @@ class RankTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HiddenLinkTest(unittest.TestCase):
+    """Google mobile giấu link một số kết quả sau google.com/goto?url=…: nhận site qua breadcrumb."""
+    TASK = {"result": [{"items": [
+        {"type": "organic", "rank_group": 1, "domain": "google.com", "url": "https://google.com/goto?url=AAA",
+         "breadcrumb": "https://matkinhtamduc.com"},
+        {"type": "organic", "rank_group": 2, "domain": "google.com", "url": "https://google.com/goto?url=BBB",
+         "breadcrumb": "https://www.other.com"},
+        {"type": "organic", "rank_group": 5, "domain": "matkinhtamduc.com",
+         "url": "https://matkinhtamduc.com/b/?srsltid=x"},
+    ]}]}
+
+    def test_hidden_result_counts_for_the_site(self):
+        got = R.parse_rank(self.TASK, "sc-domain:matkinhtamduc.com", "https://matkinhtamduc.com/a/",
+                           resolve=lambda u: "https://matkinhtamduc.com/a/?srsltid=y")
+        self.assertEqual(got, (1, "https://matkinhtamduc.com/a/", 1))
+
+    def test_unresolved_hidden_link_keeps_rank(self):
+        got = R.parse_rank(self.TASK, "sc-domain:matkinhtamduc.com", "https://matkinhtamduc.com/b/",
+                           resolve=lambda u: None)
+        self.assertEqual(got, (1, None, 5))
+
+
+class EstimateAddTest(unittest.TestCase):
+    def test_estimate_before_adding(self):
+        con = db.connect(":memory:")
+        s = RankSettings(monthly_budget_usd=1, price_per_page=0.0006)
+        R.add_keywords(con, SITE, s, END, [("gọng kính", None)], "t")
+        e = R.estimate_add(con, SITE, s, END, ["Gọng  Kính", "kính mát", "kính mát", "kính cận"])
+        self.assertEqual((e["new"], e["existing"], e["depth"]), (2, 1, 30))
+        self.assertAlmostEqual(e["per_check"], 2 * 3 * 0.0006)
+        self.assertAlmostEqual(e["monthly_add"], 2 * 3 * 0.0006 * 30 / 7)  # lịch mặc định: thứ Ba hằng tuần
+        self.assertAlmostEqual(e["monthly_total"], 3 * 3 * 0.0006 * 30 / 7)

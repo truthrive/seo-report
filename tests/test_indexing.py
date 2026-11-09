@@ -5,10 +5,10 @@ from seo_report import db
 from seo_report import indexing as IX
 from seo_report import urls as U
 
-SITE = "https://matkinhtamduc.com/"
-CORE = "https://matkinhtamduc.com/gong-kinh/"
-ACTIVE = "https://matkinhtamduc.com/mat-xech-la-gi/"
-OLD = "https://matkinhtamduc.com/?p=1"
+SITE = "https://vidushop.com/"
+CORE = "https://vidushop.com/gong-kinh/"
+ACTIVE = "https://vidushop.com/mat-xech-la-gi/"
+OLD = "https://vidushop.com/?p=1"
 TODAY = datetime.now(timezone.utc).date()  # tool ghi thời điểm kiểm tra theo giờ thật (UTC)
 
 
@@ -51,7 +51,7 @@ class IndexTest(unittest.TestCase):
 
     def test_first_sitemap_read_is_not_new_but_later_urls_are(self):
         self.assertEqual(IX.sync_sitemap(self.con, SITE, TODAY, fetch=sitemap([CORE])), 0)
-        new_url = "https://matkinhtamduc.com/bai-moi/"
+        new_url = "https://vidushop.com/bai-moi/"
         self.assertEqual(IX.sync_sitemap(self.con, SITE, TODAY, fetch=sitemap([CORE, new_url])), 1)
         later = TODAY + timedelta(days=3)  # 3 ngày sau
         self.assertIn((new_url, "URL mới (3 ngày)"), [(u, r) for _, u, r in IX.queue(self.con, SITE, later, 50)])
@@ -64,15 +64,15 @@ class IndexTest(unittest.TestCase):
                                 log=lambda *_: None), 0)  # hết lượt trong ngày
         core = self.ids[CORE]
         IX.save(self.con, core, {"verdict": "NEUTRAL", "coverageState": "Đã thu thập dữ liệu nhưng chưa lập chỉ mục",
-                                 "googleCanonical": "https://matkinhtamduc.com/"})
+                                 "googleCanonical": "https://vidushop.com/"})
         latest = IX.latest(self.con, [core])[core]
         self.assertFalse(latest["indexed"])
         self.assertTrue(latest["dropped"])
         self.assertTrue(IX.canonical_mismatch(latest, CORE))
 
     def test_watch_list_paste_check_and_follow_up(self):
-        new = "https://matkinhtamduc.com/bai-moi/"
-        items, invalid = IX.add_watch(self.con, SITE, f"{new}#muc-1\nmatkinhtamduc.com/bai-moi\n"
+        new = "https://vidushop.com/bai-moi/"
+        items, invalid = IX.add_watch(self.con, SITE, f"{new}#muc-1\nvidushop.com/bai-moi\n"
                                                       "https://othersite.vn/x/", "test")
         self.assertEqual([u for _, u in items], [new])
         self.assertEqual(invalid, ["https://othersite.vn/x/"])
@@ -102,16 +102,27 @@ class IndexTest(unittest.TestCase):
 
     def test_gsc_link(self):
         self.assertEqual(IX.gsc_inspect_link(SITE, CORE),
-                         "https://search.google.com/search-console/inspect?resource_id=https%3A%2F%2Fmatkinhtamduc.com"
-                         "%2F&id=https%3A%2F%2Fmatkinhtamduc.com%2Fgong-kinh%2F")
+                         "https://search.google.com/search-console/inspect?resource_id=https%3A%2F%2Fvidushop.com"
+                         "%2F&id=https%3A%2F%2Fvidushop.com%2Fgong-kinh%2F")
 
     def test_sitemap_index_is_followed(self):
-        pages = {"https://matkinhtamduc.com/sitemap.xml":
-                 "<sitemapindex><sitemap><loc>https://matkinhtamduc.com/s1.xml</loc></sitemap></sitemapindex>",
-                 "https://matkinhtamduc.com/s1.xml": "<urlset><url><loc>https://matkinhtamduc.com/a/</loc></url></urlset>"}
-        self.assertEqual(IX.read_sitemap("https://matkinhtamduc.com/sitemap.xml", pages.get),
-                         ["https://matkinhtamduc.com/a/"])
+        pages = {"https://vidushop.com/sitemap.xml":
+                 "<sitemapindex><sitemap><loc>https://vidushop.com/s1.xml</loc></sitemap></sitemapindex>",
+                 "https://vidushop.com/s1.xml": "<urlset><url><loc>https://vidushop.com/a/</loc></url></urlset>"}
+        self.assertEqual(IX.read_sitemap("https://vidushop.com/sitemap.xml", pages.get),
+                         ["https://vidushop.com/a/"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IntentionalTest(unittest.TestCase):
+    def test_intentional_reasons(self):
+        from seo_report import indexing as IX
+        for c in ("Bị loại trừ bởi thẻ 'noindex'", "Trang có lệnh chuyển hướng",
+                  "Trang thay thế có thẻ chính tắc thích hợp", "Page with redirect"):
+            self.assertTrue(IX.intentional(c), c)
+        for c in ("Google không xác định được URL", "Không tìm thấy (404)", None,
+                  "Đã thu thập dữ liệu – hiện chưa được lập chỉ mục"):
+            self.assertFalse(IX.intentional(c), c)

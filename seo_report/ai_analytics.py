@@ -130,9 +130,11 @@ class AIAnalytics:
 
     # ---- Page A: tổng quan ----
 
-    def summary(self, start: date, end: date, filters: Filters | None = None, compare: bool = True) -> dict:
+    def summary(self, start: date, end: date, filters: Filters | None = None, compare: bool = True,
+                prev_range: tuple[date, date] | None = None) -> dict:
+        """prev_range: kỳ so sánh tùy chọn (báo cáo so với cùng kỳ năm trước / kỳ tự chọn); mặc định kỳ liền trước."""
         filters = filters or Filters()
-        prev = previous_period(start, end) if compare else None
+        prev = (prev_range or previous_period(start, end)) if compare else None
 
         def build():
             g = filters.expression()

@@ -299,7 +299,8 @@ class R3Test(unittest.TestCase):
         from seo_report import urls as U
         from seo_report.web_ai import landing_types
         con = db.connect(":memory:")
-        site = "https://matkinhtamduc.com/"
+        site = "https://vidushop.com/"
+        U.set_rules(con, site, "/gong-kinh/ = Danh mục", False, "t")  # quy tắc phân loại là cấu hình của website
         db.replace_day(con, site, "2026-10-01", [{"keys": [site + "gong-kinh/"], "clicks": 1, "impressions": 1,
                                                   "ctr": 1, "position": 1}], [])
         U.assign_urls(con, site)
@@ -365,7 +366,7 @@ if __name__ == "__main__":
 
 
 class R4OpportunityTest(unittest.TestCase):
-    SITE = "https://matkinhtamduc.com/"
+    SITE = "https://vidushop.com/"
 
     def setUp(self):
         from seo_report import urls as U
@@ -577,7 +578,7 @@ def gai_zip(days: dict, pages=None, filters=None, countries=None, extra=None) ->
 
 
 class R6GenerativeAIImportTest(unittest.TestCase):
-    SITE = "https://matkinhtamduc.com/"
+    SITE = "https://vidushop.com/"
 
     def setUp(self):
         from seo_report import urls as U
