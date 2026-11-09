@@ -130,7 +130,7 @@ def kpi_counts(p: dict | None) -> tuple[int, int, int, bool] | None:
 def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     from nicegui import background_tasks, run
 
-    from .web_overview import health_strip, todo_section
+    from .web_overview import health_strip
     site = cfg.site_url
     with connect() as c:
         end = K.latest_date(c, site)
@@ -160,6 +160,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         with connect() as c:
             rep = build(c, cfg, ctx["group"], 0, with_ai=False)
         todos = todo_rows(cfg, connect, rep, ctx)
+        from .web_ai_brief import brief_block  # bản tin AI: đọc bản đã lưu, chỉ gọi AI khi bấm
+        brief_block(ui, cfg, connect, user, rep, todos)
 
     def total(s, e, i):
         return sum(v[i] for d, v in daily.items() if s <= d <= e)
@@ -230,10 +232,6 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         if not ed and not kv:
             return
         with ui.element("div").classes("sr-db-summary"):
-            if ed:
-                n_todo = len(todos)
-                jump(f"{n_todo} việc cần xử lý" if n_todo else "Không có việc cần xử lý",
-                     "checklist" if n_todo else "check_circle", "warn" if n_todo else "good", "can-xu-ly")
             if kv:
                 kc = kpi_counts(kstate["p"])
                 if kc is None:
@@ -477,8 +475,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         elif ed:
             with kpi_box, T.section(ui, "KPI cam kết", "flag", "Dự án chưa có KPI cam kết", href="/kpi",
                                     link_text="Tạo KPI cam kết"):
-                ui.label("Tạo bộ cam kết (thứ hạng, phiên Organic / AI theo tháng dự án) để tool tự chấm tiến độ mỗi "
-                         "ngày.").classes("text-sm muted")
+                ui.label("Tạo bộ cam kết để tool tự chấm tiến độ mỗi ngày.").classes("text-sm muted")
 
     if cl:
         kpi_placeholder()
@@ -492,8 +489,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         T.busy(groups[key], True)
 
     # ================= Việc cần làm (team) và KPI cam kết (tháng dự án) =================
-    if ed:
-        todo_section(ui, cfg, connect, rep, ctx, site, rows=todos)
+    # "Cần xử lý" đã gom vào Bản tin AI ở đầu trang (tín hiệu của khối này là một nguồn của bản tin)
     if not cl:
         kpi_placeholder()
 
@@ -516,7 +512,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         with ui.element("div").classes("sr-db-group " + ("sr-db-12" if cl else "sr-db-8")):
             now_bl = (bl or {}).get("now")
             sub = (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m}" if cl and now_bl else
-                   (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m} (DataForSEO) · "
+                   (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m} · "
                     + ("tạm ngưng tự lấy" if bst["paused"] else BL.EVERY_CHOICES[bst["every_days"]].lower()
                        + " tự lấy lại")
                     + (f" · thay đổi so với lần lấy {date.fromisoformat(bl['prev']['day']):%d/%m}"
@@ -524,8 +520,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
             W.group_head(ui, "Backlink", "link", sub, "/backlink", "Backlink")
             if not now_bl:
                 with W.card(ui, "Backlink", "link"):
-                    ui.label("Chưa lấy số backlink lần nào. Lấy số (tốn phí DataForSEO) và đặt lịch tự lấy ở màn "
-                             "Backlink.").classes("text-sm muted")
+                    ui.label("Chưa có số backlink. Lấy số ở trang Backlink.").classes("text-sm muted")
             else:
                 pv = bl["prev"] or {}
                 hist = [h for h in bl["history"] if h["referring_domains"] is not None]

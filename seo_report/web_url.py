@@ -217,8 +217,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.button("Mọi từ khóa của URL", icon="manage_search",
                               on_click=lambda u=row["url"]: ui.navigate.to(f"/research?tra={quote(u, safe='')}")
                               ).props("flat dense no-caps size=sm color=primary").tooltip(
-                        "Mở ở trang Research: mọi từ khóa trang này đang có hạng, kèm volume, CPC, mục đích; lọc, "
-                        "sao chép, xuất file")
+                        "Xem mọi từ khóa trang này đang có hạng")
                 with ui.row().classes("gap-2"):
                     T.tag(ui, row["type"] or "Chưa phân loại", "grey")
                     if groups.get(state["group"]):
@@ -379,7 +378,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                         "flat dense no-caps")
             if not committed:
                 T.empty_state(ui, "flag", "Chưa có keyword cam kết cho URL này",
-                              "Bấm 'Thêm keyword SEO', hoặc gắn ★ cho keyword GSC ở khối bên dưới")
+                              "Bấm \"Thêm keyword SEO\" hoặc gắn ★ cho từ khóa bên dưới.")
             else:
                 krows = []
                 for k in committed:
@@ -430,8 +429,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                           <q-tooltip>Google đang xếp hạng URL khác, không phải URL này</q-tooltip></q-icon>
                       </div>
                     </q-td>""")
-                ui.label("Volume: Google Ads, Việt Nam, cập nhật mỗi tháng. Google gộp các biến thể gần nhau (ví dụ "
-                         "'giày nữ' và 'giày cho nữ') thành cùng một số.").classes("text-xs muted")
+                ui.label("Volume: lượt tìm mỗi tháng tại Việt Nam (Google Ads).").classes("text-xs muted")
 
         with ui.dialog() as add_dialog, ui.card().style("min-width: 560px; border-radius: 14px"):
             ui.label(f"Thêm keyword SEO cho {row['path']}").classes("text-lg font-semibold")
@@ -478,11 +476,9 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
 
         # ---- Khối 2: keyword GSC nhận diện cho URL này ----
         with T.section(ui, "Keyword GSC nhận diện", "manage_search",
-                       f"Head và keyword phụ từ dữ liệu GSC ({cfg.keywords.window_days} ngày). ★ = đưa vào keyword "
-                       "SEO cam kết của URL này"):
+                       "Từ khóa chính và từ khóa phụ của trang. ★ = đưa vào từ khóa cam kết"):
             if c_now:
-                ui.label(f"Click nhìn thấy theo keyword: {_n(visible)}/{_n(c_now)} ({visible / c_now * 100:.0f}%). "
-                         "Phần còn lại thuộc các query hiếm mà Google ẩn.").classes("text-xs muted")
+                ui.label(f"Thấy được {visible / c_now * 100:.0f}% click theo từ khóa; phần còn lại Google ẩn.").classes("text-xs muted")
             rows = ([kw_row(a.head, "Head")] if a.head else []) + [kw_row(k, "Phụ") for k in a.secondary]
             kw_table = ui.table(columns=[
                 {"name": "role", "label": "Vai trò", "field": "role", "align": "left"},
@@ -529,9 +525,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
 
             if ed:
                 kw_table.on("star", on_star)
-            ui.label(f"Keyword phụ: impression ≥ {cfg.keywords.min_impressions} và position ≤ "
-                     f"{cfg.keywords.max_position:g} trong {cfg.keywords.window_days} ngày, không phải thương hiệu, "
-                     "URL này mạnh nhất cho query đó.").classes("text-xs muted")
+            ui.label("Từ khóa phụ: các truy vấn trang này mạnh nhất (không tính thương hiệu).").classes("text-xs muted")
 
         if a.cannibal:
             with ui.expansion(f"Cannibalization: {len(a.cannibal)} query có URL khác cùng nhận",

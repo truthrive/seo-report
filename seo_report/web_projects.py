@@ -20,8 +20,7 @@ def _vn_date(iso: str | None) -> str:
 def build_projects_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
-    right = T.page_header(ui, "domain", "Dự án", "Mỗi dự án là một website: số liệu, từ khóa, KPI và báo cáo tách "
-                                                "riêng. Đổi dự án ở ô chọn trên thanh trên cùng.", eyebrow="Quản trị",
+    right = T.page_header(ui, "domain", "Dự án", "Mỗi dự án là một website với số liệu, từ khóa và báo cáo riêng.", eyebrow="Quản trị",
                           tone="grey")
     with right:
         ui.button("Thêm dự án", icon="add", on_click=lambda: edit_dialog(None)).props("unelevated no-caps")
@@ -84,7 +83,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                 "outlined dense use-input hide-selected fill-input").classes("w-full")
             brand = ui.input("Từ khóa thương hiệu (cách nhau dấu phẩy)", value=", ".join(s["brand_terms"]),
                              placeholder="ví dụ: abc, congtyabc").props("outlined dense").classes("w-full")
-            ui.label("Query chứa các từ này được tách khỏi từ khóa SEO (không tính là head keyword).").classes(
+            ui.label("Truy vấn chứa các từ này được tính là thương hiệu.").classes(
                 "text-xs muted")
             with ui.row().classes("w-full no-wrap gap-3"):
                 budget = ui.number("Ngân sách check rank (USD/tháng)", value=s["rank_budget_usd"], min=0,
@@ -153,8 +152,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                         "outlined autogrow").classes("w-full").style("font-family: var(--mono); font-size: 12.5px")
                     deep = ui.checkbox("Đường dẫn nhiều cấp không khớp quy tắc nào là URL cũ/kỹ thuật",
                                        value=cur_rules["deep_legacy"]).props("dense")
-            ui.label("Dự án chưa có sheet: màn KPI cam kết có wizard tạo sheet dự án từ sheet mẫu gốc. Dán link ở "
-                     "đây thì tab KPI cam kết trong cùng file (nếu có) cũng được dùng.").classes("text-xs muted")
+            ui.label("Chưa có sheet: tạo ở trang KPI cam kết.").classes("text-xs muted")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
             async def save():
@@ -251,8 +249,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
     def ask_sync(p: dict) -> None:
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:440px"):
             ui.label(f"Lấy dữ liệu cho {p['name']}?").classes("text-base font-semibold")
-            ui.label("Lần đầu tool lấy bù 16 tháng số liệu Search Console, có thể mất 10–30 phút. Cứ dùng tool "
-                     "bình thường trong lúc chờ. Sau đó job hằng ngày tự cập nhật.").classes("text-sm muted")
+            ui.label("Lần đầu tool lấy 16 tháng số liệu, mất khoảng 10–30 phút. Cứ dùng tool bình thường.").classes("text-sm muted")
             with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                 ui.button("Để sau", on_click=dlg.close).props("flat no-caps")
                 ui.button("Lấy dữ liệu ngay", on_click=lambda: (dlg.close(), start_sync(p))).props(
@@ -299,8 +296,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
     def ask_archive(p: dict) -> None:
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:440px"):
             ui.label(f"Lưu trữ dự án {p['name']}?").classes("text-base font-semibold")
-            ui.label("Dự án bị ẩn khỏi ô chọn và job hằng ngày dừng lấy số liệu. Dữ liệu vẫn giữ nguyên; khôi phục "
-                     "được bất cứ lúc nào.").classes("text-sm muted")
+            ui.label("Dự án bị ẩn và dừng cập nhật. Dữ liệu vẫn giữ, khôi phục được.").classes("text-sm muted")
             with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
 
@@ -334,8 +330,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
             ui.label("Xóa hẳn dự án khỏi tool: số liệu GSC / GA4 đã lấy, từ khóa và lịch sử thứ hạng, backlink, KPI, "
                      "báo cáo, cùng mọi quyền của người được gắn vào dự án. Không khôi phục được trên tool.").classes(
                 "text-sm")
-            ui.label("File dữ liệu được chuyển vào thư mục data/da-xoa trên máy chạy tool (bản cuối, phòng xóa nhầm); "
-                     "file trên Google Drive và sheet dự án giữ nguyên.").classes("text-xs muted")
+            ui.label("Dữ liệu được giữ bản cuối phòng xóa nhầm; file trên Drive giữ nguyên.").classes("text-xs muted")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
             with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
@@ -448,7 +443,7 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                 icon_btn).tooltip("Mở website này")
                     with ui.element("div").classes("sr-icon-slot"):
                         ui.button(icon="fact_check", on_click=lambda _, p=p: check_dialog(p)).props(icon_btn).tooltip(
-                            "Kiểm tra kết nối: Search Console và GA4 có đúng website, đọc được số không")
+                            "Kiểm tra kết nối Search Console và Google Analytics")
                     with ui.element("div").classes("sr-icon-slot"):
                         ui.button(icon="edit", on_click=lambda _, p=p: edit_dialog(p)).props(icon_btn).tooltip(
                             "Sửa cấu hình: GSC, GA4, ngân sách, logo, quy tắc URL")

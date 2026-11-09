@@ -46,12 +46,18 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                         ui.label(f"{d['currency']} · số Google Ads lấy lúc {at:%H:%M %d/%m/%Y} (lưu 7 ngày)").classes(
                             "text-sm muted")
                 else:
-                    ui.label("Phân tích một từ khóa: volume Việt Nam và thế giới, xu hướng 12 tháng, CPC, mục đích, "
-                             "biến thể, câu hỏi, nhóm chủ đề và trang kết quả Google. Số từ Google Ads (miễn phí)."
+                    ui.label("Volume, xu hướng, CPC, câu hỏi liên quan và ai đang ở top Google cho một từ khóa."
                              ).classes("text-sm muted")
             if d:
                 from .web_export import export_menu
                 if ed:
+                    def ai_brief():
+                        from .web_ai_research import brief_dialog
+                        brief_dialog(ui, connect, cfg, user, state["data"])
+                    ui.button("AI viết brief", icon="auto_awesome", on_click=ai_brief).props(
+                        "unelevated dense no-caps color=deep-purple-1 text-color=deep-purple-9").tooltip(
+                        "AI viết dàn ý bài cho từ khóa này" + (f" · {PT.cost('ai_kwbrief')} credit"
+                                                            if PT.member(user) else ""))
                     ui.button(icon="refresh", on_click=lambda: load(True)).props(
                         'flat round dense aria-label="Lấy số mới từ Google Ads"').tooltip("Lấy số mới từ Google Ads")
                 export_menu(ui, cfg, connect, f"tong-quan-tu-khoa_{_slug(d['keyword'])}", make_xlsx, user=user,
@@ -89,8 +95,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                 recent = KO.recent(c)
             if not recent:
                 T.empty_state(ui, "query_stats", "Gõ một từ khóa rồi bấm Phân tích",
-                              "Volume Việt Nam và thế giới, xu hướng, CPC, ý định, biến thể, câu hỏi, nhóm chủ đề và "
-                              "trang kết quả Google (khi từ khóa đang được theo dõi hạng).")
+                              "Xem volume, xu hướng, câu hỏi liên quan và ai đang ở top Google.")
                 return
             with ui.element("div").classes("sr-card q-pa-md w-full"):
                 ui.label("Từ khóa đã phân tích gần đây").classes("text-base font-semibold q-mb-sm")
@@ -370,18 +375,15 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                 if sp and sp.get("live") and ed:
                     ui.button(icon="refresh", on_click=lambda: live_serp()).props(
                         'flat round dense aria-label="Lấy lại trang kết quả"').tooltip(
-                        f"Lấy lại ({PT.cost('serp')} điểm)" if PT.member(user) else
+                        f"Lấy lại ({PT.cost('serp')} credit)" if PT.member(user) else
                         f"Lấy lại (khoảng {KO.LIVE_EST_USD:.3f} USD)".replace(".", ","))
             if not sp or not sp.get("date"):
                 with ui.element("div").classes("sr-ko-serp-empty"):
                     ui.icon("travel_explore", size="28px").classes("muted")
                     with ui.column().classes("gap-1 col"):
                         ui.label("Chưa có trang kết quả Google cho từ khóa này").classes("text-sm font-semibold")
-                        ui.label((f"Xem ngay top 10, AI Overview và các ô đặc biệt (một lần, {PT.cost('serp')} điểm),"
-                                  " hoặc theo dõi hạng để có số mỗi lần check.") if PT.member(user) else
-                                 ("Xem ngay top 10, AI Overview và các ô đặc biệt (một lần, khoảng "
-                                  f"{KO.LIVE_EST_USD:.3f} USD, tính vào ngân sách DataForSEO), hoặc theo dõi hạng để "
-                                  "có số mỗi lần check.").replace("0.002", "0,002")).classes("text-sm muted")
+                        ui.label((f"Xem top 10 Google và AI Overview ngay ({PT.cost('serp')} credit), hoặc theo dõi hạng.") if PT.member(user) else
+                                 "Xem top 10 Google và AI Overview ngay, hoặc theo dõi hạng.").classes("text-sm muted")
                     if ed:
                         with ui.row().classes("gap-2 items-center"):
                             ui.button("Xem kết quả Google", icon="travel_explore", on_click=lambda: live_serp()).props(
@@ -547,7 +549,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
             need = refresh or not KO.cached(c, state["kw"])
         _pt = PT.take(ui, user, cfg, "overview", detail=state["kw"]) if need else None
         if _pt is False:
-            state["err"] = "Không đủ điểm để phân tích từ khóa mới tháng này."
+            state["err"] = "Không đủ credit để phân tích từ khóa mới tháng này."
             head.refresh()
             body.refresh()
             return

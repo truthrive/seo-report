@@ -30,8 +30,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
     site = cfg.site_url
     ed = A.can_edit(user)
     right = T.page_header(ui, "storefront", "Local SEO",
-                          "Hồ sơ Google Business Profile: khách thấy hồ sơ bao nhiêu lần, gọi, chỉ đường, vào website; "
-                          "từ khóa tìm thấy hồ sơ và thông tin còn thiếu. Số của Google, tự lấy mỗi ngày.")
+                          "Khách tìm thấy cửa hàng trên Google Maps / Search bao nhiêu lần, gọi, chỉ đường, vào web.")
     right.classes("no-wrap").style("flex:none")  # hai nút không bị ép hẹp (chữ xuống dưới icon)
     state = {"tab": start if start in dict(TABS) else "overview", "loc": "all", "days": 28, "month": "", "q": ""}
     has_scope = not auth.missing_scopes(_scopes(cfg), (auth.BUSINESS_SCOPE,))
@@ -73,7 +72,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
             return
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; width:620px; max-width:94vw"):
             ui.label("Gắn chi nhánh Google Business Profile").classes("text-base font-semibold")
-            ui.label("Danh sách hồ sơ tài khoản Google của tool đang quản lý. Chọn các chi nhánh của website này.") \
+            ui.label("Chọn chi nhánh của website này.") \
                 .classes("text-xs muted")
             box = ui.column().classes("w-full gap-1 q-mt-sm")
             with box:
@@ -101,8 +100,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
         checks = {}
         with box:
             if not locs:
-                ui.label("Tài khoản Google của tool chưa quản lý hồ sơ nào. Thêm email tool làm người quản lý hồ sơ "
-                         "trong Google Business Profile.").classes("text-sm muted")
+                ui.label("Chưa có hồ sơ nào. Thêm email của tool làm người quản lý hồ sơ trên Google Business Profile.").classes("text-sm muted")
             for x in locs:
                 match = bool(x["website"]) and (domain(x["website"]) == want or domain(x["website"]).endswith("." + want))
                 with ui.row().classes("items-start no-wrap gap-2 w-full sr-access-row"):
@@ -137,7 +135,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
                     "outline no-caps color=grey-9").tooltip("Gắn / bỏ các hồ sơ Google Business Profile của dự án")
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary")
             b.on_click(lambda _, b=b: fetch(b))
-            b.tooltip("Lấy lại hồ sơ, hiệu suất và từ khóa từ Google (miễn phí)")
+            b.tooltip("Lấy số mới từ Google (miễn phí)")
 
     @ui.refreshable
     def body():
@@ -146,8 +144,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
             last = G.last_day(c)
         if not has_scope:
             T.empty_state(ui, "lock", "Tool chưa có quyền Google Business Profile",
-                          "Chủ tool vào Cài đặt tích hợp → Kết nối Google, đăng nhập lại và tích ô quyền Google "
-                          "Business Profile." if ed else "Số Local SEO sẽ có sau khi tool được cấp quyền.")
+                          "Owner kết nối lại Google và cấp quyền Google Business Profile ở Cài đặt tích hợp." if ed else "Số Local SEO sẽ có sau khi tool được cấp quyền.")
             return
         if not locs:
             T.empty_state(ui, "storefront", "Chưa gắn hồ sơ Google Business Profile",
@@ -296,8 +293,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
         with connect() as c:
             rows = G.keyword_rows(c, names, chosen)
         with T.section(ui, "Từ khóa tìm thấy hồ sơ", "manage_search",
-                       "Từ khóa người dùng tìm trên Google Search / Maps rồi thấy hồ sơ. So với cùng số tháng liền "
-                       "trước. Từ khóa ít lượt Google chỉ cho “dưới 15”."):
+                       "Từ khóa khách tìm rồi thấy cửa hàng của bạn."):
             with ui.row().classes("w-full items-center gap-2"):
                 ui.select(opts, value=sel, on_change=lambda e: (state.update(month=e.value), body.refresh())).props(
                     "dense outlined options-dense").classes("w-56")

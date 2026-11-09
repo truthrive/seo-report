@@ -16,7 +16,7 @@ Nhiều dự án (website). Bốn nhóm tài khoản:
 - Admin (loại tài khoản "admin" trên màn Phân quyền, chỉ Owner cấp): mọi dự án, được sửa, quản lý dự án và Member /
   Guest, xem ngân sách.
 - Member (quyền `editor` trong dự án được gắn, hoặc Member mọi dự án): mọi màn của dự án, được sửa và chạy tác vụ;
-  mỗi tác vụ bấm tay trừ điểm trong hạn mức tháng (points.py). "Team xem" cũ đã gộp vào Member.
+  mỗi tác vụ bấm tay trừ credit trong hạn mức tháng (points.py). "Team xem" cũ đã gộp vào Member.
 - Guest (quyền `client`): khách hàng, chỉ các màn báo cáo, không thấy số nội bộ / chi phí.
 """
 import base64
@@ -34,7 +34,7 @@ LOCAL, EDITOR, VIEWER, CLIENT = "local", "editor", "viewer", "client"
 # - Owner: email `editors` trong config.toml (cột role = EDITOR) và chủ máy (LOCAL). Toàn quyền: Cài đặt tích hợp,
 #   hạn mức ngân sách, xóa dự án, cấp / gỡ Admin.
 # - Admin: cột role = "admin". Mọi dự án, được sửa, quản lý dự án và Member / Guest, xem ngân sách.
-# - Member: quyền "editor" trong dự án được gắn (Team xem cũ đã gộp vào Member). Có hạn mức điểm hằng tháng.
+# - Member: quyền "editor" trong dự án được gắn (Team xem cũ đã gộp vào Member). Có hạn mức credit hằng tháng.
 # - Guest: quyền "client" trong dự án được gắn: chỉ các màn báo cáo.
 OWNER, ADMIN_ACCT = EDITOR, "admin"
 ADMIN, MEMBER = ADMIN_ACCT, VIEWER  # loại tài khoản lưu ở access_users.role: admin / theo dự án
@@ -87,7 +87,7 @@ def is_owner(user) -> bool:
 
 
 def is_member(user) -> bool:
-    """Member: được sửa trong dự án nhưng không phải Owner / Admin (dùng hạn mức điểm)."""
+    """Member: được sửa trong dự án nhưng không phải Owner / Admin (dùng hạn mức credit)."""
     return isinstance(user, User) and can_edit(user) and not user.admin
 
 

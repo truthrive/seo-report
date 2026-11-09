@@ -29,31 +29,37 @@ OWNER_PAGES = ("/cai-dat",)  # chỉ Owner
 NUMBER = "val => val.toLocaleString('vi-VN')"
 # Menu chia nhóm: (tên nhóm hoặc None, [(nhãn, đường dẫn, icon)])
 NAV = [
-    (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize"),
-            ("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt"),
-            ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
-    ("SEO", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
-             ("Từ khóa & Thứ hạng", "/rank", "leaderboard"),
-             ("Cơ hội SEO", "/co-hoi", "insights"), ("Research từ khóa", "/tu-khoa", "manage_search"),
-             ("Đối thủ", "/doi-thu", "groups"), ("Backlink", "/backlink", "add_link"),
-             ("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
+    (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize")]),
+    ("Kế hoạch", [("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt"),
+                  ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
+    ("Từ khóa", [("Từ khóa & Thứ hạng", "/rank", "leaderboard"), ("Research từ khóa", "/tu-khoa", "manage_search"),
+                 ("Đối thủ", "/doi-thu", "groups"), ("Cơ hội SEO", "/co-hoi", "insights")]),
+    ("Website", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
+                 ("Backlink", "/backlink", "add_link")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
-    ("Quản trị", [("Dự án", "/projects", "domain"), ("Ngân sách & chi phí", "/budget", "account_balance_wallet"),
-                  ("Phân quyền", "/access", "admin_panel_settings"),
-                  ("Cài đặt tích hợp", "/cai-dat", "settings")]),  # chỉ Chủ tool
+    ("Kênh khác", [("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
+    # Quản trị: một mục, tab con là 4 màn (chỉ Owner / Admin; Cài đặt tích hợp chỉ Owner)
+    (None, [("Quản trị", "/projects", "admin_panel_settings")]),
 ]
+ADMIN_TABS = (("Dự án", "/projects"), ("Ngân sách & chi phí", "/budget"), ("Phân quyền", "/access"),
+              ("Cài đặt tích hợp", "/cai-dat"))
 # Mục "URL & Index" (dữ liệu GSC theo URL): một mục trên menu, ba tab = ba màn (link cũ vẫn mở đúng tab)
 URL_TABS = (("Hiệu suất URL", "/url"), ("Nguồn tìm kiếm", "/nguon"), ("Index", "/index"),
             ("Quản lý URL", "/urls"))
-RESEARCH_TABS = (("Tổng quan từ khóa", "/tu-khoa"), ("Ý tưởng từ khóa", "/research"))
+RESEARCH_TABS = (("Tổng quan từ khóa", "/tu-khoa"), ("Ý tưởng từ khóa", "/research"), ("AI đã tạo", "/ai-da-tao"))
 NAV_PARENT = {title: "URL & Index" for title, _ in URL_TABS}  # màn → mục menu được tô sáng
-NAV_PARENT["Tổng quan từ khóa"] = NAV_PARENT["Ý tưởng từ khóa"] = "Research từ khóa"
+NAV_PARENT["Tổng quan từ khóa"] = NAV_PARENT["Ý tưởng từ khóa"] = NAV_PARENT["AI đã tạo"] = "Research từ khóa"
+NAV_PARENT.update({title: "Quản trị" for title, _ in ADMIN_TABS})
 EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")
+
+
+def href_first(items) -> str:
+    return items[0][1] if items else ""
 
 
 def page_href(title: str) -> str:
     """Địa chỉ của màn theo tên (mục menu hoặc tab của URL & Index); không có thì về Tổng quan."""
-    return next((h for t, h in URL_TABS if t == title),
+    return next((h for t, h in URL_TABS + ADMIN_TABS if t == title),
                 next((h for _, items in NAV for label, h, _ in items if label == title), "/"))  # màn làm việc cần quyền sửa: người chỉ xem không thấy trên menu
 
 
@@ -97,7 +103,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         A.migrate_four_groups(c)  # Team xem cũ → Member
         A.adopt_config(c, base.access, first_slug)  # email viewers trong config.toml → quản lý trên màn Phân quyền
     from . import points as PT
-    PT.set_app_db(base.db_path)  # điểm của Member nằm ở file dữ liệu chính
+    PT.set_app_db(base.db_path)  # credit của Member nằm ở file dữ liệu chính
 
     def app_connect():
         """File dữ liệu chính: danh sách dự án, tài khoản, phân quyền."""
@@ -285,7 +291,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         ui.timer(30, render.refresh)
 
     def points_card(user) -> None:
-        """Member: điểm đã dùng / hạn mức tháng này (mọi tác vụ bấm tay trừ điểm, ngày 1 đặt lại)."""
+        """Member: credit đã dùng / hạn mức tháng này (mọi tác vụ bấm tay trừ credit, ngày 1 đặt lại)."""
         from . import points as PT
         b = PT.my_balance(user)
         if not b:
@@ -293,35 +299,44 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         ratio = b["used"] / b["limit"] if b["limit"] else 1
         warn = ratio >= 0.8
         box = ui.element("div").classes("sr-acct-budget clickable" + (" warn" if warn else "")).props(
-            'role=link tabindex=0 aria-label="Mở Điểm của tôi"')
-        box.on("click", lambda: ui.navigate.to("/diem"))
-        box.on("keydown.enter", lambda: ui.navigate.to("/diem"))
+            'role=link tabindex=0 aria-label="Mở Credit của tôi"')
+        box.on("click", lambda: credit_dialog(user))
+        box.on("keydown.enter", lambda: credit_dialog(user))
         with box:
             with ui.row().classes("items-center gap-1 no-wrap w-full"):
                 ui.icon("toll", size="16px").classes("muted").props('aria-hidden="true"')
-                ui.label("Điểm tháng này").classes("text-xs muted col ellipsis")
+                ui.label("Credit tháng này").classes("text-xs muted col ellipsis")
                 ui.icon("chevron_right", size="16px").classes("muted").props('aria-hidden="true"')
             with ui.row().classes("items-baseline gap-1 no-wrap"):
                 ui.label(f"{b['left']:,}".replace(",", ".")).classes("sr-acct-budget-num num")
-                ui.label(f"còn lại / {b['limit']:,} điểm".replace(",", ".")).classes("text-xs muted")
+                ui.label(f"còn lại / {b['limit']:,} credit".replace(",", ".")).classes("text-xs muted")
             color = "#B7791F" if warn else T.GREEN
-            ui.html(f'<div class="sr-kp-bar thin" role="img" aria-label="Đã dùng {min(ratio, 1) * 100:.0f}% điểm">'
+            ui.html(f'<div class="sr-kp-bar thin" role="img" aria-label="Đã dùng {min(ratio, 1) * 100:.0f}% credit">'
                     f'<i style="width:{min(ratio, 1) * 100:.1f}%;background:{color}"></i></div>').classes("w-full")
-            ui.label(f"Đã dùng {b['used']:,} điểm · đặt lại ngày 1".replace(",", ".")).classes("text-xs muted")
+            ui.label(f"Đã dùng {b['used']:,} credit · đặt lại ngày 1".replace(",", ".")).classes("text-xs muted")
+
+    def credit_dialog(user) -> None:
+        """Popup máy tính credit (bấm thẻ credit / mục Máy tính credit trong menu tài khoản)."""
+        from . import web_points as WP
+        with ui.dialog() as dlg, ui.card().classes("sr-pt-dlg q-pa-none"):
+            with ui.row().classes("w-full items-center no-wrap gap-2 sr-pt-dlg-head"):
+                ui.label("Máy tính credit").classes("text-base font-semibold col")
+                ui.button("Lịch sử trừ credit", icon="history", on_click=lambda: ui.navigate.to("/diem")).props(
+                    "flat no-caps dense")
+                ui.button(icon="close", on_click=dlg.close).props('flat round dense aria-label="Đóng"')
+            with ui.element("div").classes("sr-pt-dlg-body"):
+                WP.calculator(ui, user, framed=False)
+        dlg.on("hide", dlg.delete)
+        dlg.open()
 
     def account_menu(user, P, active: str, budget: dict | None = None) -> None:
-        """Góc dưới menu trái: avatar + tên + trạng thái; bấm vào mở menu tài khoản (thông tin, website của tôi, đổi
-        mật khẩu / đăng xuất, lối tắt quản trị)."""
+        """Góc dưới menu trái: avatar + tên + trạng thái; bấm vào mở menu tài khoản (thông tin, hạn mức credit /
+        ngân sách, hồ sơ, đăng xuất). Quản trị ở menu trái, đổi website ở thanh trên nên không lặp lại ở đây."""
         st, st_text = PR.describe(user)
         with app_connect() as c:
             prof = A.profiles(c).get(str(user), {})
         name, photo = A.display_name(prof, user), prof.get("avatar", "")
-        href = page_href(active)
         role_text = ("Owner · trên máy chạy tool" if user.role == A.LOCAL else A.GROUPS[A.group(user)])
-
-        def go_project(slug: str) -> None:
-            app.storage.user["project"] = slug
-            ui.navigate.to(href)
 
         def logout():
             app.storage.user.pop("auth", None)
@@ -329,7 +344,6 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
 
         from .web_profile import profile_dialog
         open_profile = profile_dialog(ui, base, app_connect, user)
-        full = user.role == A.LOCAL or A.is_admin(user)  # toàn quyền mọi website: không ghi quyền từng dòng
 
         with ui.row().classes("sr-account w-full items-center gap-2 q-mt-sm no-wrap").props(
                 'tabindex=0 role=button aria-haspopup=menu aria-label="Tài khoản và cài đặt"').style(
@@ -345,63 +359,48 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     "Ngân sách DataForSEO dự kiến vượt 80%")
             ui.icon("unfold_more", size="18px").classes("muted sr-mini-hide")
             with ui.menu().props('anchor="top left" self="bottom left" :offset="[0, 8]"').classes(
-                    "sr-account-menu").style("width: 300px") as acc_menu:
+                    "sr-account-menu sr-acct2").style("width: 328px") as acc_menu:
+                # đầu menu: ảnh, tên, email, nhóm quyền, trạng thái; nút bút chì mở Hồ sơ
                 with ui.element("div").classes("sr-acct-head"):
                     with ui.row().classes("items-center gap-3 no-wrap"):
-                        T.presence_avatar(ui, name, st, st_text, size=40, colors=T.avatar_color(str(user)),
+                        T.presence_avatar(ui, name, st, st_text, size=44, colors=T.avatar_color(str(user)),
                                           photo=photo)
                         with ui.column().classes("gap-0 col").style("min-width:0"):
                             ui.label(name).classes("sr-acct-name ellipsis")
                             if name != str(user):
                                 ui.label(str(user)).classes("text-xs muted ellipsis").props["title"] = str(user)
-                    with ui.row().classes("items-center gap-2 no-wrap sr-acct-chips"):
-                        role_short, _, role_more = role_text.partition(" · ")
-                        chip = ui.label(role_short).classes("sr-acct-chip")
-                        if role_more:
-                            chip.tooltip(role_text)
-                        on = st == PR.AVAILABLE
-                        with ui.row().classes("items-center no-wrap sr-acct-status" + (" on" if on else "")):
-                            ui.element("span").classes("sr-acct-dot")
-                            ui.label(st_text)
+                            with ui.row().classes("items-center gap-2 no-wrap sr-acct-chips"):
+                                role_short, _, role_more = role_text.partition(" · ")
+                                chip = ui.label(role_short).classes("sr-acct-chip")
+                                if role_more:
+                                    chip.tooltip(role_text)
+                                on = st == PR.AVAILABLE
+                                with ui.row().classes("items-center no-wrap sr-acct-status" + (" on" if on else "")):
+                                    ui.element("span").classes("sr-acct-dot")
+                                    ui.label(st_text)
+                        ui.button(icon="edit", on_click=lambda: (acc_menu.close(), open_profile())).props(
+                            'flat round dense size=sm aria-label="Sửa hồ sơ"').classes("sr-acct-edit").tooltip(
+                            "Sửa hồ sơ")
                 if budget:
                     budget["render"]()
                 points_card(user)
-                ui.label(f"Website của tôi · {len(P.projects)}").classes("sr-nav-group sr-acct-group")
-                with ui.column().classes("gap-0 w-full").style("max-height: 260px; overflow-y: auto"):
-                    for p in P.projects:
-                        cur = p["slug"] == P.project["slug"]
-                        with ui.menu_item(on_click=lambda _, s_=p["slug"]: go_project(s_)).classes(
-                                "items-center gap-3 no-wrap" + (" sr-current" if cur else "")):
-                            T.project_icon(ui, p, 26)
-                            with ui.column().classes("gap-0 col").style("min-width:0"):
-                                ui.label(p["name"]).classes("text-sm ellipsis" + (" font-semibold" if cur else ""))
-                                if not full:
-                                    r = P.roles.get(p["slug"], "")
-                                    ui.label(A.PROJECT_ROLES.get(r, "")).classes("text-xs muted")
-                            if cur:
-                                ui.icon("check", size="16px").style(f"color:{T.GREEN}")
-                if A.is_admin(user):
-                    ui.separator()
-                    ui.label("Quản trị").classes("sr-nav-group sr-acct-group")
-                    for label, to, icon in (("Phân quyền", "/access", "admin_panel_settings"),
-                                            ("Dự án", "/projects", "domain"),
-                                            ("Ngân sách & chi phí", "/budget", "account_balance_wallet"),
-                                            ("Cài đặt tích hợp", "/cai-dat", "settings")):
-                        with ui.menu_item(on_click=lambda _, t=to: ui.navigate.to(t)).classes("items-center gap-3"):
-                            ui.icon(icon, size="18px").classes("muted")
-                            ui.label(label).classes("text-sm")
-                ui.separator()
-                with ui.menu_item(on_click=open_profile).classes("items-center gap-3"):
-                    ui.icon("account_circle", size="18px").classes("muted")
-                    ui.label("Hồ sơ của tôi").classes("text-sm")
-                if not A.is_client(user):
-                    with ui.menu_item(on_click=lambda: ui.navigate.to("/diem")).classes("items-center gap-3"):
-                        ui.icon("toll", size="18px").classes("muted")
-                        ui.label("Điểm của tôi").classes("text-sm")
+
+                # Gọn: chỉ những gì thuộc về tài khoản. Quản trị đã có ở menu trái, đổi website ở thanh trên,
+                # máy tính credit ở nút nổi +.
+                with ui.element("div").classes("sr-acct-links"):
+                    with ui.menu_item(on_click=open_profile).classes("items-center gap-3"):
+                        ui.icon("account_circle", size="18px")
+                        ui.label("Hồ sơ của tôi").classes("text-sm col")
+                    if not A.is_client(user):
+                        with ui.menu_item(on_click=lambda: ui.navigate.to("/diem")).classes("items-center gap-3"):
+                            ui.icon("toll", size="18px")
+                            ui.label("Credit của tôi").classes("text-sm col")
+                            ui.label("Lịch sử trừ credit").classes("text-xs muted")
                 if user.via == "password":
-                    with ui.menu_item(on_click=logout).classes("items-center gap-3"):
-                        ui.icon("logout", size="18px").style(f"color:{T.RED}")
-                        ui.label("Đăng xuất").classes("text-sm").style(f"color:{T.RED}")
+                    with ui.element("div").classes("sr-acct-foot"):
+                        with ui.menu_item(on_click=logout).classes("items-center gap-3 sr-acct-logout"):
+                            ui.icon("logout", size="18px")
+                            ui.label("Đăng xuất").classes("text-sm")
         acc_row.on("keydown.enter", acc_menu.open)
 
     def client_unlinked(P) -> set[str]:
@@ -421,7 +420,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     def float_group(user, P, active: str) -> None:
         """Nhóm nút nổi góc dưới phải: nút + mở 3 thao tác nhanh theo vai trò, nút về đầu trang (cuộn quá 400px).
         Khách hàng: ba loại góp ý gửi cho đội SEO. Người được sửa: thêm từ khóa, thêm đối thủ, trả lời góp ý.
-        Người chỉ xem: không có nút + (không có gì để tạo), chỉ còn nút về đầu trang."""
+        Người còn lại: tra từ khóa và máy tính credit. Mỗi thao tác mở popup (web_quick.py), không rời trang."""
         from .fab import FloatGroup
         if A.is_client(user):
             from .web_feedback import feedback_opener
@@ -434,14 +433,23 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             from . import feedback as FB
             with P.connect() as c:
                 n_new = FB.count_new(c)
-            go = {"kw": "/rank", "rival": "/doi-thu", "fb": "/ho-tro"}
+            from . import web_quick as Q
+            run_ = {"kw": lambda: Q.add_keywords(ui, P, user), "rival": lambda: Q.add_rival(ui, P, user),
+                    "look": lambda: Q.lookup_keyword(ui, P, user), "calc": lambda: credit_dialog(user),
+                    "fb": lambda: ui.navigate.to("/ho-tro")}
             FloatGroup([{"key": "kw", "icon": "playlist_add", "label": "Thêm từ khóa theo dõi"},
                         {"key": "rival", "icon": "group_add", "label": "Thêm đối thủ"},
+                        {"key": "look", "icon": "manage_search", "label": "Tra từ khóa"},
+                        {"key": "calc", "icon": "calculate", "label": "Máy tính credit"},
                         {"key": "fb", "icon": "support_agent", "label": "Xử lý yêu cầu hỗ trợ",
                          **({"badge": f"{n_new} mới"} if n_new else {})}],
-                       fab_label="Thao tác nhanh", on_action=lambda k: ui.navigate.to(go[k]))
+                       fab_label="Thao tác nhanh", on_action=lambda k: run_[k]())
         else:
-            FloatGroup([])
+            from . import web_quick as Q
+            FloatGroup([{"key": "look", "icon": "manage_search", "label": "Tra từ khóa"},
+                        {"key": "calc", "icon": "calculate", "label": "Máy tính credit"}],
+                       fab_label="Thao tác nhanh",
+                       on_action=lambda k: Q.lookup_keyword(ui, P, user) if k == "look" else credit_dialog(user))
 
     def sub_nav(user, P) -> dict[str, list[tuple[str, str]]]:
         """Tab con của từng mục menu (đúng tab có trên trang, theo quyền): mục → [(tên tab, địa chỉ)].
@@ -455,13 +463,14 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             "/url": [(t, h) for t, h in URL_TABS if (h not in EDIT_PAGES or A.can_edit(user))
                      and (not cl or h in A.CLIENT_PAGES)],
             "/tu-khoa": list(RESEARCH_TABS),
+            "/projects": [(t, h) for t, h in ADMIN_TABS if h not in OWNER_PAGES or A.is_owner(user)],
             "/toc-do": q("/toc-do", WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS),
             "/backlink": q("/backlink", WB.PAGE_TABS), "/local": q("/local", WL.TABS),
             "/merchant": q("/merchant", WM.TABS),
             "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"), ("trang-dich", "Trang đích"),
                              ("ai-google", "AI trên Google"), *([] if cl else [("co-hoi", "Cơ hội SEO/GEO")])]),
             "/aio": q("/aio", [("tong-quan", "Tổng quan"), *([] if cl else [("viec", "Việc nên làm")]),
-                               ("tu-khoa", "Từ khóa")]),
+                               ("tu-khoa", "Từ khóa"), *([] if cl else [("ban-ai", "Bản AI")])]),
         }
         try:
             with P.connect() as c:
@@ -516,6 +525,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         continue
                     if group_name:
                         ui.label(group_name).classes("sr-nav-group")
+                    elif group_name is None and href_first(items) == "/projects":
+                        ui.element("div").classes("sr-nav-sep")  # Quản trị: tách khỏi nhóm trên bằng một vạch
                     for label, href, icon in items:
                         on = label == active or NAV_PARENT.get(active) == label
                         subs = subs_of.get(href) or []
@@ -580,7 +591,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             ui.label("Dự kiến vượt 80% ngân sách").classes("text-xs").style("color:#9A5B0B")
 
             budget = None
-            if A.is_admin(user):  # ngân sách DataForSEO: chỉ Owner / Admin (Member xem điểm của mình)
+            if A.is_admin(user):  # ngân sách DataForSEO: chỉ Owner / Admin (Member xem credit của mình)
                 budget = {"render": budget_card, "warn": budget_state()["warn"]}
             account_menu(user, P, active, budget)
 
@@ -615,18 +626,29 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     T.project_icon(ui, P.project, 24)
                     ui.label(P.project["name"]).classes("text-sm font-medium ellipsis")
                     ui.icon("expand_more", size="18px").classes("muted")
-                    with ui.menu().props("auto-close"):
-                        for p in P.projects:
-                            with ui.menu_item(on_click=lambda _, s_=p["slug"]: switch(s_)).classes(
-                                    "items-center gap-2" + (" text-weight-bold" if p["slug"] == P.project["slug"]
-                                                            else "")):
-                                T.project_icon(ui, p, 24)
-                                with ui.column().classes("gap-0"):
-                                    ui.label(p["name"]).classes("text-sm")
-                                    ui.label(PJ.domain(p["site_url"])).classes("text-xs muted")
-                                if p["slug"] == P.project["slug"]:
-                                    ui.space()
-                                    ui.icon("check", size="16px").style(f"color:{T.GREEN}")
+                    # nhiều dự án: ô tìm ở đầu, danh sách cuộn trong khung cố định (website đang mở luôn trên cùng)
+                    with ui.menu().classes("sr-proj-menu").style("width: 300px"):
+                        rows_ = []
+                        if len(P.projects) > 6:
+                            def filt(e) -> None:
+                                q_ = (e.value or "").strip().lower()
+                                for p_, it in rows_:
+                                    it.set_visibility(not q_ or q_ in (p_["name"] + " " + p_["site_url"]).lower())
+                            ui.input(placeholder=f"Tìm trong {len(P.projects)} website", on_change=filt).props(
+                                "outlined dense clearable autofocus").classes("q-ma-sm sr-proj-search").on(
+                                "click", js_handler="e => e.stopPropagation()")
+                        with ui.column().classes("gap-0 w-full").style("max-height: 320px; overflow-y: auto"):
+                            for p in sorted(P.projects, key=lambda x: x["slug"] != P.project["slug"]):
+                                cur = p["slug"] == P.project["slug"]
+                                with ui.menu_item(on_click=lambda _, s_=p["slug"]: switch(s_)).classes(
+                                        "items-center gap-2 no-wrap" + (" sr-current" if cur else "")) as it:
+                                    T.project_icon(ui, p, 24)
+                                    with ui.column().classes("gap-0 col").style("min-width:0"):
+                                        ui.label(p["name"]).classes("text-sm ellipsis")
+                                        ui.label(PJ.domain(p["site_url"])).classes("text-xs muted ellipsis")
+                                    if cur:
+                                        ui.icon("check_circle", size="18px").style(f"color:{T.GREEN}")
+                                rows_.append((p, it))
             else:
                 with ui.row().classes("items-center gap-2 no-wrap"):
                     T.project_icon(ui, P.project, 22)
@@ -771,7 +793,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 ui.tab(href, title)
 
     def research_tabs(current: str) -> None:
-        """Hai tab của mục Research từ khóa: Tổng quan từ khóa (/tu-khoa, tab đầu) · Ý tưởng từ khóa (/research)."""
+        """Các tab của mục Research từ khóa: Tổng quan từ khóa (/tu-khoa) · Ý tưởng từ khóa (/research) · AI đã tạo."""
         with ui.tabs(value=current, on_change=lambda e: ui.navigate.to(e.value) if e.value != current else None).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs q-mb-sm"):
             for title, href in RESEARCH_TABS:
@@ -883,12 +905,12 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
 
     @ui.page("/diem")
     def points_page(request: Request):
-        """Điểm của tôi: số dư, trừ ở đâu, bao nhiêu (Member / Owner / Admin; khách hàng không có)."""
+        """Credit của tôi: số dư, trừ ở đâu, bao nhiêu (Member / Owner / Admin; khách hàng không có)."""
         from .web_points import build_points_page
         if not (opened := open_page(request)):
             return
         user, P = opened
-        shell("Điểm của tôi", user, P, page_ctx(P), period=False, group=False)
+        shell("Credit của tôi", user, P, page_ctx(P), period=False, group=False)
         build_points_page(ui, app_connect, user)
 
     @ui.page("/tai-khoan")
@@ -1012,6 +1034,17 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         build_research_page(ui, P.cfg, P.connect, user, int(rid) if rid.isdigit() else None, qp.get("tra", ""),
                             preset, view={k: qp[k] for k in ("match", "kind", "view") if qp.get(k)})
 
+    @ui.page("/ai-da-tao")
+    def ai_library_page(request: Request):
+        """AI đã tạo: mọi bản AI viết cho website (tab thứ ba của Research từ khóa). Chỉ team."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("AI đã tạo", user, P, page_ctx(P), period=False, group=False)
+        research_tabs("/ai-da-tao")
+        from .web_ai_library import build_ai_library
+        build_ai_library(ui, P.cfg, P.connect, user)
+
     @ui.page("/nguon")
     def sources_page(request: Request):
         """Nguồn tìm kiếm: web, hình ảnh, video, tab Tin tức, Discover, Google News (tab của URL & Index)."""
@@ -1060,8 +1093,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Đối thủ", user, P, page_ctx(P), period=False, group=False)
-        T.page_header(ui, "groups", "Đối thủ", "Các website cạnh tranh trên bộ từ khóa theo dõi: thị phần hiển thị, ai "
-                      "đang vượt, vị trí từng từ khóa. Danh sách dùng chung cho Từ khóa & Thứ hạng và AI Overview.")
+        T.page_header(ui, "groups", "Đối thủ", "Ai đang cạnh tranh với bạn trên Google và AI Overview, ai đang vượt lên.")
         from .web_rivals import build_rivals_panel
         build_rivals_panel(ui, P.cfg, P.connect, user,
                            lambda i, f=None: ui.navigate.to(f"/rank?bo={i}" if i else "/rank"))
@@ -1160,7 +1192,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 add_result = ui.column().classes("w-full")
 
             with ui.tab_panel(t_suggest):
-                ui.label("URL nhiều click nhất 90 ngày qua chưa có trong nhóm (đã bỏ URL cũ/kỹ thuật).").classes("muted")
+                ui.label("Trang nhiều click chưa có trong nhóm.").classes("muted")
                 suggest_type = ui.select(["Tất cả"] + U.TYPES, value="Tất cả", label="Loại",
                                          on_change=lambda: refresh()).classes("w-56")
                 suggest = ui.table(
@@ -1183,8 +1215,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 ).classes("w-full").props("flat bordered dense")
                 search.bind_value(all_table, "filter")
                 type_changer(lambda: all_table.selected, lambda: refresh())
-                ui.label("Nguồn phân loại: rule = theo đường dẫn, schema = đọc trong trang, manual = sửa tay "
-                         "(sửa tay luôn được giữ).").classes("text-sm muted")
+                ui.label("Loại trang được tool tự nhận ra; sửa tay sẽ luôn được giữ.").classes("text-sm muted")
 
             with ui.tab_panel(t_target):
                 from .web_targets import build_target_panel

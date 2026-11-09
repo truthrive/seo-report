@@ -23,7 +23,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
 
     owner = A.is_owner(user)
     T.page_header(ui, "settings", "Cài đặt tích hợp",
-                  "Tài khoản và mã API tool dùng chung cho mọi website. Chỉ Chủ tool thấy màn này.", eyebrow="Quản trị",
+                  "Kết nối Google và các dịch vụ dữ liệu dùng chung cho mọi website.", eyebrow="Quản trị",
                   tone="grey")
     if not owner:
         ui.label("Chỉ Chủ tool sửa được cài đặt tích hợp.").classes("text-sm muted")
@@ -109,19 +109,23 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         if it.key == "google_api":
             return (f"key {v['api_key']} · PageSpeed Insights, Chrome UX Report" if v.get("api_key")
                     else "Chưa có: trang Tốc độ & Core Web Vitals chưa lấy được số")
-        if it.key == "ai":
-            return (I.AI_MODELS.get(v.get("model") or "", v.get("model") or "") + f" · khóa {v['api_key']}"
-                    if v.get("api_key") else "Chuẩn bị cho tính năng AI sau này")
+        if it.key == "gateway":
+            from urllib.parse import urlparse
+            return (f"{urlparse(v.get('base_url', '')).hostname or v.get('base_url')} · {v.get('model') or '–'} · "
+                    f"khóa {v['api_key']}" if v.get("api_key") else "Chưa có: dùng khi có cổng AI riêng")
+        if it.group == "ai":
+            model = I.AI_MODELS.get(v.get("model") or "", v.get("model") or "") or "model tool tự chọn"
+            return f"{model} · khóa {v['api_key']}" if v.get("api_key") else "Chưa có khóa"
         return ""
 
     def integration_card(it):
-        summary, status, actions, editor = setting_row(it.icon, "green" if it.key != "ai" else "purple", it.name)
+        ai = it.group == "ai"
+        summary, status, actions, editor = setting_row(it.icon, "purple" if ai else "green", it.name)
 
         def paint():
             summary.text = summary_of(it)
             on = I.configured(base, it.key)
-            chip(status, on, "Đã cấu hình", "Chưa dùng" if it.key == "ai" else "Chưa cấu hình",
-                 "grey" if it.key == "ai" else "amber")
+            chip(status, on, "Đã cấu hình", "Chưa dùng" if ai else "Chưa cấu hình", "grey" if ai else "amber")
         paint()
         with actions:
             edit_btn = ui.button("Sửa", icon="edit", on_click=lambda: toggle(editor, edit_btn)).props(
@@ -145,6 +149,18 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                     if f.hint:
                         inp.props["hint"] = f.hint  # hiện khi đang gõ vào ô
                     inputs[f.key] = inp
+            if it.key == "gateway":  # ví dụ cURL theo các ô đang nhập (khóa để $API_KEY)
+                from . import ai_http as AH
+                ui.label("Ví dụ cURL (thay $API_KEY bằng khóa khi thử ở terminal)").classes("text-xs muted")
+                code = ui.code("", language="bash").classes("w-full")
+
+                def show_curl(_=None):
+                    code.content = AH.curl_example(inputs["api_style"].value or "chat",
+                                                   (inputs["base_url"].value or "").strip(),
+                                                   (inputs["model"].value or "").strip())
+                for k_ in ("base_url", "api_style", "model"):
+                    inputs[k_].on_value_change(show_curl)
+                show_curl()
             result = ui.label().classes("text-sm")
 
             async def check(save_after: bool):
@@ -237,8 +253,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
             if not google_origin:
                 for b in (connect_btn, switch_btn):
                     b.disable()
-                    b.tooltip("Mở tool trên máy chạy tool (http://localhost:8080) để kết nối Google: ứng dụng "
-                              "Google của tool chỉ cho quay về địa chỉ localhost")
+                    b.tooltip("Mở tool trên máy chạy tool để kết nối Google")
 
         d_summary, d_status, d_actions, d_editor = setting_row("folder", "amber", "Google Drive")
         with app_connect() as c:
@@ -254,8 +269,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         with d_actions:
             d_btn = ui.button("Sửa", icon="edit", on_click=lambda: toggle(d_editor, d_btn)).props("flat dense no-caps")
         with d_editor:
-            ui.label("Mọi file tool tạo (báo cáo xuất lên Drive, sheet dự án) nằm trong thư mục này. Sheet mẫu gốc: "
-                     "wizard ở màn KPI cam kết copy file này thành sheet của dự án mới.").classes("text-xs muted")
+            ui.label("Mọi file tool tạo trên Drive nằm trong thư mục này.").classes("text-xs muted")
             folder = ui.input("Thư mục Google Drive (link hoặc ID)", value=(
                 f"https://drive.google.com/drive/folders/{base.drive_parent}" if base.drive_parent else ""),
                 placeholder="để trống = My Drive").props("outlined dense stack-label clearable").classes("w-full")
@@ -291,9 +305,14 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
 
         ui.label("Mã API dịch vụ").classes("sr-nav-group q-mt-md")
         for it in I.INTEGRATIONS:
-            integration_card(it)
-        ui.label("Mã lưu trong thư mục secrets/ của máy chạy tool, không đưa lên git; trang chỉ hiện 4 ký tự cuối. "
-                 "Mỗi lần đổi đều ghi nhật ký.").classes("text-xs muted q-mt-sm")
+            if it.group != "ai":
+                integration_card(it)
+        ui.label("Nhà cung cấp AI").classes("sr-nav-group q-mt-md")
+        ui.label("Nhập khóa của nhà cung cấp bạn dùng. AI chỉ chạy khi có người bấm.").classes("text-xs muted")
+        for it in I.INTEGRATIONS:
+            if it.group == "ai":
+                integration_card(it)
+        ui.label("Mã được lưu an toàn trên máy chạy tool, trang chỉ hiện 4 ký tự cuối.").classes("text-xs muted q-mt-sm")
 
     if google_notice in GOOGLE_NOTICES:
         kind, text = GOOGLE_NOTICES[google_notice]

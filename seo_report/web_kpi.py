@@ -303,8 +303,7 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
     with connect() as c:
         has_versions = bool(KP.versions(c)) if sid else False
     right = T.page_header(ui, "flag", "Cam kết KPI",
-                          "Thứ hạng bộ từ khóa cam kết và phiên Organic / AI Assistant theo từng tháng dự án."
-                          + ("" if cl else " Sửa trên tool; sheet dự án để xem (tool tự ghi)."), eyebrow="KPI")
+                          "Tiến độ cam kết từng tháng: thứ hạng từ khóa và lượt khách từ Google, AI.", eyebrow="KPI")
     with right:
         if sid and ed:  # người chỉ xem không mở được sheet nội bộ
             ui.button("Mở sheet", icon="open_in_new", on_click=lambda: ui.navigate.to(
@@ -313,8 +312,7 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
             ui.button("Sửa cam kết", icon="edit", on_click=lambda: ui.navigate.to("/kpi/sua")).props(
                 "outline no-caps")
             sync_btn = ui.button("Ghi lên sheet", icon="upload", on_click=lambda: do_publish()).props(
-                "unelevated no-caps").tooltip("Ghi ngay tab KPI cam kết, tab từng bộ từ khóa và tab Dữ liệu check "
-                                              "(tool cũng tự ghi khi dữ liệu đổi)")
+                "unelevated no-caps").tooltip("Ghi số mới nhất lên sheet dự án")
         elif sid and ed:  # sheet vừa gắn: nhập một lần từ sheet, sau đó tool là nơi quản lý
             sync_btn = ui.button("Nhập từ sheet", icon="download", on_click=lambda: do_sync()).props(
                 "unelevated no-caps")
@@ -392,8 +390,7 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
         label = {KP.KPI_TAB: "tab KPI cam kết", KP.KW_TAB: "tab Từ khóa cam kết"}.get(err.want, err.want)
         with ui.dialog() as dlg, ui.card().style("min-width: 460px; max-width: 94vw; border-radius: 14px"):
             ui.label(f"Không tìm thấy {label}").classes("text-lg font-semibold")
-            ui.label("Có thể tab đã được đổi tên trên Google Sheets. Chọn đúng tab, tool sẽ nhớ tab này kể cả khi đổi "
-                     "tên lần sau.").classes("text-sm muted")
+            ui.label("Chọn đúng tab, tool sẽ nhớ.").classes("text-sm muted")
             sel = ui.select(err.titles, label="Tab trong sheet").props("outlined dense").classes("w-full")
 
             async def go():
@@ -438,8 +435,7 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
         if cl:
             T.empty_state(ui, "flag", "Chưa có KPI cam kết", "Tiến độ KPI sẽ hiện ở đây khi cam kết được thiết lập.")
         else:
-            T.empty_state(ui, "download", "Chưa có KPI trên tool", "Bấm Nhập từ sheet để lấy KPI cam kết và từ khóa "
-                          "từ sheet một lần; sau đó sửa trên tool.")
+            T.empty_state(ui, "download", "Chưa có KPI trên tool", "Bấm Nhập từ sheet để lấy cam kết, sau đó sửa trên tool.")
         return
 
     box = ui.column().classes("w-full gap-4").props('aria-busy="true"')
@@ -461,8 +457,7 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
         with box:
             kpi_block(ui, p, compact=False)
             if p and p.get("start"):
-                with T.section(ui, "Cả dự án", "table_chart", "Ô xanh: đạt · đỏ: không đạt (tháng đã chốt) · vàng: "
-                                                              "đang chạy, chưa đạt · khung xanh: tháng hiện tại"):
+                with T.section(ui, "Cả dự án", "table_chart", "Xanh: đạt · Đỏ: không đạt · Vàng: đang chạy"):
                     full_table(ui, p)
                 cur = next((m for m in p["months"] if m["status"] == "running"), None) or \
                     next((m for m in reversed(p["months"]) if m["status"] == "closed"), None)
@@ -564,9 +559,7 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
                                                "from": int(rank_from.value or 1), "finals": finals},
                 "traffic": traffic}
 
-    with T.section(ui, "Thiết lập cam kết KPI", "flag", "Chọn thời gian và các cam kết của dự án. Tool tạo sheet dự "
-                                                        "án trên Drive (copy từ sheet mẫu gốc), điền sẵn các dòng cam "
-                                                        "kết; chỉ tiêu từng tháng sửa tiếp trên sheet."):
+    with T.section(ui, "Thiết lập cam kết KPI", "flag", "Chọn thời gian và cam kết, tool tạo sẵn sheet dự án."):
         with ui.stepper().props("flat animated header-nav").classes("w-full") as stepper:
             with ui.step("Thông tin", icon="info"):
                 name = ui.input("Tên dự án", value=f"SEO {host}").props("outlined dense").classes("w-96")
@@ -580,7 +573,7 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
                     months_other = ui.number("Số tháng", value=6, min=1, max=36, step=1).props(
                         "outlined dense").classes("w-32")
                     months_other.bind_visibility_from(months_pick, "value", backward=lambda v: v == 0)
-                ui.label("Tháng dự án tính từ ngày bắt đầu đến trước cùng ngày tháng sau (01/11 → 30/11).").classes(
+                ui.label("Tháng dự án tính từ ngày bắt đầu (ví dụ 01/11 → 30/11).").classes(
                     "text-xs muted")
                 with ui.stepper_navigation():
                     ui.button("Tiếp", on_click=stepper.next).props("unelevated no-caps")
@@ -599,7 +592,7 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
                                     value="pct").props("dense inline")
                     rank_from = ui.number("Chấm từ tháng", value=3, min=1, max=36, step=1).props(
                         "outlined dense").classes("w-36")
-                ui.label("Mốc cuối dự án (tool chia đều ra các tháng làm gợi ý; sửa trên sheet sau):").classes(
+                ui.label("Mốc cuối dự án (tool chia đều ra các tháng làm gợi ý):").classes(
                     "text-xs muted")
                 with ui.row().classes("items-end gap-4"):
                     for t in (3, 5, 10):
@@ -757,7 +750,7 @@ def _setup(ui, cfg, connect, ed: bool, user: str, app_connect=None, project: dic
                 link = ui.input(placeholder="Dán link Google Sheet đã có").props("outlined dense").classes("w-96")
                 ui.button("Dùng sheet này", on_click=use_link).props("outline no-caps")
         else:
-            ui.label("Gắn sheet có sẵn: nhờ Admin hoặc Owner (sheet được đọc và ghi bằng tài khoản Google của chủ tool)."
+            ui.label("Gắn sheet có sẵn: nhờ Admin hoặc Owner."
                      ).classes("text-sm muted")
 
 
@@ -786,7 +779,7 @@ def build_kpi_edit_page(ui, cfg, connect, user) -> None:
     with connect() as c:
         sid = KP.sheet_id(c)
     right = T.page_header(ui, "edit", "Sửa cam kết KPI",
-                          "Sửa trên tool rồi Lưu: tool lưu phiên bản mới và ghi lại tab KPI cam kết lên sheet dự án.",
+                          "Sửa cam kết rồi bấm Lưu.",
                           eyebrow="KPI")
     with right:
         ui.button("Quay lại", icon="arrow_back", on_click=lambda: ui.navigate.to("/kpi")).props("flat no-caps")
@@ -845,9 +838,7 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
 
     cells: dict[tuple[int, int], object] = {}
 
-    with T.section(ui, "Các cam kết", "flag", "Ô trống = tháng đó không cam kết. % nhập số 0–100; phiên và số từ khóa "
-                                               "nhập số nguyên; dòng tích lũy nhập mức tăng thêm so với baseline của "
-                                               "từng tháng."):
+    with T.section(ui, "Các cam kết", "flag", "Để trống tháng không cam kết."):
         @ui.refreshable
         def grid():
             cells.clear()
@@ -979,5 +970,4 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict) -> None:
     with ui.row().classes("items-center gap-3 q-mt-sm"):
         save_btn = ui.button("Lưu", icon="save", on_click=lambda: save()).props("unelevated no-caps")
         ui.button("Hủy", on_click=lambda: ui.navigate.to("/kpi")).props("flat no-caps")
-        ui.label("Tool lưu phiên bản mới (tháng đã qua vẫn chấm theo phiên bản cũ) và ghi lại tab KPI cam kết lên "
-                 "sheet dự án; các tab khác của khách không đụng tới.").classes("text-xs muted")
+        ui.label("Tool lưu phiên bản mới; tháng đã qua vẫn chấm theo bản cũ.").classes("text-xs muted")

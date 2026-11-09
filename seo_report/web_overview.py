@@ -119,9 +119,98 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 rep.note = note.value or ""
                 if plan is not None:
                     rep.plan = plan.value or ""
+                from datetime import datetime as _dt
+                saved_at["t"] = f"{_dt.now():%H:%M}"
+                paint_state()
                 ui.notify(f"Đã lưu nhận xét cho {unit} này", type="positive")
 
-            ui.button("Lưu nhận xét", icon="save", on_click=save).props("flat no-caps")
+            saved_at = {"t": ""}
+
+            def dirty() -> bool:
+                return (note.value or "") != (rep.note or "") or (plan is not None and (plan.value or "") != (rep.plan or ""))
+
+            def paint_state(_=None) -> None:
+                """Trạng thái lưu cạnh nút: có thay đổi chưa lưu (cam) / đã lưu (xanh) / chưa có nhận xét."""
+                if dirty():
+                    save_state.text, icon_, color = "Có thay đổi chưa lưu", "edit", T.AMBER_TEXT
+                    save_btn.props("unelevated color=primary")
+                    save_btn.enable()
+                elif rep.note or (plan is not None and rep.plan):
+                    save_state.text = f"Đã lưu lúc {saved_at['t']}" if saved_at["t"] else "Đã lưu"
+                    icon_, color = "check_circle", T.GREEN
+                    save_btn.props(remove="unelevated color=primary")
+                    save_btn.disable()
+                else:
+                    save_state.text, icon_, color = "", "", T.MUTED
+                    save_btn.props(remove="unelevated color=primary")
+                    save_btn.disable()
+                save_icon.name = icon_ or "check_circle"
+                save_icon.set_visibility(bool(icon_))
+                save_icon.style(f"color:{color}")
+                save_state.style(f"color:{color}")
+
+            async def ai_draft(btn, force: bool = False) -> None:
+                """AI viết nháp nhận xét (và kế hoạch tháng sau) vào ô; người dùng đọc lại rồi bấm Lưu nhận xét."""
+                from nicegui import run
+
+                from . import ai_http as AH
+                from . import ai_writer as AW
+                from . import points as PT
+                if not force and ((note.value or "").strip() or (plan is not None and (plan.value or "").strip())):
+                    with ui.dialog() as d, ui.card().style("max-width: 420px; border-radius: 14px"):
+                        ui.label("Thay nội dung đang có?").classes("text-lg font-semibold")
+                        ui.label("Ô nhận xét đã có chữ. AI viết nháp sẽ thay nội dung trong ô (chưa lưu cho đến khi "
+                                 "bạn bấm Lưu nhận xét).").classes("text-sm")
+                        with ui.row().classes("w-full justify-end gap-2"):
+                            ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                            async def ok():
+                                d.close()
+                                await ai_draft(btn, force=True)
+                            ui.button("Viết nháp mới", on_click=ok).props("unelevated no-caps color=primary")
+                    d.open()
+                    return
+                try:
+                    prov = AW.provider(cfg)
+                except AW.NoProvider as e:
+                    ui.notify(str(e), type="warning", multi_line=True)
+                    return
+                entry = PT.take(ui, user, cfg, "ai_report", detail=period_text(kind, (ws, we)))
+                if entry is False:
+                    return
+                btn.props("loading")
+                try:
+                    d_, used = await run.io_bound(AW.write_report, cfg, rep, prov)
+                except AH.AIError as e:
+                    PT.give_back(entry)
+                    ui.notify(f"AI chưa viết được: {e}", type="warning", multi_line=True)
+                    return
+                finally:
+                    btn.props(remove="loading")
+                note.value = d_["note"]
+                if plan is not None and d_["plan"]:
+                    plan.value = d_["plan"]
+                with connect() as c:
+                    AW.save(c, site, "report_note", str(note_key(rep)), d_, used, str(user))
+                ai_meta.text = "AI đã viết nháp: đọc lại, sửa rồi bấm Lưu nhận xét."
+                ui.notify("AI đã viết nháp: đọc lại rồi bấm Lưu nhận xét", type="positive")
+
+            with ui.row().classes("w-full items-center gap-2"):
+                save_btn = ui.button("Lưu nhận xét", icon="save", on_click=save).props("flat no-caps")
+                with ui.row().classes("items-center gap-1 no-wrap"):
+                    save_icon = ui.icon("check_circle", size="16px")
+                    save_state = ui.label().classes("text-xs")
+                from . import points as _PT
+                ai_btn = ui.button("AI viết nháp" + (f" · {_PT.cost('ai_report')} credit" if _PT.member(user) else ""),
+                                   icon="auto_fix_high", on_click=lambda: ai_draft(ai_btn)).props(
+                    "unelevated no-caps dense color=purple-1 text-color=deep-purple-9")
+                ai_btn.tooltip("AI đọc số liệu của kỳ này (GSC, thứ hạng, trang / truy vấn tăng giảm) và viết nháp "
+                               "nhận xét" + (" và kế hoạch tháng sau" if month else "") + "; không tự lưu")
+                ai_meta = ui.label().classes("text-xs muted")
+            note.on_value_change(paint_state)
+            if plan is not None:
+                plan.on_value_change(paint_state)
+            paint_state()
     elif ed:  # tình trạng dữ liệu là việc nội bộ: người chỉ xem không cần
         health_strip(ui, cfg, connect, rep)
 
@@ -269,8 +358,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 {"key": "aio", "label": "Lượt hiện trong AI", "color": T.BLUE, "icon": "lightbulb",
                  "source": "Câu trả lời AI của Google · Nguồn: Google Search Console", **aio_metric},
             ], wl, compare_labels=cl)
-            ui.label("Cột: lượt vào site từ trợ lý AI. Đường: phần lượt hiển thị Google nằm trong câu trả lời AI. "
-                     "Hai số đo riêng, không cộng với nhau.").classes("text-xs muted")
+            ui.label("Cột: khách từ AI. Đường: lượt hiện trong câu trả lời AI của Google.").classes("text-xs muted")
 
     @ui.refreshable
     def rank_block():
@@ -676,8 +764,7 @@ def month_sections(ui, rep, site) -> None:
                              fontWeight: 600}">{{ props.value }}</span>
             </q-td>""")
 
-    with T.section(ui, "Theo loại trang", "category", "Click tháng này so với tháng trước · cộng theo URL nên tổng "
-                                                     "khác tổng toàn site"):
+    with T.section(ui, "Theo loại trang", "category", "Click tháng này so với tháng trước"):
         tbl = ui.table(columns=[
             {"name": "type", "label": "Loại trang", "field": "type", "align": "left"},
             {"name": "clicks", "label": "Click", "field": "clicks", "align": "right"},

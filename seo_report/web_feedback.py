@@ -113,7 +113,7 @@ def feedback_opener(ui, connect, user, page: str):
 # ------------------------------------------------------------------ người gửi: trang Yêu cầu của tôi
 def build_my_requests_page(ui, cfg, connect, user) -> None:
     right = T.page_header(ui, "support_agent", "Yêu cầu của tôi",
-                          "Câu hỏi, báo lỗi số liệu và đề xuất bạn đã gửi cho đội SEO, kèm trạng thái và câu trả lời.")
+                          "Các câu hỏi và góp ý bạn đã gửi cho đội SEO, kèm câu trả lời.")
     open_dialog = feedback_opener(ui, connect, user, "")
     with right:
         ui.button("Gửi yêu cầu mới", icon="add", on_click=lambda: open_dialog(on_sent=body.refresh)).props(
@@ -147,8 +147,7 @@ def build_my_requests_page(ui, cfg, connect, user) -> None:
 def build_feedback_page(ui, cfg, connect, user) -> None:
     ed = A.can_edit(user)
     T.page_header(ui, "support_agent", "Yêu cầu hỗ trợ",
-                  "Câu hỏi, báo lỗi số liệu và đề xuất gửi từ trang báo cáo. Trả lời ở đây thì người gửi thấy "
-                  "ngay ở mục Yêu cầu của tôi.")
+                  "Câu hỏi và góp ý từ người xem báo cáo. Trả lời ở đây, người gửi thấy ngay.")
     state = {"view": "open", "open_reply": None}
 
     @ui.refreshable

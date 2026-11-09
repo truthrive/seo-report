@@ -51,8 +51,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
     # Hộp thoại gắn vào khung cố định: mở từ nút trong danh sách thì danh sách làm mới (body.refresh) không xóa mất
     dialogs = ui.element("div")
     right = T.page_header(ui, "admin_panel_settings", "Phân quyền",
-                          "Ai được đăng nhập, vào được website nào và làm được gì. Mở thẳng trên máy chạy tool luôn "
-                          "có toàn quyền.", eyebrow="Quản trị", tone="grey")
+                          "Ai được vào tool, xem website nào và làm được gì.", eyebrow="Quản trị", tone="grey")
     with right:
         ui.button("Thêm người", icon="person_add", on_click=lambda: edit_dialog(None)).props("unelevated no-caps")
 
@@ -85,7 +84,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
             ui.label("Tin mời soạn sẵn").classes("text-sm font-semibold")
             link = ui.input("Địa chỉ tool", value=_setting(connect, "public_url"),
                             placeholder="https://report.tenmien.com").props("outlined dense").classes("w-full")
-            ui.label("Tin mời dùng địa chỉ này kèm /login. Lưu một lần, dùng cho mọi tin mời sau.").classes(
+            ui.label("Địa chỉ đăng nhập gửi kèm tin mời.").classes(
                 "text-xs muted")
             msg = ui.textarea(value=invite_text(email, pw, must_change)).props("outlined autogrow readonly").classes(
                 "w-full")
@@ -222,23 +221,23 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 with connect() as c:
                     bal = PT.balance(c, base["email"]) if base.get("email") else None
                 with ui.column().classes("w-full gap-1 q-mt-sm sr-pt-box") as pts_box:
-                    ui.label("Hạn mức điểm của Member (mọi tác vụ bấm tay trừ điểm, ngày 1 đặt lại)").classes(
+                    ui.label("Hạn mức credit của Member (mọi tác vụ bấm tay trừ credit, ngày 1 đặt lại)").classes(
                         "text-sm font-medium")
                     with ui.row().classes("items-end gap-2"):
                         lim = ui.number("Hạn mức / tháng", value=bal["monthly"] if bal else PT.DEFAULT_MONTHLY,
-                                        min=0, step=100, format="%.0f", suffix="điểm").props(
+                                        min=0, step=100, format="%.0f", suffix="credit").props(
                             "outlined dense").classes("w-44")
                         extra = ui.number("Cấp thêm tháng này", value=0, min=0, step=100, format="%.0f",
-                                          suffix="điểm").props("outlined dense").classes("w-44")
+                                          suffix="credit").props("outlined dense").classes("w-44")
                     if bal:
-                        ui.label(f"Tháng này đã dùng {bal['used']:,} / {bal['limit']:,} điểm"
-                                 + (f" (gồm {bal['granted']:,} điểm cấp thêm)" if bal["granted"] else "")
+                        ui.label(f"Tháng này đã dùng {bal['used']:,} / {bal['limit']:,} credit"
+                                 + (f" (gồm {bal['granted']:,} credit cấp thêm)" if bal["granted"] else "")
                                  .replace(",", ".")).classes("text-xs muted")
                 pts_box.bind_visibility_from(kind, "value", backward=lambda v: v != "admin")
             with ui.column().classes("gap-0 q-mt-sm"):
                 for name, what in (("Guest", "khách hàng: xem các màn báo cáo, không thấy số nội bộ, chi phí"),
                                    ("Member", "team SEO: mọi màn của website, sửa, chạy check / research; dùng hạn "
-                                              "mức điểm mỗi tháng"),
+                                              "mức credit mỗi tháng"),
                                    ("Admin", "mọi website, quản lý dự án và Member / Guest, xem ngân sách (Owner "
                                              "cấp)")):
                     with ui.row().classes("no-wrap gap-1 items-baseline"):
@@ -275,7 +274,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                             for s_ in mine:
                                 if s_ not in pl["want"]:
                                     A.remove_member(c, e, s_, user, settings=cfg.access)
-                            if kind is not None:  # hạn mức điểm Member
+                            if kind is not None:  # hạn mức credit Member
                                 if int(lim.value or 0) != PT.monthly_limit(c, e):
                                     PT.set_limit(c, e, int(lim.value or 0), user)
                                 if int(extra.value or 0) > 0:
@@ -330,8 +329,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
             return
         with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:14px; min-width:420px"):
             ui.label(f"Gỡ tài khoản {em}?").classes("text-base font-semibold")
-            ui.label("Người này không vào được tool nữa và bị đăng xuất. Tài khoản chuyển xuống mục Đã gỡ, cấp lại "
-                     "được bất cứ lúc nào.").classes("text-sm muted")
+            ui.label("Người này không vào được tool nữa. Cấp lại được bất cứ lúc nào.").classes("text-sm muted")
             with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
 
@@ -401,10 +399,10 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     ui.label(A.PROJECT_ROLES.get(role, "Member")).classes("text-xs muted")
             if not mine and not u.get("team_role"):
                 ui.label("Chưa gắn website nào: chưa vào được tool").classes("text-xs").style(f"color:{T.RED}")
-            elif u.get("team_role") or any(r_ != A.CLIENT for r_ in mine.values()):  # Member: điểm tháng này
+            elif u.get("team_role") or any(r_ != A.CLIENT for r_ in mine.values()):  # Member: credit tháng này
                 with connect() as c:
                     b = PT.balance(c, u["email"])
-                T.status_chip(ui, f"Điểm {b['used']:,} / {b['limit']:,}".replace(",", "."),
+                T.status_chip(ui, f"Credit {b['used']:,} / {b['limit']:,}".replace(",", "."),
                               "amber" if b["limit"] and b["used"] >= 0.8 * b["limit"] else "grey", "toll")
 
     # Chấm trạng thái (online / vắng mặt / offline) tự cập nhật mỗi 20 giây, không dựng lại cả danh sách
@@ -497,8 +495,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     "outlined dense options-dense").classes("w-52")
 
         if view["tab"] == "log":
-            with T.section(ui, "Nhật ký phân quyền", "history", "300 thay đổi gần nhất: thêm / gỡ tài khoản, gắn / "
-                                                               "gỡ website, đổi quyền, đặt mật khẩu"):
+            with T.section(ui, "Nhật ký phân quyền", "history", "Các thay đổi gần đây về tài khoản và quyền."):
                 if not log:
                     ui.label("Chưa có thay đổi nào (nhật ký bắt đầu ghi từ 01/11/2026).").classes("text-sm muted")
                 for r in log:

@@ -14,14 +14,11 @@ from . import ui_theme as T
 
 INTENT_FULL = {"I": "Thông tin", "N": "Điều hướng", "C": "Cân nhắc mua", "T": "Mua / giao dịch"}
 COMP = {"LOW": ("Thấp", "k-new"), "MEDIUM": ("Vừa", "k-kw"), "HIGH": ("Cao", "k-lost")}
-HINT = {"list": "Chỉ lấy số của đúng các từ khóa đã nhập (không thêm ý tưởng). Muốn thêm ý tưởng liên quan: chọn "
-                "Từ khóa gốc. Enter để tìm, Shift+Enter để xuống dòng.",
-        "keywords": "Dán thẳng cột từ khóa từ Google Sheets / Excel (mỗi dòng một từ khóa, tối đa 100). Enter để "
-                    "tìm, Shift+Enter để xuống dòng.",
-        "url": "Địa chỉ một trang (của mình hoặc đối thủ): Google gợi ý từ khóa theo nội dung trang đó.",
-        "site": "Tên miền (của mình hoặc đối thủ), ví dụ doithu.vn: Google gợi ý từ khóa theo cả website.",
-        "rank_url": "Dán một URL. Trang của site: mọi từ khóa Search Console ghi nhận cho trang đó (28 ngày). Trang "
-                    "đối thủ: các từ khóa trong bộ theo dõi hạng mà trang đó đang lên (lần check gần nhất)."}
+HINT = {"list": "Lấy số của đúng các từ khóa đã nhập.",
+        "keywords": "Dán danh sách từ khóa (tối đa 100), mỗi dòng một từ.",
+        "url": "Dán một trang (của bạn hoặc đối thủ) để xem từ khóa liên quan.",
+        "site": "Gõ tên miền (của bạn hoặc đối thủ) để xem họ nhắm từ khóa nào.",
+        "rank_url": "Dán một URL để xem các từ khóa trang đó đang có hạng."}
 
 
 def build_research_page(ui, cfg, connect, user, open_id: int | None = None, lookup: str = "",
@@ -175,11 +172,9 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             with ui.row().classes("items-center gap-2 no-wrap"):
                 T.flag(ui)
                 ui.label(f"{rec['currency']} · {KR.MODES[rec['mode']]} · "
-                         f"{datetime.fromisoformat(rec['at']).astimezone():%H:%M %d/%m/%Y} · "
-                         f"{rec['by'].split('@')[0]}").classes("text-sm muted")
+                         f"{datetime.fromisoformat(rec['at']).astimezone():%H:%M %d/%m/%Y}").classes("text-sm muted")
         else:
-            ui.label("Tìm hàng trăm từ khóa liên quan từ Google Keyword Planner (miễn phí): volume, xu hướng, CPC, "
-                     "mục đích; đối chiếu với Search Console.").classes("text-sm muted")
+            ui.label("Tìm hàng trăm từ khóa liên quan kèm volume, xu hướng, CPC và vị trí của website.").classes("text-sm muted")
 
     with ui.column().classes("w-full gap-1 q-mb-md"):
         head()
@@ -243,7 +238,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                     ui.button(b_["name"], on_click=lambda h=b_["domains"][0]: fill_site(h)).props(
                         "flat dense no-caps size=sm rounded color=grey-8").tooltip(b_["domains"][0])
         if not ed:
-            ui.label("Chỉ người có quyền sửa chạy research; bạn mở được các lần đã tìm ở nút Lịch sử.").classes(
+            ui.label("Bạn xem được các lần đã tìm ở nút Lịch sử.").classes(
                 "text-xs muted")
 
     @ui.refreshable
@@ -464,7 +459,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 need = [r["keyword"] for r in state["rec"]["rows"] if r["keyword"] in want and not r.get("aio")]
                 b_aio = ui.button(f"Check AIO ({len(need)})" if need else "Check AIO", icon="auto_awesome",
                                   on_click=lambda: aio_dialog(need)).props("outline dense no-caps")
-                b_aio.tooltip((f"{PT.cost('aio')} điểm / từ khóa chưa có số AI Overview" if PT.member(user) else
+                b_aio.tooltip((f"{PT.cost('aio')} credit / từ khóa chưa có số AI Overview" if PT.member(user) else
                                f"Tốn phí DataForSEO: khoảng {KO.LIVE_EST_USD:.3f} USD / từ khóa chưa có số AI Overview"
                                .replace(".", ",")) if need else "Các từ khóa đã chọn đều đã có số AI Overview")
                 if not need:
@@ -483,7 +478,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
                 ui.icon("toll" if PT.member(user) else "paid", size="18px")
                 if PT.member(user):
-                    ui.label(f"Trừ {PT.cost('aio', len(kws)):,} điểm ({PT.cost('aio')} điểm / từ khóa) trong hạn mức "
+                    ui.label(f"Trừ {PT.cost('aio', len(kws)):,} credit ({PT.cost('aio')} credit / từ khóa) trong hạn mức "
                              "tháng của bạn; phần không check được sẽ hoàn lại. Từ khóa đã có số AI Overview không "
                              "check lại.".replace(",", ".", 1)).classes("text-sm")
                 else:
@@ -517,7 +512,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         try:
             res, rec = await run.io_bound(work)
             state["rec"] = rec
-            if res["done"] < len(kws):  # chỉ tính điểm phần đã check
+            if res["done"] < len(kws):  # chỉ tính credit phần đã check
                 PT.give_back(_pt)
                 PT.take(ui, user, cfg, "aio", n=res["done"], detail=f"{res['done']}/{len(kws)} từ khóa")
             msg = f"Đã check {res['done']} từ khóa"
@@ -551,7 +546,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 with connect() as c:
                     e = R.estimate_add(c, site, cfg.rank, K.latest_date(c, site), kws, sel.value)
                 est.text = (f"{e['new']} từ khóa mới ({e['existing']} đã có trong bộ). Thêm vào bộ: "
-                            f"{PT.cost('volume')} điểm; check theo lịch của bộ không trừ điểm của bạn."
+                            f"{PT.cost('volume')} credit; check theo lịch của bộ không trừ credit của bạn."
                             if PT.member(user) else
                             f"{e['new']} từ khóa mới ({e['existing']} đã có trong bộ). Check hạng tốn thêm khoảng "
                             f"{R.usd(e['monthly_add'])} USD/tháng theo lịch của bộ; cả tháng dự kiến "
@@ -585,8 +580,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         ui.label(f"{len(groups):,} nhóm từ {len(rows):,} từ khóa · {len(new):,} nhóm cần trang mới "
                  f"(tổng {sum(g['volume'] for g in new):,} lượt tìm / tháng)".replace(",", ".")).classes(
             "text-sm muted q-mb-xs")
-        ui.label("Nhóm theo trang site đang lên cho từ khóa (Search Console), phần còn lại theo độ giống của từ khóa. "
-                 "Mỗi nhóm nên có một trang đích; nhóm “Cần trang mới” là gợi ý bài / danh mục nên làm.").classes(
+        ui.label("Mỗi nhóm nên có một trang đích. \"Cần trang mới\" là gợi ý trang nên làm.").classes(
             "text-xs muted q-mb-sm")
         def n_(v) -> str:
             return f"{v:,}".replace(",", ".")
@@ -1049,9 +1043,20 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                                   on_change=lambda e: (state.update(match=e.value, word=None, word_label=""),
                                                        fbar.refresh(), words_panel.refresh(), table.refresh())
                                   ).props(seg).classes("sr-seg")
-                    m.tooltip("Khớp rộng: chứa đủ các từ của từ khóa gốc (thứ tự bất kỳ). Khớp cụm: chứa đúng cụm "
-                              "từ khóa gốc. Mọi ý tưởng: cả từ khóa liên quan Google gợi ý.")
+                    m.tooltip("Khớp rộng: chứa đủ các từ · Khớp cụm: đúng cụm từ · Mọi ý tưởng: cả từ khóa Google gợi ý")
                 ui.space()
+                if ed:  # AI lập chiến lược: luôn hiện; đã tick thì dùng từ khóa đã chọn, chưa tick thì danh sách đang xem
+                    def ai_plan():
+                        from .web_ai_research import plan_dialog
+                        want = set(state["sel"])
+                        rows = ([r for r in rec["rows"] if r["keyword"] in want] if want else
+                                sorted(shown_rows(), key=lambda r: -(r.get("volume") or 0)))
+                        plan_dialog(ui, connect, cfg, user, rows, picked=bool(want))
+                    ui.button("AI lập chiến lược", icon="auto_awesome", on_click=ai_plan).props(
+                        "unelevated dense no-caps color=deep-purple-1 text-color=deep-purple-9").tooltip(
+                        "Trụ cột chủ đề, việc thắng nhanh, lộ trình và KPI. Dùng các từ khóa đã tick; chưa tick thì "
+                        "lấy 80 từ khóa nhiều lượt tìm nhất trong danh sách đang xem"
+                        + (f" · {PT.cost('ai_plan')} credit" if PT.member(user) else ""))
                 ui.input(placeholder="Tìm trong danh sách", value=state["q"],
                          on_change=lambda e: (state.update(q=e.value or ""), words_panel.refresh(),
                                               table.refresh())).props(

@@ -31,8 +31,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
     from .web_local import _scopes
     ed = A.can_edit(user)
     right = T.page_header(ui, "shopping_bag", "Merchant Center",
-                          "Sản phẩm trên Google Shopping và hiển thị miễn phí: bao nhiêu sản phẩm được hiện, sản phẩm "
-                          "nào bị từ chối / hạn chế và vì sao, click từ Google. Số của Google, tự lấy mỗi ngày.")
+                          "Sản phẩm đang hiện trên Google Shopping, sản phẩm nào bị từ chối và vì sao.")
     state = {"tab": start if start in dict(TABS) else "overview", "days": 28, "method": "ORGANIC", "f": None,
              "q": "", "status": "all"}
     has_scope = not auth.missing_scopes(_scopes(cfg), (auth.CONTENT_SCOPE,))
@@ -71,16 +70,13 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
         dùng tự nhập ID tài khoản và email liên hệ rồi bấm Đăng ký (thay đổi cài đặt trên tài khoản Merchant Center)."""
         with box:
             ui.label("Cần đăng ký tool với tài khoản Merchant Center (làm một lần)").classes("text-sm font-semibold")
-            ui.label("Google yêu cầu Google Cloud project của tool được đăng ký với tài khoản Merchant Center trước khi "
-                     "đọc số. Tài khoản Google đang kết nối với tool phải là quản trị viên của tài khoản Merchant "
-                     "Center đó.").classes("text-xs muted")
+            ui.label("Cần đăng ký tool với Merchant Center một lần. Tài khoản Google kết nối phải là quản trị viên.").classes("text-xs muted")
             acc_in = ui.input("ID tài khoản Merchant Center",
                               placeholder="Số ở góc trên bên phải Merchant Center, ví dụ 123456789").props(
                 "dense outlined").classes("w-full q-mt-sm")
             mail_in = ui.input("Email liên hệ về API", placeholder="email công ty của người phụ trách").props(
                 "dense outlined").classes("w-full")
-            ui.label("Email này nhận vai trò “API developer” trong Merchant Center (chỉ nhận thông báo về API, quyền "
-                     "rất hạn chế). Chưa là người dùng của tài khoản thì Google gửi lời mời tới email này.").classes(
+            ui.label("Email này chỉ nhận thông báo kỹ thuật, quyền rất hạn chế.").classes(
                 "text-xs muted")
             msg = ui.label("").classes("text-sm")
 
@@ -121,8 +117,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
             return
         with ui.dialog() as dlg, ui.card().style("border-radius:14px; width:620px; max-width:94vw"):
             ui.label("Gắn tài khoản Merchant Center").classes("text-base font-semibold")
-            ui.label("Các tài khoản Merchant Center mà tài khoản Google của tool có quyền. Chọn tài khoản của website "
-                     "này.").classes("text-xs muted")
+            ui.label("Chọn tài khoản Merchant Center của website này.").classes("text-xs muted")
             box = ui.column().classes("w-full gap-1 q-mt-sm")
             with box:
                 T.spinner(ui, "Đang đọc danh sách tài khoản từ Google…")
@@ -158,8 +153,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
         box.clear()
         if not accs:
             with box:
-                ui.label("Tài khoản Google của tool chưa có quyền với tài khoản Merchant Center nào. Trong Merchant "
-                         "Center → Cài đặt → Người dùng, thêm email tool.").classes("text-sm muted")
+                ui.label("Chưa có tài khoản nào. Thêm email của tool vào Merchant Center → Người dùng.").classes("text-sm muted")
             with foot:
                 ui.button("Đóng", on_click=dlg.close).props("flat no-caps")
             return
@@ -196,7 +190,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary").style(
                 "white-space:nowrap")
             b.on_click(lambda _, b=b: fetch(b))
-            b.tooltip("Lấy lại sản phẩm, hiệu suất 90 ngày và vấn đề tài khoản từ Google (miễn phí)")
+            b.tooltip("Lấy số mới từ Google (miễn phí)")
 
     @ui.refreshable
     def body():
@@ -204,8 +198,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
             acc = M.linked(c)
         if not has_scope:
             T.empty_state(ui, "lock", "Tool chưa có quyền Google Merchant Center",
-                          "Chủ tool vào Cài đặt tích hợp → Kết nối Google, đăng nhập lại và tích ô quyền quản lý sản "
-                          "phẩm Google Shopping." if ed else "Số Merchant Center sẽ có sau khi tool được cấp quyền.")
+                          "Owner kết nối lại Google và cấp quyền Google Shopping ở Cài đặt tích hợp." if ed else "Số Merchant Center sẽ có sau khi tool được cấp quyền.")
             return
         if not acc:
             T.empty_state(ui, "shopping_bag", "Chưa gắn tài khoản Merchant Center",
@@ -286,7 +279,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
                       key=lambda c_: c_["level"] != "high")  # cần sửa trước, giữ thứ tự trong cùng mức
         if todo:
             with T.section(ui, "Việc cần làm với sản phẩm", "fact_check",
-                           "Bấm một mục để mở tab Sản phẩm, lọc đúng các sản phẩm đó"):
+                           "Bấm một mục để xem các sản phẩm đó."):
                 with ui.element("div").classes("sr-au-todo"):
                     for c_ in todo[:6]:
                         label, tone, icon = LEVELS[c_["level"]]
@@ -404,7 +397,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
                 ui.label("Mọi sản phẩm đủ điều kiện, không có cảnh báo.").classes("text-sm muted")
 
         by_key = {c_["key"]: c_ for c_ in pchecks}
-        with T.section(ui, "Sản phẩm", "inventory_2", "Click / lượt hiển thị: hiển thị miễn phí, 28 ngày gần nhất"):
+        with T.section(ui, "Sản phẩm", "inventory_2", "Click và lượt hiện miễn phí, 28 ngày gần nhất"):
             ui.element("div").props(f'id="{anchor}"')
             with ui.row().classes("w-full items-center gap-2"):
                 ui.select({"all": "Mọi trạng thái", **{k: v[0] for k, v in M.STATUS.items()}}, value=state["status"],

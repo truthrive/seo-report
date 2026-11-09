@@ -1,10 +1,10 @@
-"""Hạn mức điểm hằng tháng của Member: mọi tác vụ bấm tay (tốn phí hoặc miễn phí) trừ điểm theo bảng COSTS.
+"""Hạn mức credit hằng tháng của Member: mọi tác vụ bấm tay (tốn phí hoặc miễn phí) trừ credit theo bảng COSTS.
 
-1 điểm ≈ 0,001 USD. Tác vụ tốn phí DataForSEO tính theo giá thật; tác vụ miễn phí tính theo lượt Google (quota) hoặc
+1 credit ≈ 0,001 USD. Tác vụ tốn phí DataForSEO tính theo giá thật; tác vụ miễn phí tính theo lượt Google (quota) hoặc
 tải máy chủ. Owner / Admin không giới hạn (vẫn ghi nhật ký để xem ai dùng gì). Việc tool tự chạy theo lịch không trừ
-điểm của ai (tính vào ngân sách dự án như cũ). Ngày 1 hằng tháng điểm tự đặt lại: hạn mức tính theo tháng của nhật ký.
+credit của ai (tính vào ngân sách dự án như cũ). Ngày 1 hằng tháng credit tự đặt lại: hạn mức tính theo tháng của nhật ký.
 
-Dữ liệu nằm ở file dữ liệu chính (cùng chỗ tài khoản), dùng chung mọi dự án: điểm là của người, không của dự án.
+Dữ liệu nằm ở file dữ liệu chính (cùng chỗ tài khoản), dùng chung mọi dự án: credit là của người, không của dự án.
 """
 import math
 import sqlite3
@@ -15,7 +15,7 @@ from . import access as A
 
 DEFAULT_MONTHLY = 2000
 POINT_USD = 0.001
-# tác vụ → (tên, điểm mỗi lần / mỗi từ khóa). Check rank: 1 điểm mỗi 10 kết quả của độ sâu (xem rank_points).
+# tác vụ → (tên, credit mỗi lần / mỗi từ khóa). Check rank: 1 credit mỗi 10 kết quả của độ sâu (xem rank_points).
 COSTS = {
     "rank": ("Check rank", 1),
     "aio": ("Check AIO", 2),
@@ -30,6 +30,11 @@ COSTS = {
     "merchant": ("Lấy số Merchant Center", 1),
     "kg": ("Kiểm tra Knowledge Graph", 1),
     "sheets": ("Lưu Google Sheets / Drive", 1),
+    "ai_aio": ("AI viết đoạn trả lời AIO", 5),
+    "ai_report": ("AI viết nhận xét báo cáo", 10),
+    "ai_brief": ("AI bản tin Tổng quan", 5),
+    "ai_plan": ("AI lập chiến lược SEO", 10),
+    "ai_kwbrief": ("AI viết brief từ khóa", 5),
 }
 
 SCHEMA = """
@@ -48,13 +53,13 @@ _APP_DB: dict = {"path": None}
 
 
 def set_app_db(path) -> None:
-    """web.py gọi lúc khởi động: file dữ liệu chính (tài khoản, phân quyền, điểm)."""
+    """web.py gọi lúc khởi động: file dữ liệu chính (tài khoản, phân quyền, credit)."""
     _APP_DB["path"] = str(path)
 
 
 def _connect():
     if not _APP_DB["path"]:
-        raise RuntimeError("chưa đặt file dữ liệu chính cho điểm")
+        raise RuntimeError("chưa đặt file dữ liệu chính cho credit")
     con = sqlite3.connect(_APP_DB["path"], timeout=15)
     ensure(con)
     return closing(con)
@@ -73,7 +78,7 @@ def month_of(today: date | None = None) -> str:
 
 
 def rank_points(depths) -> int:
-    """Check rank: 1 điểm mỗi 10 kết quả (độ sâu 20 = 2 điểm), cộng cho mọi từ khóa."""
+    """Check rank: 1 credit mỗi 10 kết quả (độ sâu 20 = 2 credit), cộng cho mọi từ khóa."""
     return sum(max(1, math.ceil((d or 10) / 10)) for d in depths)
 
 
@@ -121,17 +126,17 @@ def set_limit(con, email: str, monthly: int, by: str) -> None:
 
 
 def grant(con, email: str, points: int, by: str, note: str = "", today: date | None = None) -> None:
-    """Cấp thêm điểm cho tháng này (chỉ tháng này)."""
+    """Cấp thêm credit cho tháng này (chỉ tháng này)."""
     points = int(points)
     if points <= 0 or points > 1_000_000:
-        raise ValueError("Số điểm cấp thêm không hợp lệ")
+        raise ValueError("Số credit cấp thêm không hợp lệ")
     ensure(con)
     with con:
         con.execute("INSERT INTO points_grants (at, month, email, points, by, note) VALUES (?, ?, ?, ?, ?, ?)",
                     (_now(), month_of(today), str(email).lower(), points, str(by), note.strip()))
 
 
-# ---------------------------------------------------------------- trừ điểm
+# ---------------------------------------------------------------- trừ credit
 
 class NotEnough(Exception):
     pass
@@ -139,8 +144,8 @@ class NotEnough(Exception):
 
 def spend(con, user, project: str, action: str, points: int, detail: str = "",
           today: date | None = None) -> int | None:
-    """Ghi một tác vụ; Member không đủ điểm thì NotEnough (không ghi). Trả id dòng nhật ký (để hoàn khi lỗi), None
-    khi không tính điểm (Guest / 0 điểm)."""
+    """Ghi một tác vụ; Member không đủ credit thì NotEnough (không ghi). Trả id dòng nhật ký (để hoàn khi lỗi), None
+    khi không tính credit (Guest / 0 credit)."""
     points = int(points)
     if points <= 0 or A.is_client(user):
         return None
@@ -152,7 +157,7 @@ def spend(con, user, project: str, action: str, points: int, detail: str = "",
         if member:
             b = balance(con, email, month)
             if points > b["left"]:
-                raise NotEnough(f"Cần {points:,} điểm, còn {b['left']:,} / {b['limit']:,} điểm tháng này. Nhờ Owner "
+                raise NotEnough(f"Cần {points:,} credit, còn {b['left']:,} / {b['limit']:,} credit tháng này. Nhờ Owner "
                                 f"hoặc Admin cấp thêm.".replace(",", "."))
         cur = con.execute("INSERT INTO points_log (at, month, email, project, action, points, detail, member) "
                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -161,14 +166,14 @@ def spend(con, user, project: str, action: str, points: int, detail: str = "",
 
 
 def refund(con, entry_id: int | None) -> None:
-    """Hoàn điểm khi tác vụ không chạy được."""
+    """Hoàn credit khi tác vụ không chạy được."""
     if entry_id:
         with con:
             con.execute("DELETE FROM points_log WHERE id = ?", (entry_id,))
 
 
 def usage(con, month: str | None = None) -> list[dict]:
-    """Ai đã dùng bao nhiêu điểm tháng này, tách theo tác vụ: [{"email", "member", "points", "by_action": {}}]."""
+    """Ai đã dùng bao nhiêu credit tháng này, tách theo tác vụ: [{"email", "member", "points", "by_action": {}}]."""
     ensure(con)
     out: dict[str, dict] = {}
     for email, member, action, pts in con.execute(
@@ -190,8 +195,8 @@ def _project(cfg) -> str:
 
 
 def take(ui, user, cfg, action: str, points: int | None = None, n: int = 1, detail: str = "") -> int | None | bool:
-    """Trừ điểm trước khi chạy tác vụ: trả id (hoặc None nếu không tính điểm) để hoàn khi lỗi; False khi Member
-    không đủ điểm (đã báo trên màn hình, không chạy tác vụ)."""
+    """Trừ credit trước khi chạy tác vụ: trả id (hoặc None nếu không tính credit) để hoàn khi lỗi; False khi Member
+    không đủ credit (đã báo trên màn hình, không chạy tác vụ)."""
     pts = cost(action, n) if points is None else int(points)
     try:
         with _connect() as con:
@@ -221,22 +226,22 @@ def my_balance(user) -> dict | None:
 
 
 def member(user) -> bool:
-    """Member: thấy giá bằng điểm thay cho USD, không thấy ngân sách DataForSEO của dự án."""
+    """Member: thấy giá bằng credit thay cho USD, không thấy ngân sách DataForSEO của dự án."""
     return A.is_member(user)
 
 
 def label(user, action: str, n: int = 1, points: int | None = None) -> str:
-    """Chữ " · N điểm" gắn vào nút / gợi ý, chỉ hiện với Member."""
+    """Chữ " · N credit" gắn vào nút / gợi ý, chỉ hiện với Member."""
     if not A.is_member(user):
         return ""
     pts = cost(action, n) if points is None else int(points)
-    return f" · {pts:,} điểm".replace(",", ".") if pts else ""
+    return f" · {pts:,} credit".replace(",", ".") if pts else ""
 
 
-# ---------------------------------------------------------------- trang Điểm của tôi
+# ---------------------------------------------------------------- trang Credit của tôi
 
 def history(con, email: str, month: str | None = None) -> list[dict]:
-    """Từng lần trừ điểm của một người trong tháng, mới nhất trước."""
+    """Từng lần trừ credit của một người trong tháng, mới nhất trước."""
     ensure(con)
     return [{"at": r[0], "project": r[1], "action": r[2], "name": COSTS.get(r[2], (r[2],))[0], "points": r[3],
              "detail": r[4]}
@@ -252,7 +257,7 @@ def grants(con, email: str, month: str | None = None) -> list[dict]:
 
 
 def by_action(rows: list[dict]) -> list[dict]:
-    """Gộp lịch sử theo tác vụ: [{"action", "name", "times", "points"}], nhiều điểm trước."""
+    """Gộp lịch sử theo tác vụ: [{"action", "name", "times", "points"}], nhiều credit trước."""
     out: dict[str, dict] = {}
     for r in rows:
         a = out.setdefault(r["action"], {"action": r["action"], "name": r["name"], "times": 0, "points": 0})
@@ -265,8 +270,8 @@ DEPTHS = (10, 20, 30, 50, 100)
 
 
 def calc(rank_keywords: int = 0, rank_depth: int = 20, rank_times: int = 1, **counts) -> dict:
-    """Máy tính điểm: check rank (số từ khóa × số lần, theo độ sâu) + số lần / số từ khóa của các tác vụ khác.
-    Trả {"lines": [(tác vụ, tên, số lượng, điểm)], "total"}."""
+    """Máy tính credit: check rank (số từ khóa × số lần, theo độ sâu) + số lần / số từ khóa của các tác vụ khác.
+    Trả {"lines": [(tác vụ, tên, số lượng, credit)], "total"}."""
     lines = []
     if rank_keywords and rank_times:
         n = int(rank_keywords) * int(rank_times)

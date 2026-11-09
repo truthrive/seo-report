@@ -37,8 +37,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         end = K.latest_date(c, site)
     cur, prev = O.window(end), O.window(end, back=1)
     T.page_header(ui, "insights", "Cơ hội SEO",
-                  f"Từ Search Console: 28 ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}) so với 28 ngày trước "
-                  f"({prev[0]:%d/%m} – {prev[1]:%d/%m}). Tính từ dữ liệu đã có, không tốn chi phí.")
+                  f"Việc nên làm để tăng traffic, tính từ Search Console 28 ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}).")
     ed = A.can_edit(user)
     state = {"tab": start if start in dict(TABS) else "audit", "data": None, "strike": "all", "new": "signal",
              "q": ""}
@@ -643,8 +642,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                 <q-td :props="props"><a v-if="props.value" :href="props.value" target="_blank" rel="noopener"
                   class="sr-bl-link">{{ props.value.replace(/^https?:\\/\\/(www\\.)?/, '') }}</a>
                   <span v-else class="muted">–</span></q-td>""")
-            ui.label("Điểm: mức Google chắc chắn thực thể khớp tên tìm (càng cao càng nổi). Thực thể “Chưa có” nghĩa "
-                     "là Google chưa có thực thể khớp tên và website của thương hiệu.").classes("text-xs muted q-mt-xs")
+            ui.label("Điểm càng cao: Google càng chắc đây là thương hiệu của bạn.").classes("text-xs muted q-mt-xs")
 
 
     # ---- Dự báo từ khóa theo dõi ----
@@ -659,7 +657,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
                     if fc["no_volume"] else "Ước tính, dùng để xếp thứ tự ưu tiên."])
         if not fc["rows"]:
             T.empty_state(ui, "emoji_events", "Không có từ khóa nào cần đẩy",
-                          "Mọi từ khóa có volume đã ở top 3, hoặc chưa có volume / chưa check hạng.")
+                          "Các từ khóa đều đã ở top 3.")
             return
         with ui.element("div").classes("sr-op-audit-sum"):
             for num, lab in ((f"+{fc['gain']:,}".replace(",", "."), "click / tháng nếu mọi từ khóa lên top 3"),

@@ -54,15 +54,15 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
     async def fetch(btn, points_ok: bool = False):
         if not ed:  # tốn tiền DataForSEO: chặn ở server, nút bị ẩn chưa đủ
             return
-        if PT.member(user) and not points_ok:  # Member: báo số điểm trước khi lấy
+        if PT.member(user) and not points_ok:  # Member: báo số credit trước khi lấy
             bal = PT.my_balance(user) or {"left": 0, "limit": 0}
             need = PT.cost("backlink")
             with ui.dialog() as d, ui.card().style("max-width: 440px; border-radius: 14px"):
                 ui.label("Lấy số backlink mới?").classes("text-lg font-semibold")
                 with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
                     ui.icon("toll", size="18px")
-                    ui.label(f"Trừ {need} điểm (số tổng, lịch sử và các danh sách). Còn {bal['left']:,} / "
-                             f"{bal['limit']:,} điểm tháng này.".replace(",", ".")).classes("text-sm")
+                    ui.label(f"Trừ {need} credit (số tổng, lịch sử và các danh sách). Còn {bal['left']:,} / "
+                             f"{bal['limit']:,} credit tháng này.".replace(",", ".")).classes("text-sm")
                 with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
                     ui.button("Hủy", on_click=d.close).props("flat no-caps")
 
@@ -108,8 +108,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
             st = BL.settings(c, site)
         with ui.dialog() as d, ui.card().style("width: 460px; max-width: 94vw; border-radius: 14px"):
             ui.label("Lịch lấy số backlink").classes("text-base font-semibold")
-            ui.label("Lượt chạy tự động mỗi sáng sẽ lấy khi đến hạn. Nút “Lấy số mới” luôn lấy ngay, kể cả khi đang "
-                     "tạm ngưng.").classes("text-xs muted")
+            ui.label("Tool tự lấy theo lịch. Bấm \"Lấy số mới\" để lấy ngay.").classes("text-xs muted")
             pause = ui.switch("Tạm ngưng tự lấy (chỉ lấy khi bấm “Lấy số mới”)", value=st["paused"]).props("dense")
             every = ui.radio({k: v for k, v in BL.EVERY_CHOICES.items()}, value=st["every_days"]).props(
                 "inline dense")
@@ -126,7 +125,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 s_ = now_st()
                 every.set_enabled(not s_["paused"])
                 est.text = ("Không tự lấy: chỉ lấy khi bấm “Lấy số mới”." if s_["paused"] else
-                            "Lấy tự động theo lịch, tính vào ngân sách dự án (không trừ điểm của bạn)."
+                            "Lấy tự động theo lịch, tính vào ngân sách dự án (không trừ credit của bạn)."
                             if PT.member(user) else
                             f"Ước tính khoảng {BL.monthly_estimate(s_):.2f} USD/tháng".replace(".", ",")
                             + f" (số tổng + {len(s_['lists'])} danh sách, mỗi lần khoảng "
@@ -177,9 +176,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 "outline no-caps color=grey-9").tooltip("Đặt chu kỳ tự lấy, tạm ngưng, chọn danh sách lấy kèm")
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary")
             b.on_click(lambda _, b=b: fetch(b))
-            b.tooltip(f"Lấy ngay số tổng + các danh sách đã chọn · {PT.cost('backlink')} điểm" if PT.member(user)
-                      else "Gọi DataForSEO ngay: số tổng + các danh sách đã chọn, khoảng 0,10 USD, tính vào ngân sách "
-                           "check rank của website")
+            b.tooltip(f"Lấy ngay số tổng + các danh sách đã chọn · {PT.cost('backlink')} credit" if PT.member(user)
+                      else "Lấy ngay số backlink mới (tốn phí dữ liệu)")
 
     keys = [k for k, _ in PAGE_TABS]
     start = "changes" if start == "audit" else start  # link cũ ?tab=audit
@@ -196,7 +194,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
         if not bl and not ls:
             T.empty_state(ui, "add_link", "Chưa lấy số backlink lần nào",
                           (f"Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách ({PT.cost('backlink')} "
-                           "điểm)." if PT.member(user) else
+                           "credit)." if PT.member(user) else
                            "Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách (khoảng 0,15 USD lần "
                            "đầu).") if ed else "Số backlink sẽ có sau lần lấy đầu tiên.")
             return
@@ -428,13 +426,11 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                     with ui.row().classes("items-center gap-2 q-mt-sm"):
                         ui.button("Tải file disavow (.txt)", icon="download", on_click=download).props(
                             "outline no-caps dense color=grey-9").tooltip(
-                            "File theo định dạng của Google: một dòng domain:… cho mỗi website có link spam. Xem lại "
-                            "trước khi nộp; disavow nhầm website tốt sẽ làm mất giá trị link.")
+                            "Tải file để báo Google bỏ qua link spam. Xem lại trước khi nộp.")
                         ui.button("Mở trang disavow của Google", icon="open_in_new",
                                   on_click=lambda: ui.navigate.to(disavow_url, new_tab=True)).props(
                             "outline no-caps dense color=grey-9").tooltip(
-                            "Mở công cụ Disavow links của Google Search Console (đúng property của dự án) để tải file "
-                            "vừa tải về lên.")
+                            "Mở công cụ Disavow của Google để nộp file")
         sec = T.section(ui, title, icon)
         with sec:
             ui.element("div").props(f'id="{anchor_id}"').style("position:relative; top:-80px")
@@ -547,8 +543,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 tb.add_slot("body-cell-follow", """
                     <q-td :props="props"><span class="text-xs">{{ props.value }}</span>
                       <span v-if="props.row.spammy" class="sr-bl-type k-lost q-ml-xs">spam {{ props.row.spam }}
-                        <q-tooltip>Điểm spam của link này (0–100) theo DataForSEO: trang nguồn có dấu hiệu bán / spam
-                          link</q-tooltip></span></q-td>""")
+                        <q-tooltip>Điểm spam (0–100): trang nguồn có dấu hiệu bán / spam link</q-tooltip></span></q-td>""")
                 tb.add_slot("body-cell-status", """
                     <q-td :props="props"><span class="sr-bl-type" :class="props.row.lost ? 'k-lost' : 'k-new'">
                       {{ props.value }}</span></q-td>""")

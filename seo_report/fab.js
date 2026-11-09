@@ -30,7 +30,7 @@ export default {
       </button>
     </div>`,
   props: {
-    actions: { type: Array, default: () => [] },  // [{key, icon, label, badge?}] — tối đa 3 thao tác
+    actions: { type: Array, default: () => [] },  // [{key, icon, label, badge?}] — tối đa 5 thao tác
     fabLabel: { type: String, default: "Thao tác nhanh" },
     chat: { type: Object, default: null },        // {label, icon} — nút chat / hỗ trợ xếp chung cột
     topAfter: { type: Number, default: 400 },

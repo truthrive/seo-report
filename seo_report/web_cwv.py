@@ -29,8 +29,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: số tốc độ, không danh sách việc cần sửa / nên sửa của team
     right = T.page_header(ui, "speed", "Tốc độ & Core Web Vitals",
-                          "Số người dùng Chrome thật (Google dùng để xếp hạng) và điểm PageSpeed của các trang quan "
-                          "trọng nhất. Tự kiểm tra mỗi tuần.")
+                          "Website nhanh hay chậm với người dùng thật, trang nào cần sửa.")
     right.classes("no-wrap")  # nút Kiểm tra ngay + Xuất cùng một hàng
     state = {"form": "PHONE", "metric": "lcp", "running": False, "filter": None,
              "tab": start if start in dict(TABS) else "overview"}
@@ -76,13 +75,13 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
             b = ui.button("Kiểm tra ngay", icon="refresh").props("unelevated no-caps color=primary").style(
                 "white-space:nowrap")
             b.on_click(lambda _, b=b: background_tasks.create(run_now(b)))
-            b.tooltip("Lấy lại số CrUX và chạy PageSpeed cho các trang quan trọng (miễn phí, mất vài phút)")
+            b.tooltip("Đo lại tốc độ các trang quan trọng (miễn phí)")
 
     @ui.refreshable
     def body():
         if not has_key:
             T.empty_state(ui, "key", "Chưa có Google API key",
-                          "Chủ tool vào Cài đặt tích hợp → Google API key (Core Web Vitals) để thêm key miễn phí."
+                          "Owner thêm Google API key ở Cài đặt tích hợp (miễn phí)."
                           if ed else "Số tốc độ sẽ có sau khi tool được cấu hình.")
             return
         with connect() as c:
@@ -147,8 +146,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                         ui.label(f"{int(CA.WEIGHTS[k] * 100)}%").classes("text-xs muted")
                         ui.label(str(v) if v is not None else "chưa có").classes("num text-sm font-semibold").style(
                             "min-width:52px; text-align:right")
-                ui.label("Chỉ số người dùng thật: đạt “Tốt” = 100, đúng ngưỡng “Kém” = 50. Phần chưa có số thì không "
-                         "tính.").classes("text-xs muted q-mt-xs")
+                ui.label("100 = tốt, 50 = kém.").classes("text-xs muted q-mt-xs")
             todo = [c_ for c_ in checks if c_["level"] in ("high", "medium")]
             if cl:  # khách hàng: thay "Việc cần làm" bằng 3 chỉ số Core Web Vitals hiện tại trên điện thoại
                 with T.section(ui, "Core Web Vitals trên điện thoại", "smartphone", "Người dùng Chrome thật, 28 ngày"):
@@ -221,7 +219,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
 
     def site_block(series) -> None:
         with T.section(ui, "Cả website · người dùng thật", "groups",
-                       "Chrome UX Report: 75% lượt truy cập nhanh hơn số này, tính trên 28 ngày, cập nhật hằng tuần"):
+                       "Tốc độ người dùng thật cảm nhận (28 ngày gần nhất)."):
             with ui.row().classes("items-center gap-2"):
                 t_ = ui.toggle({"PHONE": "Điện thoại", "DESKTOP": "Máy tính"}, value=state["form"],
                                on_change=lambda e: (state.update(form=e.value), body.refresh())).props(
@@ -229,8 +227,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                     "sr-seg")
                 t_.props["aria-label"] = "Thiết bị"
             if not series:
-                ui.label("Google chưa có số người dùng thật cho website này trên thiết bị này (cần đủ lượt truy cập "
-                         "từ Chrome). Xem điểm PageSpeed ở tab Từng trang.").classes("text-sm muted q-py-sm")
+                ui.label("Google chưa có số người dùng thật trên thiết bị này. Xem điểm ở tab Từng trang.").classes("text-sm muted q-py-sm")
                 return
             now = series[-1]
             old = series[-5] if len(series) >= 5 else series[0]
@@ -349,8 +346,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                 </q-tr>""")
             by_url = {p["url"]: p for p in pages}
             tb.on("pick", lambda e: detail(by_url[e.args["url"]]))
-            ui.label("Điểm và LCP / CLS / TBT là số đo thử của Google (Lighthouse, mạng điện thoại chậm); “Người dùng "
-                     "thật” là số Chrome của chính trang đó nếu đủ lượt truy cập. TBT gần với INP: càng thấp càng tốt.") \
+            ui.label("Điểm do Google đo thử trên điện thoại. \"Người dùng thật\" là số từ Chrome.") \
                 .classes("text-xs muted")
 
     def detail(p: dict) -> None:

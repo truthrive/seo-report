@@ -36,8 +36,7 @@ def _add_months(d: date, n: int) -> date:
 
 def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
     right = T.page_header(ui, "edit_note", "Sửa OKR",
-                          "Tạo cả đợt từ mẫu trong một bước, chi tiết chỉnh sau ngay trên danh sách. Sửa ô nào lưu ô đó; "
-                          "tool tự ghi tab OKRs lên sheet dự án.", eyebrow="Báo cáo công việc")
+                          "Tạo mục tiêu và hạng mục công việc của dự án, sửa ô nào lưu ô đó.", eyebrow="Báo cáo công việc")
     with right:
         saved = ui.label("").classes("text-xs muted").props('role="status" aria-live="polite"')
         ui.button("Xong", icon="check", on_click=lambda: ui.navigate.to("/okr")).props(

@@ -45,8 +45,7 @@ def events_dialog(ui, connect, site: str, user, can_edit: bool, on_change=None) 
         with ui.row().classes("w-full items-center no-wrap"):
             ui.label("Mốc sự kiện của website").classes("text-lg font-semibold col")
             ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
-        ui.label("Hiện thành vạch tím trên biểu đồ Click theo ngày (Tổng quan) và biểu đồ Thứ hạng, để biết số tăng / "
-                 "giảm sau việc gì: Google cập nhật thuật toán, sửa web, đăng loạt bài, đẩy backlink…").classes(
+        ui.label("Ghi mốc (Google cập nhật, sửa web, đăng bài…) để thấy trên biểu đồ.").classes(
             "text-sm muted")
         box = ui.column().classes("w-full gap-0")
 
@@ -61,7 +60,6 @@ def events_dialog(ui, connect, site: str, user, can_edit: bool, on_change=None) 
                     with ui.row().classes("w-full items-center no-wrap gap-3 q-py-xs"):
                         ui.label(_vn(e["day"])).classes("text-sm num").style("width: 96px")
                         ui.label(e["text"]).classes("text-sm col")
-                        ui.label(e["by"].split("@")[0]).classes("text-xs muted")
                         if can_edit:
                             ui.button(icon="delete_outline", on_click=lambda i=e["id"]: drop(i)).props(
                                 'flat round dense size=sm color=negative aria-label="Xóa mốc"').tooltip("Xóa mốc")

@@ -17,8 +17,7 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không thêm URL kiểm tra (dùng quota GSC), không bỏ theo dõi
     from . import ui_theme as T
-    T.page_header(ui, "travel_explore", "Index", "Tình trạng Google index của toàn site, URL chưa index theo lý do, và "
-                  "theo dõi bài mới đến khi được index. Tool chỉ kiểm tra, không gửi yêu cầu index.", tone="blue")
+    T.page_header(ui, "travel_explore", "Index", "Trang nào đã lên Google, trang nào chưa và vì sao.", tone="blue")
 
     # ---- Tổng quan index: nhóm SEO chủ lực + toàn bộ URL đã kiểm tra ----
     from . import urls as U
@@ -54,8 +53,7 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
 
     # ---- URL chưa index theo lý do ----
     with T.section(ui, "URL chưa index", "report",
-                   "Theo lần kiểm tra gần nhất của mỗi URL. \"Cần xem\": lỗi hoặc Google chưa index. \"Có chủ ý\": "
-                   "website tự loại trừ (noindex, chuyển hướng, trang thay thế có chính tắc), thường không cần sửa."):
+                   "\"Cần xem\": Google chưa lên trang. \"Có chủ ý\": website tự ẩn, thường không cần sửa."):
         with ui.row().classes("items-center gap-3 w-full"):
             kind = ui.toggle({"fix": f"Cần xem · {fmt(len(to_fix))}", "intent": f"Có chủ ý · {fmt(len(on_purpose))}"},
                              value="fix").props("unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
@@ -96,7 +94,7 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
         show_missing()
 
     if ed:
-        with T.section(ui, "Kiểm tra URL mới", "add_link", "Mỗi dòng một URL. Kiểm tra ngay rồi theo dõi đến khi index"):
+        with T.section(ui, "Kiểm tra URL mới", "add_link", "Dán URL để kiểm tra và theo dõi đến khi lên Google."):
             paste = ui.textarea(placeholder=f"https://{domain(cfg.site_url)}/bai-moi/\nhttps://{domain(cfg.site_url)}/bai-moi-2/").props(
                 "outlined autogrow").classes("w-full")
             with ui.row().classes("items-center gap-3"):
@@ -135,8 +133,7 @@ def build_index_page(ui, cfg, connect, user: str) -> None:
     if ed:  # chỉ hiện khi đã tích chọn URL
         ui.button("Bỏ theo dõi các URL đã chọn", icon="visibility_off", on_click=lambda: unwatch()).props(
             "outline no-caps").bind_visibility_from(table, "selected", backward=bool)
-    ui.label("Trạng thái màu đỏ: quá 14 ngày vẫn chưa index. Nên kiểm tra URL có trong sitemap không, có link nội bộ "
-             "trỏ tới không, rồi mở GSC để yêu cầu lập chỉ mục.").classes("text-xs muted")
+    ui.label("Đỏ: quá 14 ngày chưa lên Google. Kiểm tra sitemap, link nội bộ rồi yêu cầu lập chỉ mục.").classes("text-xs muted")
 
     def refresh():
         with connect() as c:
@@ -232,7 +229,7 @@ def sitemap_section(ui, connect, site: str) -> None:
     levels = {"high": ("Cần sửa", "red", "error"), "medium": ("Nên xem", "amber", "warning"),
               "info": ("Tham khảo", "blue", "info")}
     with T.section(ui, f"Sitemap · {len(maps)}", "account_tree",
-                   "Sitemap đã gửi cho Search Console: Google đọc lần cuối khi nào, có lỗi không"):
+                   "Sitemap đã gửi cho Google và có lỗi không."):
         for ch in checks:
             label, tone, icon = levels[ch["level"]]
             with ui.row().classes("items-center gap-2 no-wrap w-full q-mb-xs"):

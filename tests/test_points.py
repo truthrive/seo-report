@@ -59,7 +59,7 @@ class PointsTest(unittest.TestCase):
         self.assertEqual(PT.calc()["total"], 0)
 
     def test_label_only_for_members(self):
-        self.assertEqual(PT.label(member(), "aio", 3), " · 6 điểm")
+        self.assertEqual(PT.label(member(), "aio", 3), " · 6 credit")
         self.assertEqual(PT.label(A.User("o@x.vn", A.EDITOR), "aio", 3), "")
 
 

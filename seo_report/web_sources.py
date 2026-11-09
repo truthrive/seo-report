@@ -57,8 +57,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
     site = cfg.site_url
     ed = A.can_edit(user)
     right = T.page_header(ui, "travel_explore", "Nguồn tìm kiếm",
-                          "Khách đến từ đâu trên Google: tìm kiếm web, hình ảnh, video, tab Tin tức, Discover, Google "
-                          "News. Số của Search Console, tự lấy mỗi ngày.")
+                          "Khách đến từ đâu trên Google: tìm kiếm, hình ảnh, video, Tin tức, Discover.")
     right.classes("no-wrap")
     state = {"type": "web", "days": 28}
 
@@ -92,7 +91,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary").style(
                 "white-space:nowrap")
             b.on_click(lambda _, b=b: fetch(b))
-            b.tooltip("Lấy lại số các nguồn tìm kiếm và sitemap từ Search Console")
+            b.tooltip("Lấy số mới từ Search Console")
 
     @ui.refreshable
     def body():
@@ -156,8 +155,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
 
         cur, before = now[t], prev[t]
         with ui.element("div").classes("sr-src-main w-full"):
-            with T.section(ui, f"{GT.TYPES[t]} theo tuần", ICONS[t], "Click mỗi tuần (thứ Hai – Chủ nhật), 12 tháng "
-                                                                   "gần nhất · rê chuột xem lượt hiển thị"):
+            with T.section(ui, f"{GT.TYPES[t]} theo tuần", ICONS[t], "Click mỗi tuần, 12 tháng gần nhất"):
                 if not ser:
                     ui.label("Chưa có số cho nguồn này: website chưa xuất hiện ở đây.").classes("text-sm muted")
                 else:

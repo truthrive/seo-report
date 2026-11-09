@@ -45,16 +45,16 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
             sync_btn = ui.button("Đọc task tuần" if owned else "Đồng bộ ngay", icon="sync",
                                  on_click=lambda: do_sync()).props("outline no-caps" if owned else "unelevated no-caps")
             if owned:
-                sync_btn.tooltip("Đọc lại tab Weekly Task Tracker trên sheet dự án (OKR sửa trên tool)")
+                sync_btn.tooltip("Đọc lại task tuần từ sheet dự án")
         if ed and owned and not project_sheet:
             ui.button("Sheet dự án", icon="add_to_drive", on_click=lambda: sheet_dialog()).props(
-                "outline no-caps").tooltip("Tạo sheet dự án mới hoặc gắn sheet đã có; tool ghi tab OKRs lên đó")
+                "outline no-caps").tooltip("Tạo hoặc gắn sheet dự án")
         if ed and owned:
             ui.button("Sửa OKR", icon="edit_note", on_click=lambda: ui.navigate.to("/okr/sua")).props(
                 "unelevated no-caps color=primary")
         elif ed and has_sheet:  # chưa có sheet: thân trang đã có nút "Tạo OKR trên tool"
             ui.button("Chuyển OKR sang tool", icon="move_down", on_click=lambda: take_over_dialog()).props(
-                "unelevated no-caps color=primary").tooltip("Tạo và sửa OKR ngay trên tool; tool ghi tab OKRs lên sheet")
+                "unelevated no-caps color=primary").tooltip("Tạo và sửa OKR ngay trên tool")
 
     def remember_link(sid: str) -> None:
         """Gắn sheet làm sheet dự án ở cả hai chỗ: KPI (tool ghi tab) và Dự án (đọc Weekly Task Tracker)."""
@@ -74,13 +74,11 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                 master = PJ.master_sheet(ac) or ""
         with ui.dialog() as dlg, ui.card().style("width: 560px; max-width: 94vw; border-radius: 14px"):
             ui.label("Sheet dự án").classes("text-lg font-semibold")
-            ui.label("Tool ghi các tab của tool (Thông tin dự án, KPI cam kết, OKRs, bộ từ khóa, Dữ liệu check) và khóa "
-                     "chúng. Tab của team (Weekly Task Tracker, Content, Đề xuất chi phí…) tool không ghi.").classes(
+            ui.label("Tool tự ghi các tab của tool lên sheet; tab của team giữ nguyên.").classes(
                 "text-sm muted")
             with ui.element("div").classes("sr-card q-pa-md w-full q-mt-sm"):
                 ui.label("Tạo sheet mới").classes("text-sm font-semibold")
-                ui.label(("Chép từ sheet mẫu gốc (giữ Weekly Task Tracker, Content, Đề xuất chi phí), lưu trong folder "
-                          "Drive của dự án." if master else
+                ui.label(("Tạo từ sheet mẫu, lưu trong thư mục Drive của dự án." if master else
                           "Chưa có sheet mẫu gốc: tạo sheet trống có sẵn tab Weekly Task Tracker.")).classes(
                     "text-xs muted")
                 create_btn = ui.button("Tạo sheet dự án", icon="add").props("unelevated no-caps color=primary").classes(
@@ -177,7 +175,7 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
             T.empty_state(ui, "table_view", "Chưa có OKR", "Tiến độ OKR sẽ hiện ở đây khi được cập nhật.")
             return
         T.empty_state(ui, "flag", "Chưa có OKR",
-                      "Tạo OKR ngay trên tool (đề xuất), hoặc gắn sheet dự án ở màn KPI cam kết / Quản trị → Dự án.")
+                      "Tạo OKR ngay trên tool để theo dõi tiến độ.")
         ui.button("Tạo OKR trên tool", icon="add", on_click=lambda: (_take(), ui.navigate.to("/okr/sua"))).props(
             "unelevated no-caps color=primary")
         return
@@ -401,7 +399,7 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
         if not all_dated:
             return
         with T.section(ui, "Lịch triển khai", "view_timeline",
-                       "Bấm vào mục tiêu trên lịch để mở / thu gọn các hạng mục"):
+                       "Bấm mục tiêu để xem hạng mục."):
             with ui.row().classes("items-center gap-2 q-mb-sm w-full"):
                 ui.toggle({"all": "Tất cả", "open": "Chưa xong"}, value=view["gantt"],
                           on_change=lambda e: (view.update(gantt=e.value), plan_block.refresh())).props(
@@ -595,13 +593,12 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                     if info["source"] == "public":
                         with ui.element("div"):
                             T.status_chip(ui, "Đang đọc qua link công khai", "amber", "public")
-                            ui.tooltip("Sheet đang để ai có link đều xem được. Sau khi cấp quyền Google Sheets cho "
-                                       "tool (đăng nhập lại), nên tắt chia sẻ công khai.")
+                            ui.tooltip("Sheet đang công khai cho ai có link. Nên tắt chia sẻ công khai.")
             period_lists(ui, p, late, "tuần")
             if has_sheet:
                 task_table(ui, week_tasks, today, "tuần")
             elif not cl:
-                ui.label("Task tuần đọc từ tab Weekly Task Tracker của sheet dự án: dự án này chưa gắn sheet.").classes(
+                ui.label("Dự án chưa gắn sheet nên chưa có task tuần.").classes(
                     "text-sm muted q-mt-md")
 
 

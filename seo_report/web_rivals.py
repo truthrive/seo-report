@@ -125,8 +125,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             with ui.row().classes("w-full items-center no-wrap"):
                 ui.label("Chọn đối thủ theo dõi").classes("text-lg font-semibold col")
                 ui.button(icon="close", on_click=dlg.close).props('flat round dense aria-label="Đóng"')
-            ui.label(f"Đánh dấu website rồi bấm Thêm / Bỏ. Tối đa {AO.MAX_COMPETITORS} đối thủ; danh sách dùng chung cho "
-                     "Thứ hạng và AI Overview.").classes("text-sm muted")
+            ui.label(f"Đánh dấu website rồi bấm Thêm / Bỏ (tối đa {AO.MAX_COMPETITORS} đối thủ).").classes("text-sm muted")
 
             def apply(direction: str, move_keys: list, _target: list) -> None:
                 if direction == "right":
@@ -150,8 +149,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 with dialog_host, ui.dialog() as cd, ui.card().style("max-width: 440px; border-radius: 14px"):
                     ui.label(f"Bỏ theo dõi {len(ids)} đối thủ?").classes("text-lg font-semibold")
                     ui.label(", ".join(names)).classes("text-sm")
-                    ui.label("Thôi so sánh ở thứ hạng và AI Overview. Thêm lại lúc nào cũng được: tên và cách gọi đã "
-                             "sửa vẫn được giữ.").classes("text-sm muted")
+                    ui.label("Thôi so sánh với đối thủ này. Thêm lại lúc nào cũng được.").classes("text-sm muted")
                     with ui.row().classes("w-full justify-end gap-2"):
                         ui.button("Hủy", on_click=cd.close).props("flat no-caps")
 
@@ -342,7 +340,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             most = max((p["n"] for p in trend), default=0)
             trend = [p for p in trend if p["n"] * 2 >= most]
             if len(trend) < 2:
-                ui.label("Biểu đồ hiện khi có từ 2 lần check đủ bộ từ khóa có kết quả Google.").classes(
+                ui.label("Biểu đồ hiện từ lần check thứ hai.").classes(
                     "text-sm muted")
                 return
             brands = sorted((r["brand"] for r in comp["rows"]), key=lambda b: not b["own"])  # dự án trước
@@ -365,7 +363,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 "yAxis": {"type": "value", "axisLabel": {"formatter": "{value}%", "color": "#6B6A5E"},
                           "splitLine": {"lineStyle": {"color": "#EEECE4"}}},
                 "series": series}).classes("w-full").style("height: 300px")
-            ui.label("Mỗi điểm chỉ tính các từ khóa có kết quả Google ở lần check đó (số trong ngoặc).").classes(
+            ui.label("Số trong ngoặc: số từ khóa có kết quả ở lần check đó.").classes(
                 "text-xs muted")
 
     @ui.refreshable
@@ -461,10 +459,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                   {{ props.value }}</span>
               </q-td>""")
             t.on("rowClick", lambda e: open_set(int(e.args[1]["set_id"])))
-            ui.label("Số = vị trí trên Google ở lần check gần nhất; – = không có trong độ sâu đã check. ✦ = từ khóa có "
-                     "AI Overview (tím đậm: website dự án được trích). Volume: lượt tìm mỗi tháng (Google Ads). Bấm một "
-                     "dòng để mở bộ chứa từ khóa. Ý định tìm kiếm: I thông tin · N tìm đúng thương hiệu / website · "
-                     "C cân nhắc mua · T sẵn sàng mua.").classes("text-xs muted")
+            ui.label("Số = vị trí trên Google · ✦ = có AI Overview. Bấm một dòng để mở bộ từ khóa.").classes("text-xs muted")
 
     def export_xlsx() -> bytes:
         with connect() as c:

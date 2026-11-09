@@ -327,3 +327,97 @@ def fill_logos(con, cfg, fetch=None, limit: int = 10) -> int:
         with con:
             con.execute("UPDATE aio_brands SET logo = ? WHERE id = ?", (logo, bid))
     return len(rows)
+
+
+# ---------------------------------------------------------------- gợi ý audit (tab Việc nên làm)
+# Mỗi từ khóa có AI Overview xếp vào MỘT nhóm vấn đề (nhóm ưu tiên cao nhất khớp), để tổng các nhóm cộng lại đúng
+# bằng số từ khóa cần xử lý. (khóa, mức, tên, vì sao, việc nên làm)
+FINDINGS = (
+    ("lost_cite", "high", "Vừa mất trích",
+     "Lần check trước AI Overview còn trích website, lần này thì không.",
+     ("Mở trang đang xếp hạng: kiểm tra có bị sửa nội dung, đổi URL, chặn index hay tải chậm không.",
+      "So với nguồn AI mới trích thay mình: họ trả lời ý nào mà trang mình thiếu.")),
+    ("top3_no_cite", "high", "Top 3 nhưng AI không trích",
+     "Google đã tin trang (top 3) nhưng câu trả lời AI lấy nguồn khác: thường do trang thiếu đoạn trả lời ngắn, rõ.",
+     ("Đặt đoạn trả lời 40–60 từ ngay dưới tiêu đề, trả lời thẳng câu hỏi của từ khóa.",
+      "Dùng đúng câu hỏi làm tiêu đề H2 / H3; tách ý bằng danh sách hoặc bảng.",
+      "Thêm số liệu cụ thể (giá, thông số, thời gian) và schema FAQ / Product phù hợp.")),
+    ("rival_cited", "high", "Top 4–10, đối thủ được trích thay mình",
+     "Website đã ở trang 1 nhưng AI Overview trích link đối thủ đã khai báo, không trích website.",
+     ("Mở trang đối thủ được trích: liệt kê các ý họ có mà trang mình chưa có.",
+      "Bổ sung ý còn thiếu, cập nhật ngày và số liệu mới hơn đối thủ.")),
+    ("top10_no_cite", "medium", "Top 4–10 chưa được trích",
+     "Trang đã ở trang 1 nhưng chưa vào câu trả lời AI.",
+     ("Viết lại đoạn mở đầu thành câu trả lời trực tiếp, ngắn gọn.",
+      "Bổ sung các câu hỏi liên quan (mục Mọi người cũng hỏi) thành phần hỏi đáp.",
+      "Thêm liên kết nội bộ từ các trang mạnh về trang này.")),
+    ("mention_no_cite", "medium", "Được nhắc tên nhưng không được trích link",
+     "AI biết thương hiệu nhưng chưa coi trang của website là nguồn.",
+     ("Tạo / làm sâu trang đúng ý định của từ khóa để AI có trang để trích.",
+      "Ghi rõ nguồn, tác giả, ngày cập nhật để tăng độ tin cậy.")),
+    ("cite_no_mention", "low", "Được trích nhưng không nhắc tên",
+     "AI dùng nội dung của website nhưng không nói tên thương hiệu.",
+     ("Đưa tên thương hiệu vào câu chứa kết luận / số liệu chính của trang.",
+      "Khai báo schema Organization và thống nhất tên thương hiệu trên trang.")),
+    ("out_top10", "low", "Có AI Overview, website ngoài top 10",
+     "Cần lên trang 1 trước thì mới dễ được AI trích.",
+     ("Xem từ khóa này ở trang Cơ hội SEO: nội dung, liên kết nội bộ, backlink.",
+      "Nếu chưa có trang phù hợp: lên kế hoạch bài viết mới.")),
+)
+SEVERITY = {"high": "Cao", "medium": "Trung bình", "low": "Thấp"}
+
+
+def audit(con, cfg, set_id: int | None = None) -> dict:
+    """Gợi ý audit AI Overview theo lần check mới nhất: {"groups": [{key, severity, title, why, actions, items}],
+    "good": số từ khóa đang được trích và nhắc tên, "aio": số từ khóa có AI Overview, "total"}. Mỗi item: keyword,
+    id, rank, depth, volume, url, rivals_cited, rivals_mentioned, sources (tên miền khác mình), row (dòng gốc)."""
+    from . import keywords as K
+    from . import volume as V
+    site = cfg.site_url
+    end = K.latest_date(con, site)
+    bs = brands(con, cfg)
+    own = bs[0]["name"] if bs else ""
+    host = R.domain(site)
+    rows = keyword_rows(con, cfg, set_id)
+    kws = {k["id"]: k for k in scope_keywords(con, site, end, set_id)}
+    vol = V.latest(con)
+    lost = {x["keyword"] for x in changes(con, cfg, set_id)["lost_cite"]}
+    groups = {f[0]: [] for f in FINDINGS}
+    good = 0
+    for r in rows:
+        if not r["aio"]:
+            continue
+        k = kws.get(r["id"], {})
+        rank = r["rank"]
+        own_c, own_m = r["own_cited"], r["own_mentioned"]
+        rivals_c = [n for n in r["cited"] if n != own]
+        item = {"id": r["id"], "keyword": r["keyword"], "rank": rank, "depth": r["depth"],
+                "volume": (vol.get(r["id"]) or {}).get("volume"),
+                "url": k.get("ranking_url") or k.get("target_url") or "",
+                "rivals_cited": rivals_c, "rivals_mentioned": [n for n in r["mentioned"] if n != own],
+                "sources": list(dict.fromkeys(x["domain"] for x in r["refs"]
+                                              if x.get("domain") and not R._host_match(x["domain"], host))),
+                "row": r}
+        if r["keyword"] in lost and not own_c:
+            key = "lost_cite"
+        elif not own_c and rank is not None and rank <= 3:
+            key = "top3_no_cite"
+        elif not own_c and rank is not None and rank <= 10 and rivals_c:
+            key = "rival_cited"
+        elif not own_c and rank is not None and rank <= 10:
+            key = "top10_no_cite"
+        elif not own_c and own_m:
+            key = "mention_no_cite"
+        elif not own_c:
+            key = "out_top10"
+        elif own_m is False:
+            key = "cite_no_mention"
+        else:
+            good += 1
+            continue
+        groups[key].append(item)
+    out = []
+    for key, sev, title, why, actions in FINDINGS:
+        items = sorted(groups[key], key=lambda x: (-(x["volume"] or 0), x["rank"] or 999))
+        out.append({"key": key, "severity": sev, "title": title, "why": why, "actions": actions, "items": items})
+    return {"groups": out, "good": good, "aio": sum(1 for r in rows if r["aio"]), "total": len(rows)}

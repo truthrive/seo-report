@@ -116,8 +116,7 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
         options = {root: "📁 Folder gốc của tool", **{f["id"]: f"   └ {f['name']}" for f in folders}}
         with ui.dialog() as dlg, ui.card().style("min-width: 460px; border-radius: 14px"):
             ui.label("Chọn folder Drive để lưu").classes("text-lg font-semibold")
-            ui.label("Tool chỉ thấy folder do chính nó tạo (quyền tối thiểu). Bạn có thể chia sẻ hoặc di chuyển "
-                     "folder gốc trên Drive.").classes("text-xs muted")
+            ui.label("File lưu trong thư mục của tool trên Drive.").classes("text-xs muted")
             sel = ui.select(options, value=current if current in options else root).props("outlined dense").classes(
                 "w-full")
             with ui.row().classes("w-full items-center gap-2 no-wrap"):

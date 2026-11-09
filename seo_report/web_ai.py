@@ -166,7 +166,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                       tone="blue")
     else:
         T.page_header(ui, "auto_awesome", "AI Search & GEO",
-                      "Traffic từ AI assistant (GA4) và hiển thị trong AI Overviews / AI Mode (GSC)", tone="purple")
+                      "Lượt khách đến từ ChatGPT, Gemini… và lượt hiện trong câu trả lời AI của Google.", tone="purple")
     with ui.element("div").classes("sr-card q-px-md q-py-sm w-full"), \
             ui.row().classes("w-full items-center gap-3"):
         ui.icon("tune", size="18px").classes("muted")
@@ -361,9 +361,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         meta = env.get("sourceMeta", {})
         cls = env.get("classification", {})
         when = (meta.get("queriedAt") or "")[:16].replace("T", " ")
-        ui.label(f"Nguồn: GA4 {meta.get('propertyId')} · phân loại {cls.get('mode')} {cls.get('version')} "
-                 "(kênh AI Assistant của GA4 + nhận diện bổ sung theo nguồn; không gồm traffic AI trả phí) · "
-                 f"truy vấn lúc {when} UTC{' (cache)' if meta.get('cached') else ''}").classes("text-xs muted")
+        ui.label(f"Số từ Google Analytics · cập nhật lúc {when}").classes("text-xs muted")
 
     def kpi_card(title, value, delta="", good=None, hint=""):
         icon, tone = KPI_ICONS.get(title, ("insights", "green"))
@@ -464,8 +462,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                      hint="% phiên có ít nhất 1 sự kiện chính")
         paid = s["data"]["paidAi"]
         if paid["sessions"]:
-            ui.label(f"Ngoài ra {F.n(paid['sessions'])} phiên từ nguồn AI có medium trả phí (ví dụ chatgpt / paid), "
-                     f"{paid['keyEvents']} sự kiện chính: tính là quảng cáo, không cộng vào số trên.").classes(
+            ui.label(f"Không tính {F.n(paid['sessions'])} phiên quảng cáo từ AI.").classes(
                 "text-xs muted")
 
         pts = tr["data"].get("points", [])
@@ -522,8 +519,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                      for e in sorted(ke["data"]["events"], key=lambda e: -e["keyEvents"])],
                 row_key="ev").classes("w-full").props("flat bordered dense")
             if any(e["sessionKeyEventRate"] is None for e in ke["data"]["events"]):
-                ui.label("N/A: GA4 không tính tỷ lệ phiên riêng cho event có dấu cách trong tên (ví dụ 'Click Zalo'); "
-                         "số lần vẫn đúng.").classes("text-xs muted")
+                ui.label("N/A: Google Analytics không tính tỷ lệ cho sự kiện này; số lần vẫn đúng.").classes("text-xs muted")
         with ui.row().classes("gap-2"):
             ui.button("Xem nguồn AI", on_click=lambda: tabs.set_value(t_src)).props("outline no-caps")
             ui.button("Xem trang đích", on_click=lambda: tabs.set_value(t_land)).props("outline no-caps")
@@ -550,8 +546,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                   "k": F.n(x["keyEvents"]), "kr": F.pct(x["sessionKeyEventRate"])} for x in seg_rows],
             row_key="seg").classes("w-full").props("flat bordered dense")
         T.bar_slot(seg_table, "s", max((x["sessions"] for x in seg_rows), default=1))
-        ui.label("Loại trang lấy từ màn Quản lý URL. Tỷ lệ mỗi nhóm do GA4 tính trên đúng các trang của nhóm, không "
-                 "cộng từ từng trang.").classes("text-xs muted")
+        ui.label("Lượt khách từ AI theo loại trang.").classes("text-xs muted")
 
         rows = pages["data"]["rows"]
         type_filter = ui.select(["Tất cả"] + sorted(set(types.values())), value="Tất cả", label="Loại trang").props(
@@ -590,8 +585,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         fill()
         type_filter.on_value_change(lambda _: fill())
         search.bind_value(table, "filter")
-        ui.label(f"{len(rows)} trang đích có phiên AI. Bấm một dòng để xem chi tiết trang. "
-                 "Cột Organic Search là kênh khác, chỉ để so quy mô, không phải traffic AI.").classes("text-xs muted")
+        ui.label(f"{len(rows)} trang có khách từ AI. Bấm một dòng để xem chi tiết.").classes("text-xs muted")
         table.on("rowClick", lambda e: page_detail(e.args[1]["page"]))
         ui.button("Tải CSV trang đích", icon="download", on_click=lambda: download_rows(
             "trang-dich", ["landing_page", "type", "ai_sessions", "ai_sessions_prev", "engagement_rate", "key_events",
@@ -647,8 +641,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             ui.label(cs["warnings"][0]["message"]).classes("text-negative")
             return
         warnings_box([cs])
-        ui.label("Quốc gia của người truy cập do GA4 ghi nhận (không phải vị trí cửa hàng). Bấm một quốc gia để lọc "
-                 "cả màn.").classes("text-xs muted")
+        ui.label("Khách từ AI theo quốc gia. Bấm để lọc cả trang.").classes("text-xs muted")
         rows = cs["data"]["rows"]
         total = sum(r["sessions"] for r in rows) or 0
         table = ui.table(columns=[
@@ -839,10 +832,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         match_f.on_value_change(lambda _: fill())
         type_f.on_value_change(lambda _: fill())
         search.bind_value(table, "filter")
-        ui.label("AI = phiên từ AI assistant (GA4, nền xanh lá) · Web = Google Web Search (GSC, nền xanh dương). "
-                 f"Gồm mọi trang có phiên AI và {O.TOP_GSC_PAGES} trang nhiều impression GSC nhất trong kỳ. Vị trí TB "
-                 "của GSC chỉ để tham khảo, thứ hạng nghiệm thu xem ở màn Check rank. Bộ lọc nguồn/quốc gia chỉ áp "
-                 "cho cột GA4.").classes("text-xs muted")
+        ui.label("So khách từ AI (GA4) với hiển thị trên Google (Search Console) cho từng trang.").classes("text-xs muted")
         with ui.row().classes("gap-2"):
             ui.button("Tải CSV bảng URL", icon="download", on_click=lambda: download_rows(
                 "co-hoi-url", ["url", "type", "match", "ga4_landing_paths", "ai_sessions", "ai_engagement_rate",
@@ -854,8 +844,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             ui.button("Tải CSV gợi ý", icon="download", on_click=lambda: download_rows(
                 "co-hoi-goi-y", list(O.OPP_FIELDS), [[o[k] for k in O.OPP_FIELDS] for o in d["opportunities"]])
                       ).props("outline no-caps")
-        ui.label(f"Nguồn: GA4 {cfg.ga4_property} (AI referral, phân loại {C.HYBRID} {C.VERSION}) · GSC Web "
-                 f"{cfg.site_url} từ dữ liệu đã đồng bộ của tool · kỳ {d['period']}").classes("text-xs muted")
+        ui.label(f"Kỳ {d['period']}").classes("text-xs muted")
 
     def dq_data(ai, start, end):
         """Đối soát trên toàn bộ phiên AI của kỳ (không áp bộ lọc nguồn/quốc gia/trang) + trạng thái kết nối."""
@@ -891,8 +880,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         with ui.row().classes("items-center gap-2"):
             ui.icon(icons[overall][0], color=icons[overall][1], size="28px")
             ui.label(text).classes("text-lg font-semibold")
-            ui.label(f"Kỳ {state['start']:%d/%m/%Y}–{state['end']:%d/%m/%Y}, toàn bộ phiên AI (bỏ qua bộ lọc nguồn/"
-                     "quốc gia/trang đích).").classes("text-sm muted")
+            ui.label(f"Kỳ {state['start']:%d/%m/%Y}–{state['end']:%d/%m/%Y}, mọi khách từ AI.").classes("text-sm muted")
 
         def check_list(title, items):
             ui.label(title).classes("text-base font-semibold q-mt-md")
@@ -933,8 +921,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                 {"name": "r", "label": "Lý do", "field": "reason", "align": "left"},
             ], rows=[{**c, "id": i} for i, c in enumerate(cands)], row_key="id").classes("w-full").props(
                 "flat bordered dense")
-            ui.label("Nếu một nguồn ở đây thật sự là AI assistant, báo Chủ tool để bổ sung vào danh sách. Tool "
-                     "không tự cộng.").classes("text-xs muted")
+            ui.label("Thấy nguồn AI bị thiếu? Báo Owner để bổ sung.").classes("text-xs muted")
         else:
             ui.label("Không có.").classes("text-sm muted")
 
@@ -957,8 +944,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                                "style": "white-space: normal"}],
                      rows=[{"k": k, "v": v} for k, v in rows], row_key="k").classes("w-full").props(
                 "flat bordered dense")
-            ui.label("Danh sách nguồn AI và key events chỉ xem được ở đây; muốn đổi thì báo Chủ tool, vì đổi danh "
-                     "sách làm thay đổi số AI của mọi kỳ.").classes("text-xs muted")
+            ui.label("Muốn đổi danh sách nguồn AI, báo Owner.").classes("text-xs muted")
 
     # ---- Tab AI trên Google (nhập file GSC Generative AI) ----
     pending = {"parsed": None, "name": None}
@@ -1054,15 +1040,14 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             if ed:
                 ui.upload(label="Nhập file export (.zip CSV hoặc .xlsx)", auto_upload=True, max_files=1,
                           on_upload=on_upload).props('accept=".zip,.xlsx" flat bordered').classes("w-96")
-            ui.label("GSC → Hiệu suất → Generative AI (Search) → chọn kỳ → Export → Download CSV. Không lọc thêm "
-                     "trang/quốc gia/thiết bị.").classes("text-xs muted")
+            ui.label("Search Console → Hiệu suất → Generative AI → Export → tải CSV.").classes("text-xs muted")
         with connect() as c:
             imps = G.imports(c, cfg.site_url)
             if not imps:
                 with ui.card().props("flat bordered").classes("w-full q-pa-lg items-center"):
                     ui.icon("upload_file", size="40px", color="grey-6")
                     ui.label("Chưa có dữ liệu").classes("text-base font-semibold")
-                    ui.label("Chưa nhập file nào, nên tool không biết số impression AI Overviews (không phải bằng 0)."
+                    ui.label("Chưa nhập file nào nên chưa có số."
                              ).classes("text-sm muted")
                 return
             start, end = state["start"], state["end"]
@@ -1094,10 +1079,9 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             kpi_card("Tỷ lệ trên impression GSC Web", F.pct(share),
                      hint=f"tính trên {len(both)} ngày có cả hai số (cùng tính theo property)")
             kpi_card("Dữ liệu tới ngày", (last[8:10] + "/" + last[5:7] + "/" + last[:4]) if last else "N/A",
-                     hint=f"lần nhập gần nhất {latest['imported_at'][:10]} · {latest['user']}")
+                     hint=f"lần nhập gần nhất {latest['imported_at'][:10]}")
         if tot["status"] == "PARTIAL":
-            ui.label("Kỳ đang chọn chưa được file nào phủ hết: không hiện tổng để tránh số thấp hơn thực tế. Nhập file "
-                     "mới hơn, hoặc chọn kỳ nằm trong các ngày đã nhập.").classes("text-xs text-orange-9")
+            ui.label("Kỳ đang chọn chưa đủ dữ liệu. Nhập file mới hơn hoặc chọn kỳ khác.").classes("text-xs text-orange-9")
 
         # ---- Xu hướng theo tuần (toàn bộ ngày đã nhập) ----
         weeks: dict[str, list] = {}
@@ -1122,16 +1106,13 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                                "itemStyle": {"color": GREEN}},
                               {"name": "% trên impression GSC Web (trục phải)", "type": "line", "yAxisIndex": 1,
                                "data": line, "itemStyle": {"color": BLUE}}]}).classes("w-full").style("height: 280px")
-        ui.label("* tuần chưa đủ 7 ngày trong các file đã nhập: không vẽ để tránh hiểu nhầm là giảm. Ngày theo giờ "
-                 "Pacific như mọi số GSC.").classes("text-xs muted")
+        ui.label("* Tuần chưa đủ 7 ngày không vẽ.").classes("text-xs muted")
 
         # ---- Theo trang / quốc gia / thiết bị (của một lần nhập) ----
         p0, p1 = latest["period_start"], latest["period_end"]
         ui.label(f"Theo trang · lần nhập #{latest['id']} ({p0} → {p1})").classes("text-lg font-semibold q-mt-md")
         if latest["stats"].get("pages_capped"):
-            ui.label(f"GSC chỉ xuất {G.PAGE_ROW_LIMIT} trang nhiều impression nhất (thấp nhất "
-                     f"{latest['stats'].get('min_page_impressions')}): trang ít hơn không có trong bảng. Tổng theo trang "
-                     "cũng khác tổng site vì GSC tính theo trang, không cộng các dòng để ra tổng.").classes(
+            ui.label(f"Google chỉ cho {G.PAGE_ROW_LIMIT} trang nhiều hiển thị nhất.").classes(
                 "text-xs text-orange-9")
         prow = []
         for r in pages:
@@ -1183,10 +1164,10 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         with ui.expansion(f"Lịch sử nhập ({len(imps)} lần)", icon="history").classes("w-full q-mt-md"):
             for i in imps:
                 with ui.row().classes("items-center gap-3 no-wrap"):
-                    ui.label(f"#{i['id']} · {i['period_start']} → {i['period_end']} · "
+                    ui.label(f"{i['period_start']} → {i['period_end']} · "
                              f"{'Web dạng chữ' if i['search_type'] == 'text' else 'Web đa phương thức'} · "
-                             f"{F.n(i['stats'].get('total_chart'))} impression · nhập {i['imported_at'][:16]} "
-                             f"bởi {i['user']} · {i['file_name']}").classes("text-sm")
+                             f"{F.n(i['stats'].get('total_chart'))} impression · nhập {i['imported_at'][:10]}"
+                             ).classes("text-sm")
                     if ed:
                         ui.button(icon="visibility_off", on_click=lambda _, x=i["id"]: remove_import(x)).props(
                             "flat dense round").tooltip("Ẩn lần nhập này")

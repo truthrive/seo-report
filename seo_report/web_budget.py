@@ -74,7 +74,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
     T.page_header(ui, "account_balance_wallet", "Ngân sách & chi phí",
-                  "Chi phí DataForSEO (check rank, volume keyword, backlink, ý định từ khóa) của từng website, tính theo tháng dương lịch.",
+                  "Chi phí dữ liệu của từng website trong tháng.",
                   eyebrow="Quản trị", tone="grey")
     today = date.today()
     months = R.last_months(today, 6)
@@ -99,8 +99,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                        (f"Có thể tiết kiệm khoảng {_usd(total)} USD/tháng mà không mất thông tin" if found else
                         "Chưa có gợi ý") + " · chỉ xét bộ team tạo đang check hằng tuần (bộ Cam kết giữ theo cam kết)"):
             if not found:
-                ui.label("Chưa có từ khóa nào nên check thưa hơn: cần ít nhất 4 lần check để biết từ khóa đứng yên, "
-                         "hoặc các bộ đang tạm dừng (không tốn tiền).").classes("text-sm muted")
+                ui.label("Bộ từ khóa mới nên check thưa hơn, hoặc đang có bộ tạm dừng.").classes("text-sm muted")
                 return
             for p, cfg, st in found:
                 items = st["items"]
@@ -147,18 +146,18 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                             "unelevated no-caps")
 
     def points_usage() -> None:
-        """Điểm tháng này: Member (có hạn mức) và Owner / Admin (không giới hạn, chỉ ghi lại), tách theo tác vụ."""
+        """Credit tháng này: Member (có hạn mức) và Owner / Admin (không giới hạn, chỉ ghi lại), tách theo tác vụ."""
         from . import points as PT
         with app_connect() as c:
             rows = PT.usage(c)
             for r in rows:
                 r["bal"] = PT.balance(c, r["email"]) if r["member"] else None
-        with T.section(ui, "Điểm tác vụ tháng này", "toll",
-                       f"Member có hạn mức điểm mỗi tháng (mặc định {PT.DEFAULT_MONTHLY:,}, đặt riêng ở Phân quyền); "
-                       "mọi tác vụ bấm tay trừ điểm, việc chạy theo lịch không trừ. 1 điểm ≈ 0,001 USD. Owner / "
+        with T.section(ui, "Credit tác vụ tháng này", "toll",
+                       f"Member có hạn mức credit mỗi tháng (mặc định {PT.DEFAULT_MONTHLY:,}, đặt riêng ở Phân quyền); "
+                       "mọi tác vụ bấm tay trừ credit, việc chạy theo lịch không trừ. 1 credit ≈ 0,001 USD. Owner / "
                        "Admin không giới hạn.".replace(",", ".", 1)):
             if not rows:
-                ui.label("Tháng này chưa ai dùng điểm.").classes("text-sm muted")
+                ui.label("Tháng này chưa ai dùng credit.").classes("text-sm muted")
                 return
             names = {k: v[0] for k, v in PT.COSTS.items()}
             data = [{"id": i, "email": r["email"], "group": "Member" if r["member"] else "Owner / Admin",
@@ -211,8 +210,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                               type="positive")
                     body.refresh()
                 ui.button("Lưu", on_click=save_cap).props("unelevated no-caps")
-                ui.label("Chạm mức trần: research tạm khóa, lấy volume để hôm sau (không chuyển sang DataForSEO "
-                         "tốn tiền).").classes("text-xs muted col")
+                ui.label("Đã chạm mức trần: research tạm khóa đến tháng sau.").classes("text-xs muted col")
             cap_row.set_visibility(A.is_owner(user))  # đổi hạn mức: chỉ Owner
             kinds = list(GA.KINDS)
             colors = [T.GREEN, T.BLUE, "#7C3AED", "#8C8A7E"]
@@ -269,8 +267,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
 
         # ---- Theo website ----
         with T.section(ui, f"Theo website · {len(rows)}", "domain",
-                       "Thanh: phần đã dùng (đậm) và dự kiến cả tháng (nhạt) so với ngân sách. Đổi ngân sách ngay "
-                       "trên dòng."):
+                       "Đã dùng và dự kiến cả tháng so với ngân sách."):
             for i, r in enumerate(rows):
                 p = r["project"]
                 text, tone, icon = STATUS[r["status"]]
@@ -340,8 +337,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     with ui.row().classes("items-center gap-1 no-wrap"):
                         ui.switch(value=not r["paused"], on_change=toggle_pause).props(
                             "dense color=positive").tooltip(
-                            "Bật: check rank và lấy volume theo lịch. Tắt: tạm ngưng mọi chi phí DataForSEO của "
-                            "website này (dữ liệu cũ vẫn giữ). Có hiệu lực ngay, không cần bấm Lưu")
+                            "Bật: check theo lịch. Tắt: tạm ngưng mọi chi phí, dữ liệu cũ vẫn giữ.")
                         ui.button(icon="leaderboard", on_click=open_rank).props(
                             "flat round dense color=grey-8").tooltip("Mở Từ khóa & Thứ hạng của website này")
 
@@ -360,7 +356,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                    "data": [round(r["history"][m]["total"], 4) for m in months]} for i, r in enumerate(rows)]
         totals = [sum(r["history"][m]["total"] for r in rows) for m in months]
         with T.section(ui, "Chi phí 6 tháng gần nhất", "bar_chart",
-                       f"Tổng 6 tháng {_usd(sum(totals))} USD · gồm check rank, volume keyword, backlink và ý định từ khóa"):
+                       f"Tổng 6 tháng {_usd(sum(totals))} USD"):
             ui.echart({
                 "animation": False, "legend": {"bottom": 0, "icon": "roundRect", "itemWidth": 12, "itemHeight": 10,
                                                "textStyle": {"fontSize": 12, "color": "#4A4A40"}},
@@ -486,10 +482,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
 
         months = R.last_months(today, 6)[::-1]
         with T.section(ui, "Nhật ký chi tiền", "receipt_long",
-                       "Mỗi lần gọi API DataForSEO: lúc nào, website nào, loại API nào, bao nhiêu tiền. Check rank gộp "
-                       "theo từng lượt gửi; kết quả dùng chung giữa các bộ không tốn thêm nên không có dòng riêng. "
-                       "Người chạy: tên người bấm Check, hoặc “Lịch”; “–” là chưa ghi (lần chạy trước 06/11/2026, "
-                       "hoặc volume / backlink / ý định)."):
+                       "Từng lần lấy dữ liệu: lúc nào, website nào, bao nhiêu tiền, ai chạy."):
             with ui.row().classes("items-center gap-2 w-full"):
                 ui.select({m: f"Tháng {m[5:]}/{m[:4]}" for m in months}, value=log_state["month"],
                           on_change=lambda e: (log_state.update(month=e.value), ledger.refresh())).props(

@@ -1,4 +1,4 @@
-"""Cấu hình tích hợp (màn Cài đặt tích hợp, chỉ Chủ tool): DataForSEO, Google Ads, AI. Mỗi tích hợp khai báo các ô,
+"""Cấu hình tích hợp (màn Cài đặt tích hợp, chỉ Chủ tool): DataForSEO, Google Ads, Google API, nhà cung cấp AI. Mỗi tích hợp khai báo các ô,
 ô nào là mã bí mật, file lưu và cách kiểm tra; thêm tích hợp mới = thêm một mục trong INTEGRATIONS.
 
 - Lưu vào các file trong secrets/ như trước (lịch chạy hằng ngày, lệnh terminal đọc thẳng), không vào git.
@@ -32,6 +32,7 @@ class Integration:
     path_attr: str = ""  # thuộc tính Config chứa đường dẫn file; trống thì dùng default_path
     default_path: str = ""
     required: tuple = ()
+    group: str = "service"  # "service": dịch vụ số liệu; "ai": nhà cung cấp AI
 
 
 AI_MODELS = {"claude-opus-5-5": "Claude Opus 5.5 (mặc định, mạnh nhất)",
@@ -62,13 +63,45 @@ INTEGRATIONS = [
                 "Insights API” và “Chrome UX Report API” trong Library. Nên giới hạn key chỉ dùng cho 2 API này.",
                 [Field("api_key", "API key", secret=True, placeholder="AIza…")],
                 default_path="secrets/google_api.toml", required=("api_key",)),
-    Integration("ai", "AI (Claude)", "auto_awesome",
-                "Chuẩn bị cho các tính năng AI sau này (viết nhận xét báo cáo, gợi ý nội dung…). Lấy khóa ở "
-                "platform.claude.com > API keys.",
+    Integration("ai", "Anthropic (Claude)", "auto_awesome",
+                "Nhà cung cấp AI chính của tool: viết nhận xét báo cáo, đoạn trả lời AI Overview, brief nội dung… "
+                "Lấy khóa ở platform.claude.com > API keys.",
                 [Field("api_key", "Khóa API", secret=True, placeholder="sk-ant-…"),
                  Field("model", "Model", options=AI_MODELS)],
-                default_path="secrets/ai.toml", required=("api_key",)),
+                default_path="secrets/ai.toml", required=("api_key",), group="ai"),
+    *[Integration(key, name, "smart_toy", about,
+                  [Field("api_key", "Khóa API", secret=True, placeholder=ph),
+                   Field("model", "Model mặc định (không bắt buộc)", placeholder="để trống: tool tự chọn",
+                         hint="Ghi đúng tên model theo trang của nhà cung cấp")],
+                  default_path=f"secrets/ai_{key}.toml", required=("api_key",), group="ai")
+      for key, name, about, ph in (
+          ("openai", "OpenAI (ChatGPT)",
+           "Dùng để xem ChatGPT trả lời gì về thương hiệu (GEO) hoặc thay Claude cho một số việc. Lấy khóa ở "
+           "platform.openai.com > API keys.", "sk-…"),
+          ("gemini", "Google Gemini",
+           "Dùng để xem Gemini trả lời gì về thương hiệu (GEO). Lấy khóa ở aistudio.google.com > Get API key.",
+           "AIza…"),
+          ("perplexity", "Perplexity",
+           "Dùng để xem Perplexity trả lời và trích nguồn nào cho từ khóa (GEO). Lấy khóa ở perplexity.ai > Settings "
+           "> API.", "pplx-…"),
+          ("xai", "xAI (Grok)", "Dùng để xem Grok trả lời gì về thương hiệu (GEO). Lấy khóa ở console.x.ai.",
+           "xai-…"),
+          ("deepseek", "DeepSeek", "Nhà cung cấp AI giá rẻ cho việc đơn giản (phân loại, gom nhóm từ khóa). Lấy "
+           "khóa ở platform.deepseek.com > API keys.", "sk-…"))],
 ]
+from .ai_http import STYLES as _AI_STYLES  # noqa: E402
+
+INTEGRATIONS.append(Integration(
+    "gateway", "Cổng API tùy chỉnh", "hub",
+    "Dùng cổng AI riêng (proxy / gateway, Ollama, nhà cung cấp khác) bằng gọi API trực tiếp: nhập Base URL, chọn "
+    "kiểu route mà cổng hỗ trợ, tên model và khóa. Thông tin này có trong trang hướng dẫn của cổng.",
+    [Field("base_url", "Base URL", placeholder="https://api.example.com/v1",
+           hint="Phần đứng trước route, thường kết thúc bằng /v1"),
+     Field("api_style", "Kiểu route", options=_AI_STYLES),
+     Field("model", "Model", placeholder="tên model đúng như cổng ghi"),
+     Field("api_key", "Khóa API", secret=True, placeholder="sk-…")],
+    default_path="secrets/ai_gateway.toml", required=("base_url", "model", "api_key"), group="ai"))
+AI_PROVIDERS = [x.key for x in INTEGRATIONS if x.group == "ai"]
 BY_KEY = {x.key: x for x in INTEGRATIONS}
 
 
@@ -215,8 +248,80 @@ def _test_google_api(cfg, v: dict) -> tuple[bool, str]:
     return True, f"Key dùng được: PageSpeed chạy được, {crux}"
 
 
+# Nhà cung cấp AI khác: gọi danh sách model (miễn phí, không tốn lượt) để biết khóa còn dùng được.
+_MODEL_LIST = {"openai": "https://api.openai.com/v1/models", "xai": "https://api.x.ai/v1/models",
+               "deepseek": "https://api.deepseek.com/models", "perplexity": "https://api.perplexity.ai/models",
+               "gemini": "https://generativelanguage.googleapis.com/v1beta/models"}
+
+
+def _test_key(provider: str, opener=None):
+    def run(cfg, v: dict) -> tuple[bool, str]:
+        from urllib.error import HTTPError, URLError
+        from urllib.request import Request, urlopen
+        key = v["api_key"]
+        head = {"x-goog-api-key": key} if provider == "gemini" else {"Authorization": f"Bearer {key}"}
+        try:
+            with (opener or urlopen)(Request(_MODEL_LIST[provider], headers={**head, "User-Agent": "seo-report"}),
+                                     timeout=20) as r:
+                data = json.loads(r.read() or b"{}")
+        except HTTPError as e:
+            if e.code in (401, 403):
+                return False, "Khóa API không đúng, đã bị thu hồi hoặc chưa được cấp quyền"
+            if e.code == 404:  # nhà cung cấp không có trang danh sách model: chưa kiểm tra được, vẫn cho lưu
+                return True, "Đã nhận khóa; nhà cung cấp này không cho kiểm tra miễn phí, lần dùng đầu sẽ biết"
+            if e.code == 429:
+                return True, "Khóa nhận được nhưng đang bị giới hạn lượt gọi"
+            return False, f"Nhà cung cấp báo lỗi {e.code}"
+        except URLError:
+            return False, "Không kết nối được tới nhà cung cấp (kiểm tra mạng)"
+        ids = [m.get("id") or m.get("name", "").removeprefix("models/") for m in
+               (data.get("data") or data.get("models") or [])]
+        model = (v.get("model") or "").strip()
+        if model and ids and model not in ids:
+            return True, f"Khóa dùng được, nhưng không thấy model “{model}” trong tài khoản"
+        return True, "Khóa dùng được" + (f", có {len(ids)} model" if ids else "")
+    return run
+
+
+def _test_gateway(cfg, v: dict, opener=None) -> tuple[bool, str]:
+    """Cổng tùy chỉnh: kiểm tra Base URL rồi xin danh sách model (miễn phí). Cổng không có trang danh sách model
+    thì vẫn cho lưu và ghi rõ chưa kiểm tra được."""
+    from urllib.error import HTTPError, URLError
+    from urllib.parse import urlparse
+    from urllib.request import Request, urlopen
+    base = (v.get("base_url") or "").strip().rstrip("/")
+    u = urlparse(base)
+    local = u.hostname in ("localhost", "127.0.0.1", "::1")
+    if u.scheme not in ("https", "http") or not u.hostname or (u.scheme == "http" and not local):
+        return False, "Base URL phải bắt đầu bằng https:// (http:// chỉ dùng cho máy này, ví dụ Ollama)"
+    style = v.get("api_style") or "chat"
+    root = base[:-3] if base.endswith("/v1") else base
+    url = f"{root}/api/tags" if style in ("ollama", "generate") else f"{base}/models"
+    key = v.get("api_key", "")
+    head = {"Authorization": f"Bearer {key}", "x-api-key": key, "User-Agent": "seo-report"}
+    if style == "gemini":
+        head = {"x-goog-api-key": key, "User-Agent": "seo-report"}
+    try:
+        with (opener or urlopen)(Request(url, headers=head), timeout=20) as r:
+            data = json.loads(r.read() or b"{}")
+    except HTTPError as e:
+        if e.code in (401, 403):
+            return False, "Cổng báo khóa API không đúng hoặc không có quyền"
+        if e.code in (404, 405):
+            return True, "Kết nối được cổng; cổng không có trang danh sách model nên chưa kiểm tra được khóa"
+        return False, f"Cổng báo lỗi {e.code}"
+    except (URLError, ValueError):
+        return False, "Không kết nối được tới Base URL (kiểm tra địa chỉ và mạng)"
+    ids = [m.get("id") or m.get("name", "").removeprefix("models/") for m in
+           (data.get("data") or data.get("models") or [])]
+    model = (v.get("model") or "").strip()
+    if model and ids and model not in ids:
+        return True, f"Khóa dùng được, nhưng cổng không liệt kê model “{model}”: kiểm tra lại tên model"
+    return True, "Khóa dùng được" + (f", cổng có {len(ids)} model" if ids else "")
+
+
 TESTS = {"dataforseo": _test_dataforseo, "google_ads": _test_google_ads, "ai": _test_ai,
-         "google_api": _test_google_api}
+         "google_api": _test_google_api, "gateway": _test_gateway, **{k: _test_key(k) for k in _MODEL_LIST}}
 
 
 def test(cfg, key: str, values: dict) -> tuple[bool, str]:
