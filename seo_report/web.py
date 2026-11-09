@@ -81,6 +81,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     from nicegui import app, ui
 
     T.install_table_defaults()
+    from . import anti_bot
+    anti_bot.install(app, ui)  # chặn bot AI thu thập dữ liệu (robots.txt, X-Robots-Tag, 403 theo User-Agent)
     assets = Path(__file__).parent / "assets"
     app.add_static_files("/assets", assets)  # biểu tượng của tool (logo từng website lưu trong bảng dự án)
 
