@@ -88,7 +88,7 @@ def is_owner(user) -> bool:
 
 def is_member(user) -> bool:
     """Member: được sửa trong dự án nhưng không phải Owner / Admin (dùng hạn mức điểm)."""
-    return can_edit(user) and not getattr(user, "admin", False)
+    return isinstance(user, User) and can_edit(user) and not user.admin
 
 
 def group(user) -> str:

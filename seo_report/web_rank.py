@@ -902,7 +902,7 @@ def _project_panel(ui, cfg, connect, user, select, open_set) -> None:
                 bits = [f"Check {_vn(cd['last'])[:5]}" if cd["last"] else "Chưa check lần nào"]
                 if cd["next"]:
                     bits.append(f"tới {_vn(cd['next'].isoformat())[:5]} {cd['time'] or ''}".strip())
-                if cd["cost"]:
+                if cd["cost"] and not PT.member(user):
                     bits.append(f"≈ {R.usd(cd['cost'])} USD/tháng")
                 ui.label(" · ".join(bits)).classes("sr-set-card-foot")
         if can_edit(user):
@@ -1242,8 +1242,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         with ui.element("div").classes("sr-danger-box w-full"):
             ui.label(f"Sẽ xóa hẳn {stats['keywords']} từ khóa của {what} cùng {stats['checks']} lần check "
                      f"(lịch sử thứ hạng, kết quả Google, AI Overview).").classes("text-sm")
-            ui.label(f"Dữ liệu đã trả {R.usd(stats['cost'], 3)} USD. Không khôi phục được; muốn giữ lịch sử thì "
-                     "dùng Tạm dừng.").classes("text-sm font-semibold")
+            ui.label(("" if PT.member(user) else f"Dữ liệu đã trả {R.usd(stats['cost'], 3)} USD. ")
+                     + "Không khôi phục được; muốn giữ lịch sử thì dùng Tạm dừng.").classes("text-sm font-semibold")
 
     def lock_dialog():
         """Chốt bộ Nháp: báo chi phí ước tính mỗi tháng trước khi bắt đầu chạy theo lịch."""
@@ -1257,7 +1257,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         with ui.dialog() as d, ui.card().style("max-width: 460px; border-radius: 14px"):
             ui.label(f"Chốt bộ “{cur['name']}”?").classes("text-lg font-semibold")
             ui.label(f"{len(kws)} từ khóa · {R.describe_schedule(sched)}").classes("text-sm")
-            ui.label(f"Ước tính khoảng {R.usd(per_month)} USD/tháng. Cả dự án: {R.usd(total)} / {budget:.0f} USD.")\
+            ui.label("Bộ check theo lịch tự động, tính vào ngân sách dự án (không trừ điểm của bạn)."
+                     if PT.member(user) else
+                     f"Ước tính khoảng {R.usd(per_month)} USD/tháng. Cả dự án: {R.usd(total)} / {budget:.0f} USD.")\
                 .classes("text-sm")
             if budget and total > budget:
                 ui.label("Vượt ngân sách check rank của dự án: lượt check vượt sẽ bị dừng. Tăng ngân sách ở màn Ngân "
@@ -1360,9 +1362,10 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                     total = R.estimate_all(c, site, cfg.rank, end) - old + (0 if st["draft"] else mine)
                 budget = cfg.rank.monthly_budget_usd
                 with est_box:
-                    ui.label(f"Ước tính bộ này: {R.usd(mine)} USD/tháng ({len(kws)} từ khóa)"
-                             + (", tính khi Chốt bộ" if st["draft"] else "")
-                             + f" · cả dự án {R.usd(total)} / {budget:.0f} USD").classes("text-sm")
+                    if not PT.member(user):
+                        ui.label(f"Ước tính bộ này: {R.usd(mine)} USD/tháng ({len(kws)} từ khóa)"
+                                 + (", tính khi Chốt bộ" if st["draft"] else "")
+                                 + f" · cả dự án {R.usd(total)} / {budget:.0f} USD").classes("text-sm")
                     if budget and total > budget:
                         ui.label("Vượt ngân sách check rank của dự án: lượt check vượt sẽ bị dừng.").classes(
                             "text-sm").style(f"color:{T.RED}")
@@ -1785,7 +1788,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         if not serps:
             T.empty_state(ui, "travel_explore", "Chưa có: lần check sau sẽ có",
                           "Tool lưu AI Overview và 10 kết quả đầu từ kết quả check rank"
-                          + (" (không tốn thêm phí, AI Overview hiện chậm thêm tối đa 0,0006 USD)." if ed else "."))
+                          + (" (không tốn thêm phí, AI Overview hiện chậm thêm tối đa 0,0006 USD)."
+                             if ed and not PT.member(user) else "."))
             return
         box = ui.column().classes("w-full gap-3")
         from . import aio as AO
@@ -2080,7 +2084,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                   on_filter=show_in_table, short_url=short, kpi_now=kpi_now, aio=aio_now, aio_link=f"/aio?bo={sid}")
         with connect() as c:
             est = R.estimate(c, cfg.rank, sched, [k["depth"] for k in kws])
-        cost_label.text = f"≈ {R.usd(est)} USD / tháng cho bộ này"
+        cost_label.text = "" if PT.member(user) else f"≈ {R.usd(est)} USD / tháng cho bộ này"
         last_h = hist[-1] if hist else None
         # hàng thông tin luôn là lần check gần nhất; đang check thì trạng thái ở hàng tiến độ
         status_row.clear()
@@ -2097,7 +2101,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 stat("schedule", "Chưa kiểm tra lần nào")
             if not cl:
                 stat("event_repeat", when.replace(" vào ", " · "),
-                     f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed else "Lịch check tự động")
+                     f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed and not PT.member(user)
+                     else "Lịch check tự động")
             if cur["paused"] and not cl:
                 stat("pause_circle", "Đang tạm dừng", "Bộ không được check tự động, không tính tiền", tone="warn")
             if is_kpi:
@@ -2140,7 +2145,15 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                          + (f" ({e['existing']} đã có trong bộ, không tính)" if e["existing"] else "")
                          ).classes("text-sm font-medium")
             if not e["new"]:
-                ui.label("Không tốn thêm tiền.").classes("text-sm")
+                ui.label("Không tốn thêm tiền." if not PT.member(user) else "Không trừ thêm điểm.").classes("text-sm")
+                return
+            if PT.member(user):  # Member: giá bằng điểm; lịch tự động tính vào ngân sách dự án
+                ui.label(f"Thêm vào bộ: {PT.cost('volume')} điểm (lấy volume). Bấm Check ngay: "
+                         f"{PT.rank_points([20])} điểm / từ khóa. Check theo lịch của bộ không trừ điểm của bạn."
+                         ).classes("text-sm")
+                if over:
+                    ui.label("Vượt ngân sách check rank của dự án: phần vượt sẽ không được thêm. Nhờ Owner / Admin."
+                             ).classes("text-sm font-medium")
                 return
             ui.label(f"Mỗi lần check thêm khoảng {R.usd(e['per_check'], 4)} USD "
                      + (f"(lần đầu check top {e['depth']}; sau đó tool chỉnh độ sâu theo vị trí nên thường rẻ hơn)."
@@ -2225,12 +2238,14 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             parts.append(f"đã có sẵn {len(r['exists'])}")
         if r["over_budget"]:
             parts.append(f"KHÔNG thêm {len(r['over_budget'])} keyword vì vượt ngân sách: {', '.join(r['over_budget'][:5])}"
-                         + (" (ngân sách check rank của dự án đang là 0 USD/tháng: đặt ở màn Ngân sách check rank, "
-                            "hoặc thêm vào một bộ Nháp trước)" if not cfg.rank.monthly_budget_usd else ""))
+                         + ((" (dự án chưa có ngân sách check rank: nhờ Owner đặt, hoặc thêm vào một bộ Nháp "
+                             "trước)" if PT.member(user) else
+                             " (ngân sách check rank của dự án đang là 0 USD/tháng: đặt ở màn Ngân sách check rank, "
+                             "hoặc thêm vào một bộ Nháp trước)") if not cfg.rank.monthly_budget_usd else ""))
         if r["bad_url"]:
             parts.append(f"bỏ qua {len(r['bad_url'])} dòng có URL không thuộc site")
         add_result.text = " · ".join(parts) + (f". Ước tính: {R.usd(r['estimate'])} USD/tháng."
-                                               if r.get("estimate") is not None else ".")
+                                               if r.get("estimate") is not None and not PT.member(user) else ".")
         paste.value = ""
         show_cost("")
         if not r["over_budget"] and not r["bad_url"]:

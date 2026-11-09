@@ -220,9 +220,42 @@ def my_balance(user) -> dict | None:
         return None
 
 
+def member(user) -> bool:
+    """Member: thấy giá bằng điểm thay cho USD, không thấy ngân sách DataForSEO của dự án."""
+    return A.is_member(user)
+
+
 def label(user, action: str, n: int = 1, points: int | None = None) -> str:
     """Chữ " · N điểm" gắn vào nút / gợi ý, chỉ hiện với Member."""
     if not A.is_member(user):
         return ""
     pts = cost(action, n) if points is None else int(points)
     return f" · {pts:,} điểm".replace(",", ".") if pts else ""
+
+
+# ---------------------------------------------------------------- trang Điểm của tôi
+
+def history(con, email: str, month: str | None = None) -> list[dict]:
+    """Từng lần trừ điểm của một người trong tháng, mới nhất trước."""
+    ensure(con)
+    return [{"at": r[0], "project": r[1], "action": r[2], "name": COSTS.get(r[2], (r[2],))[0], "points": r[3],
+             "detail": r[4]}
+            for r in con.execute("SELECT at, project, action, points, detail FROM points_log WHERE email = ? AND "
+                                 "month = ? ORDER BY id DESC", (str(email).lower(), month or month_of()))]
+
+
+def grants(con, email: str, month: str | None = None) -> list[dict]:
+    ensure(con)
+    return [{"at": r[0], "points": r[1], "by": r[2], "note": r[3]}
+            for r in con.execute("SELECT at, points, by, note FROM points_grants WHERE email = ? AND month = ? "
+                                 "ORDER BY id DESC", (str(email).lower(), month or month_of()))]
+
+
+def by_action(rows: list[dict]) -> list[dict]:
+    """Gộp lịch sử theo tác vụ: [{"action", "name", "times", "points"}], nhiều điểm trước."""
+    out: dict[str, dict] = {}
+    for r in rows:
+        a = out.setdefault(r["action"], {"action": r["action"], "name": r["name"], "times": 0, "points": 0})
+        a["times"] += 1
+        a["points"] += r["points"]
+    return sorted(out.values(), key=lambda a: -a["points"])

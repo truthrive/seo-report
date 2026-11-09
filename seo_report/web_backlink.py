@@ -105,7 +105,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
             def show(_=None) -> None:
                 s_ = now_st()
                 every.set_enabled(not s_["paused"])
-                est.text = ("Không tự lấy: không tốn tiền cho đến khi bấm “Lấy số mới”." if s_["paused"] else
+                est.text = ("Không tự lấy: chỉ lấy khi bấm “Lấy số mới”." if s_["paused"] else
+                            "Lấy tự động theo lịch, tính vào ngân sách dự án (không trừ điểm của bạn)."
+                            if PT.member(user) else
                             f"Ước tính khoảng {BL.monthly_estimate(s_):.2f} USD/tháng".replace(".", ",")
                             + f" (số tổng + {len(s_['lists'])} danh sách, mỗi lần khoảng "
                             + f"{BL.COST_SUMMARY + BL.COST_LIST * len(s_['lists']):.2f} USD)".replace(".", ","))
@@ -155,8 +157,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 "outline no-caps color=grey-9").tooltip("Đặt chu kỳ tự lấy, tạm ngưng, chọn danh sách lấy kèm")
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary")
             b.on_click(lambda _, b=b: fetch(b))
-            b.tooltip("Gọi DataForSEO ngay: số tổng + các danh sách đã chọn, khoảng 0,10 USD, tính vào ngân sách "
-                      "check rank của website")
+            b.tooltip(f"Lấy ngay số tổng + các danh sách đã chọn · {PT.cost('backlink')} điểm" if PT.member(user)
+                      else "Gọi DataForSEO ngay: số tổng + các danh sách đã chọn, khoảng 0,10 USD, tính vào ngân sách "
+                           "check rank của website")
 
     keys = [k for k, _ in PAGE_TABS]
     start = "changes" if start == "audit" else start  # link cũ ?tab=audit
@@ -172,8 +175,10 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
             own = own_brand(c)
         if not bl and not ls:
             T.empty_state(ui, "add_link", "Chưa lấy số backlink lần nào",
-                          "Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách (khoảng 0,15 USD lần đầu)."
-                          if ed else "Số backlink sẽ có sau lần lấy đầu tiên.")
+                          (f"Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách ({PT.cost('backlink')} "
+                           "điểm)." if PT.member(user) else
+                           "Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách (khoảng 0,15 USD lần "
+                           "đầu).") if ed else "Số backlink sẽ có sau lần lấy đầu tiên.")
             return
         status_line(bl, st, due)
         checks = AU.audit(ls, brand_terms_of(own)) if ls and not cl else []
@@ -217,8 +222,10 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
             elif st["paused"]:
                 T.status_chip(ui, "Tạm ngưng tự lấy", "grey", "pause_circle")
             else:
-                T.status_chip(ui, f"{BL.EVERY_CHOICES[st['every_days']]} · lần tới {due:%d/%m} · ~"
-                              + f"{BL.monthly_estimate(st):.2f} USD/tháng".replace(".", ","), "green", "event_repeat")
+                T.status_chip(ui, f"{BL.EVERY_CHOICES[st['every_days']]} · lần tới {due:%d/%m}"
+                              + ("" if PT.member(user) else
+                                 " · ~" + f"{BL.monthly_estimate(st):.2f} USD/tháng".replace(".", ",")),
+                              "green", "event_repeat")
 
     def kpis(bl, ls) -> None:
         now, prev = (bl or {}).get("now"), (bl or {}).get("prev")

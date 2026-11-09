@@ -464,8 +464,9 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 need = [r["keyword"] for r in state["rec"]["rows"] if r["keyword"] in want and not r.get("aio")]
                 b_aio = ui.button(f"Check AIO ({len(need)})" if need else "Check AIO", icon="auto_awesome",
                                   on_click=lambda: aio_dialog(need)).props("outline dense no-caps")
-                b_aio.tooltip(f"Tốn phí DataForSEO: khoảng {KO.LIVE_EST_USD:.3f} USD / từ khóa chưa có số AI Overview"
-                              .replace(".", ",") if need else "Các từ khóa đã chọn đều đã có số AI Overview")
+                b_aio.tooltip((f"{PT.cost('aio')} điểm / từ khóa chưa có số AI Overview" if PT.member(user) else
+                               f"Tốn phí DataForSEO: khoảng {KO.LIVE_EST_USD:.3f} USD / từ khóa chưa có số AI Overview"
+                               .replace(".", ",")) if need else "Các từ khóa đã chọn đều đã có số AI Overview")
                 if not need:
                     b_aio.props("disable")
                 ui.button("Theo dõi hạng", icon="playlist_add",
@@ -480,15 +481,17 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         with ui.dialog() as dlg, ui.card().style("max-width: 460px; border-radius: 14px"):
             ui.label(f"Check AI Overview cho {len(kws)} từ khóa?").classes("text-lg font-semibold")
             with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
-                ui.icon("paid", size="18px")
-                ui.label(f"Có tốn phí: khoảng {R.usd(cost, 3)} USD ({KO.LIVE_EST_USD:.3f} USD / từ khóa), tính vào "
-                         "ngân sách DataForSEO của website. Từ khóa đã có số AI Overview không check lại."
-                         .replace("0.002", "0,002")).classes("text-sm")
+                ui.icon("toll" if PT.member(user) else "paid", size="18px")
+                if PT.member(user):
+                    ui.label(f"Trừ {PT.cost('aio', len(kws)):,} điểm ({PT.cost('aio')} điểm / từ khóa) trong hạn mức "
+                             "tháng của bạn; phần không check được sẽ hoàn lại. Từ khóa đã có số AI Overview không "
+                             "check lại.".replace(",", ".", 1)).classes("text-sm")
+                else:
+                    ui.label(f"Có tốn phí: khoảng {R.usd(cost, 3)} USD ({KO.LIVE_EST_USD:.3f} USD / từ khóa), tính "
+                             "vào ngân sách DataForSEO của website. Từ khóa đã có số AI Overview không check lại."
+                             .replace("0.002", "0,002")).classes("text-sm")
             if len(keywords) > len(kws):
                 ui.label(f"Mỗi lần tối đa 50 từ khóa: lần này check 50/{len(keywords)}.").classes("text-sm muted")
-            if PT.label(user, "aio", len(kws)):
-                ui.label(f"Trừ{PT.label(user, 'aio', len(kws))[2:]} trong hạn mức tháng của bạn (hoàn lại phần "
-                         "không check được).").classes("text-sm muted")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
                 ui.button("Check", icon="auto_awesome", on_click=lambda: (dlg.close(), run_aio(kws))).props(
@@ -547,7 +550,10 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             def update_est():
                 with connect() as c:
                     e = R.estimate_add(c, site, cfg.rank, K.latest_date(c, site), kws, sel.value)
-                est.text = (f"{e['new']} từ khóa mới ({e['existing']} đã có trong bộ). Check hạng tốn thêm khoảng "
+                est.text = (f"{e['new']} từ khóa mới ({e['existing']} đã có trong bộ). Thêm vào bộ: "
+                            f"{PT.cost('volume')} điểm; check theo lịch của bộ không trừ điểm của bạn."
+                            if PT.member(user) else
+                            f"{e['new']} từ khóa mới ({e['existing']} đã có trong bộ). Check hạng tốn thêm khoảng "
                             f"{R.usd(e['monthly_add'])} USD/tháng theo lịch của bộ; cả tháng dự kiến "
                             f"{R.usd(e['monthly_total'])}/{e['budget']:.0f} USD. Bộ Nháp chưa tốn tiền đến khi Chốt.")
             sel.on_value_change(lambda _: update_est())

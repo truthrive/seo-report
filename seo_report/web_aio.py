@@ -6,6 +6,7 @@ không và đổi nguồn trích giữa các lần tìm, nên các số chính t
 với nhau. Mọi số ghi rõ nơi check (thiết bị, vùng) và đã kiểm tra bao nhiêu / tổng số từ khóa."""
 from datetime import date, timedelta
 
+from . import points as PT
 from . import keywords as K
 from . import rank as R
 from . import ui_theme as T
@@ -125,7 +126,7 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
         ui.label(" · ".join(parts)).classes("sr-aio-scope")
         if not last:
             T.empty_state(ui, "auto_awesome", "Chưa có số AI Overview",
-                          "Lần check rank tới sẽ có." if cl else
+                          "Lần check rank tới sẽ có." if cl or PT.member(user_) else
                           "Lần check rank tới sẽ có (mỗi từ khóa thêm tối đa 0,0006 USD).")
             return
 

@@ -370,15 +370,18 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                 if sp and sp.get("live") and ed:
                     ui.button(icon="refresh", on_click=lambda: live_serp()).props(
                         'flat round dense aria-label="Lấy lại trang kết quả"').tooltip(
+                        f"Lấy lại ({PT.cost('serp')} điểm)" if PT.member(user) else
                         f"Lấy lại (khoảng {KO.LIVE_EST_USD:.3f} USD)".replace(".", ","))
             if not sp or not sp.get("date"):
                 with ui.element("div").classes("sr-ko-serp-empty"):
                     ui.icon("travel_explore", size="28px").classes("muted")
                     with ui.column().classes("gap-1 col"):
                         ui.label("Chưa có trang kết quả Google cho từ khóa này").classes("text-sm font-semibold")
-                        ui.label("Xem ngay top 10, AI Overview và các ô đặc biệt (một lần, khoảng "
-                                 f"{KO.LIVE_EST_USD:.3f} USD, tính vào ngân sách DataForSEO), hoặc theo dõi hạng để "
-                                 "có số mỗi lần check.".replace("0.002", "0,002")).classes("text-sm muted")
+                        ui.label((f"Xem ngay top 10, AI Overview và các ô đặc biệt (một lần, {PT.cost('serp')} điểm),"
+                                  " hoặc theo dõi hạng để có số mỗi lần check.") if PT.member(user) else
+                                 ("Xem ngay top 10, AI Overview và các ô đặc biệt (một lần, khoảng "
+                                  f"{KO.LIVE_EST_USD:.3f} USD, tính vào ngân sách DataForSEO), hoặc theo dõi hạng để "
+                                  "có số mỗi lần check.").replace("0.002", "0,002")).classes("text-sm muted")
                     if ed:
                         with ui.row().classes("gap-2 items-center"):
                             ui.button("Xem kết quả Google", icon="travel_explore", on_click=lambda: live_serp()).props(

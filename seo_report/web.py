@@ -290,10 +290,15 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         ratio = b["used"] / b["limit"] if b["limit"] else 1
         warn = ratio >= 0.8
-        with ui.element("div").classes("sr-acct-budget" + (" warn" if warn else "")):
+        box = ui.element("div").classes("sr-acct-budget clickable" + (" warn" if warn else "")).props(
+            'role=link tabindex=0 aria-label="Mở Điểm của tôi"')
+        box.on("click", lambda: ui.navigate.to("/diem"))
+        box.on("keydown.enter", lambda: ui.navigate.to("/diem"))
+        with box:
             with ui.row().classes("items-center gap-1 no-wrap w-full"):
                 ui.icon("toll", size="16px").classes("muted").props('aria-hidden="true"')
                 ui.label("Điểm tháng này").classes("text-xs muted col ellipsis")
+                ui.icon("chevron_right", size="16px").classes("muted").props('aria-hidden="true"')
             with ui.row().classes("items-baseline gap-1 no-wrap"):
                 ui.label(f"{b['left']:,}".replace(",", ".")).classes("sr-acct-budget-num num")
                 ui.label(f"còn lại / {b['limit']:,} điểm".replace(",", ".")).classes("text-xs muted")
@@ -387,6 +392,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 with ui.menu_item(on_click=open_profile).classes("items-center gap-3"):
                     ui.icon("account_circle", size="18px").classes("muted")
                     ui.label("Hồ sơ của tôi").classes("text-sm")
+                if not A.is_client(user):
+                    with ui.menu_item(on_click=lambda: ui.navigate.to("/diem")).classes("items-center gap-3"):
+                        ui.icon("toll", size="18px").classes("muted")
+                        ui.label("Điểm của tôi").classes("text-sm")
                 if user.via == "password":
                     with ui.menu_item(on_click=logout).classes("items-center gap-3"):
                         ui.icon("logout", size="18px").style(f"color:{T.RED}")
@@ -569,7 +578,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             ui.label("Dự kiến vượt 80% ngân sách").classes("text-xs").style("color:#9A5B0B")
 
             budget = None
-            if A.can_edit(user):  # chi phí check rank là thông tin nội bộ
+            if A.is_admin(user):  # ngân sách DataForSEO: chỉ Owner / Admin (Member xem điểm của mình)
                 budget = {"render": budget_card, "warn": budget_state()["warn"]}
             account_menu(user, P, active, budget)
 
@@ -870,6 +879,16 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("Phân quyền", user, P, page_ctx(P), period=False, group=False)
         build_access_page(ui, base, app_connect, user, P.project["slug"], request.query_params.get("project"))
 
+    @ui.page("/diem")
+    def points_page(request: Request):
+        """Điểm của tôi: số dư, trừ ở đâu, bao nhiêu (Member / Owner / Admin; khách hàng không có)."""
+        from .web_points import build_points_page
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Điểm của tôi", user, P, page_ctx(P), period=False, group=False)
+        build_points_page(ui, app_connect, user)
+
     @ui.page("/tai-khoan")
     def profile_page(request: Request):
         from .web_profile import build_profile_page
@@ -960,6 +979,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     @ui.page("/research/tu-khoa")
     def keyword_overview_old(request: Request):
         from urllib.parse import quote
+
+        from fastapi.responses import RedirectResponse
         return RedirectResponse("/tu-khoa?kw=" + quote(request.query_params.get("kw", "")))
 
     @ui.page("/tu-khoa")
