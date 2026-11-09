@@ -431,7 +431,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         """Một dòng trên bảng: tóm tắt danh sách đang xem, hoặc (khi đã tick chọn) các thao tác với phần đã chọn."""
         n = len(state["sel"])
         cur = state["rec"]["currency"]
-        with ui.row().classes("w-full items-center no-wrap gap-2 sr-kr-status" + (" on" if n else "")):
+        with ui.row().classes("w-full items-center gap-2 sr-kr-status" + (" on" if n else "")):
             if not n:
                 vol = sum(r["volume"] or 0 for r in rows)
                 priced = [r["cpc"] for r in rows if r["cpc"]]
@@ -661,7 +661,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
              "classes": "sr-kc sr-kc-intent", "headerClasses": "sr-kc sr-kc-intent"},
             {"name": "volume", "label": "Volume", "field": "volume", "align": "right",
              ":format": "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')",
-             "classes": "sr-kc sr-kc-num", "headerClasses": "sr-kc sr-kc-num"},
+             "classes": "sr-kc sr-kc-vol", "headerClasses": "sr-kc sr-kc-vol"},
             {"name": "trend", "label": "Xu hướng", "field": "volume", "align": "left", "sortable": False,
              "classes": "sr-kc sr-kc-trend", "headerClasses": "sr-kc sr-kc-trend"},
             {"name": "comp", "label": "Cạnh tranh", "field": "comp_i", "align": "center",

@@ -169,7 +169,7 @@ HEAD = """
   .sr-bx-mini-l { font-size: 11px; color: var(--muted); }
   .sr-bx-mini-v { font-size: 13px; font-weight: 700; color: #3A3A32; }
   .sr-bx-mov { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; margin-top: 6px; }
-  .sr-kw-table table { table-layout: fixed; width: 100%; min-width: 1120px; }
+  .sr-kw-table table { table-layout: fixed; width: 100%; min-width: 1150px; }
   .sr-kw-table thead th { white-space: nowrap; vertical-align: middle; padding-left: 5px !important;
     padding-right: 5px !important; letter-spacing: 0; font-size: 11.5px; }
   .sr-kw-table tbody td:nth-child(2) { white-space: normal; line-height: 1.3; }  /* từ khóa dài: xuống dòng */
@@ -344,6 +344,10 @@ HEAD = """
   .sr-mv-tag { font-weight: 700; }
   .sr-kw-table th:first-child, .sr-kw-table td:first-child { width: 44px; }
   .sr-kw-table td { overflow: hidden; text-overflow: ellipsis; }
+  /* Ô tick trong bảng: viền mảnh xám, không đen đậm */
+  .q-table .q-checkbox__bg { border-width: 1.5px; border-color: #B9B7AC; border-radius: 5px; }
+  .q-table .q-checkbox__inner--truthy .q-checkbox__bg, .q-table .q-checkbox__inner--indet .q-checkbox__bg {
+    border-color: currentColor; }
   .sr-mover { padding: 3px 0; border-bottom: 1px solid #F3F1EA; }
   .sr-mover:last-child { border-bottom: none; }
   @media (max-width: 1100px) { .sr-bx { grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -489,8 +493,9 @@ HEAD = """
   .sr-intent.C { background: #FBF1DE; color: #8F5F14; }
   .sr-intent.T { background: #E7F3EA; color: #1E7C31; }
   .sr-intent.sub { width: 18px; height: 18px; font-size: 10.5px; opacity: .55; }
-  .sr-pos { display: inline-grid; grid-template-columns: 16px auto 8px; align-items: center; gap: 4px; }
-  .sr-pos .chip { border-radius: 6px; padding: 1px 8px; font-weight: 700; min-width: 34px; text-align: center;
+  .sr-pos { display: inline-grid; grid-template-columns: 16px auto 8px; grid-auto-flow: column;
+    grid-auto-columns: 14px; align-items: center; gap: 4px; }
+  .sr-pos .chip { border-radius: 6px; padding: 1px 8px; font-weight: 600; min-width: 34px; text-align: center;
     font-variant-numeric: tabular-nums; }
   .sr-pos .old { width: 6px; height: 6px; border-radius: 50%; background: #D9A441; }
   .sr-spend-sum { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 12px 0;
@@ -805,7 +810,7 @@ HEAD = """
   .sr-kr-table .sr-kc-keyword { width: 24%; white-space: normal; }
   .sr-kr-table .sr-kc-flags { width: 74px; }
   .sr-kr-table .sr-kc-intent { width: 72px; }
-  .sr-kr-table .sr-kc-num { width: 88px; padding-right: 14px !important; }
+  .sr-kr-table .sr-kc-vol { width: 88px; padding-right: 14px !important; }
   .sr-kr-table .sr-kc-trend { width: 112px; }
   .sr-kr-table .sr-kc-cpc { width: 104px; padding-right: 14px !important; }
   .sr-kr-table .sr-kc-comp { width: 92px; }
@@ -1037,7 +1042,17 @@ HEAD = """
   .sr-delta.down { color: #C2410C; background: #FCEDE6; }
   .sr-delta.flat { color: #6B6A5E; background: #EFEFE8; }
   /* nút viên thuốc: chính = đen đặc, phụ = viền */
-  .q-btn { border-radius: 999px !important; font-weight: 650; letter-spacing: -0.01em; }
+  .q-btn { border-radius: 999px !important; font-weight: 600; letter-spacing: 0; }
+  /* Nút có chữ: chữ 13px, icon 18px cách chữ 6px, đệm cân hai bên (thay cỡ mặc định 14px / icon 24px của Quasar) */
+  .q-btn:not(.q-btn--round) { font-size: 13px; line-height: 1.2; }
+  .q-btn:not(.q-btn--round) .q-btn__content { flex-wrap: nowrap; white-space: nowrap; }
+  .q-btn:not(.q-btn--round):not(.q-btn--dense) { min-height: 34px; padding: 4px 14px; }
+  .q-btn--dense:not(.q-btn--round) { min-height: 30px; padding: 2px 10px; }
+  .q-btn:not(.q-btn--round) .q-btn__content > .q-icon { font-size: 18px; }
+  .q-btn:not(.q-btn--round) .q-icon.on-left { margin-right: 6px; }
+  .q-btn:not(.q-btn--round) .q-icon.on-right { margin-left: 4px; }
+  .q-btn:not(.q-btn--round) .q-btn-dropdown__arrow { font-size: 18px; margin-left: 2px; }
+  .q-btn--dense:not(.q-btn--round) .q-btn__content > .q-icon { font-size: 16px; }
   .q-btn.bg-primary { background: var(--ink) !important; color: #F6F7F1 !important; }
   .q-btn--outline { color: var(--ink) !important; background: #fff !important; }
   .q-btn--outline:before { border-color: #D6D5CB !important; }

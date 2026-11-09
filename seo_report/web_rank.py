@@ -1497,7 +1497,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     cols = [
         {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True, **w(230)},
         {"name": "pos", "label": "Vị trí", "field": "pos", "align": "center", "sortable": True,
-         ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos", **w(72)},
+         ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos", **w(100)},
         {"name": "change", "label": "Thay đổi", "field": "change", "align": "center", "sortable": True,
          ":sort": "(a, b, rowA, rowB) => rowA.move - rowB.move", **w(100)},
         {"name": "prev_pos", "label": "Trước", "field": "prev_pos", "align": "center", "sortable": True,
