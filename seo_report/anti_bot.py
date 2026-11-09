@@ -75,6 +75,22 @@ class AIBotBlocker:
         await self.app(scope, receive, send_tagged)
 
 
+# Răn đe mở DevTools từ bàn phím / menu chuột phải. Trình duyệt luôn cho người dùng mở được DevTools, nên đây chỉ là
+# rào cản nhẹ; dữ liệu thật được bảo vệ ở máy chủ (access.py). Ô nhập liệu vẫn giữ menu sao chép / dán.
+DEVTOOLS_JS = """<script>(() => {
+  const editable = t => t && t.closest && t.closest('input, textarea, select, [contenteditable]');
+  document.addEventListener('contextmenu', e => { if (!editable(e.target)) e.preventDefault(); }, true);
+  document.addEventListener('keydown', e => {
+    const mod = e.ctrlKey || e.metaKey;
+    const tools = e.code === 'F12'
+      || (mod && e.shiftKey && ['KeyI', 'KeyJ', 'KeyC', 'KeyK'].includes(e.code))
+      || (e.metaKey && e.altKey && ['KeyI', 'KeyJ', 'KeyC', 'KeyU'].includes(e.code))
+      || (e.ctrlKey && !e.shiftKey && e.code === 'KeyU');
+    if (tools) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+})();</script>"""
+
+
 def install(app, ui) -> None:
     """Gắn vào ứng dụng NiceGUI: middleware, /robots.txt và thẻ meta cho mọi trang."""
     from fastapi.responses import PlainTextResponse
@@ -86,3 +102,4 @@ def install(app, ui) -> None:
         return PlainTextResponse(ROBOTS_TXT)
 
     ui.add_head_html(f'<meta name="robots" content="{ROBOT_TAGS}">', shared=True)
+    ui.add_head_html(DEVTOOLS_JS, shared=True)

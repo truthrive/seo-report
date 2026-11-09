@@ -21,6 +21,13 @@ export default {
           <span class="sr-fab-mini" aria-hidden="true"><q-icon :name="a.icon" size="20px" /></span>
         </button>
       </div>
+      <div v-if="ctx" class="sr-ctx" role="menu" :aria-label="fabLabel" :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }"
+           @contextmenu.prevent>
+        <button v-for="a in actions" :key="a.key" type="button" role="menuitem" class="sr-ctx-item" @click="pickCtx(a)">
+          <q-icon :name="a.icon" size="20px" aria-hidden="true" />
+          <span>{{ a.label }}<span v-if="a.badge" class="sr-fab-count"> · {{ a.badge }}</span></span>
+        </button>
+      </div>
       <button v-if="chat" type="button" class="sr-fab-chat" :aria-label="chat.label" @click="$emit('chat')">
         <q-icon :name="chat.icon || 'chat'" size="20px" aria-hidden="true" /><span>{{ chat.label }}</span>
       </button>
@@ -36,18 +43,35 @@ export default {
     topAfter: { type: Number, default: 400 },
   },
   emits: ["action", "chat"],
-  data() { return { open: false, showTop: false, dialId: `sr-fab-${++uid}-dial`, btns: [] }; },
+  data() { return { open: false, showTop: false, dialId: `sr-fab-${++uid}-dial`, btns: [], ctx: null }; },
   mounted() {
-    this.onScroll = () => { this.showTop = window.scrollY > this.topAfter; };
-    this.onDown = (e) => { if (this.open && this.$refs.root && !this.$refs.root.contains(e.target)) this.closeDial(false); };
+    this.onScroll = () => { this.showTop = window.scrollY > this.topAfter; this.ctx = null; };
+    this.onDown = (e) => {
+      if (this.open && this.$refs.root && !this.$refs.root.contains(e.target)) this.closeDial(false);
+      if (this.ctx && !(e.target.closest && e.target.closest(".sr-ctx"))) this.ctx = null;
+    };
+    // Chuột phải: thay menu của trình duyệt bằng các thao tác của tool (ô nhập liệu vẫn giữ menu sao chép / dán).
+    this.onCtx = (e) => {
+      if (!this.actions.length || (e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"))) return;
+      e.preventDefault();
+      this.closeDial(false);
+      this.ctx = { x: Math.max(8, Math.min(e.clientX, window.innerWidth - 270)),
+                   y: Math.max(8, Math.min(e.clientY, window.innerHeight - 56 * this.actions.length - 16)) };
+      this.$nextTick(() => { const b = this.$refs.root.querySelector(".sr-ctx-item"); if (b) b.focus(); });
+    };
+    this.onEsc = (e) => { if (e.key === "Escape") this.ctx = null; };
     window.addEventListener("scroll", this.onScroll, { passive: true });
     document.addEventListener("mousedown", this.onDown);
+    document.addEventListener("contextmenu", this.onCtx);
+    document.addEventListener("keydown", this.onEsc);
     document.body.classList.add("sr-has-fab");  // chừa khoảng trống dưới trang (CSS) để nút không che nội dung
     this.onScroll();
   },
   unmounted() {
     window.removeEventListener("scroll", this.onScroll);
     document.removeEventListener("mousedown", this.onDown);
+    document.removeEventListener("contextmenu", this.onCtx);
+    document.removeEventListener("keydown", this.onEsc);
     document.body.classList.remove("sr-has-fab");
   },
   methods: {
@@ -65,6 +89,10 @@ export default {
     },
     pick(a) {
       this.closeDial(false);
+      this.$emit("action", a.key);
+    },
+    pickCtx(a) {
+      this.ctx = null;
       this.$emit("action", a.key);
     },
     toTop() {
