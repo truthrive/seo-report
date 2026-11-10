@@ -35,6 +35,8 @@ COSTS = {
     "ai_brief": ("AI bản tin Tổng quan", 5),
     "ai_plan": ("AI lập chiến lược SEO", 10),
     "ai_kwbrief": ("AI viết brief từ khóa", 5),
+    "ai_kpi": ("AI đọc sheet cam kết KPI", 10),
+    "ai_kpi_insight": ("AI nhận định KPI", 5),
 }
 
 SCHEMA = """

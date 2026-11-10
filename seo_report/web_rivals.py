@@ -279,8 +279,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 T.info_icon(ui, "Thị phần lượt click ước tính", (
                     "Phần lượt click (từ kết quả tự nhiên trang 1) mỗi thương hiệu nhận được trên bộ từ khóa.",
                     "Khác độ hiển thị ở trên: từ khóa nhiều người tìm nặng ký hơn từ khóa ít người tìm.",
-                    "Click ước tính = volume tháng (Google Ads) × tỷ lệ nhấp theo vị trí ở lần check gần nhất. "
-                    "Giá trị = click × giá thầu Google Ads của từ khóa."))
+                    "Click ước tính = lượt tìm mỗi tháng × tỷ lệ nhấp theo vị trí ở lần check gần nhất."))
             ui.label(f"Tính trên {sov['keywords']}/{sov['total']} từ khóa có volume · tổng khoảng "
                      f"{sov['market']:,} click trang 1 mỗi tháng".replace(",", ".")
                      + (f" · {sov['no_volume']} từ khóa gần như không ai tìm nên không tính" if sov["no_volume"]
@@ -295,7 +294,6 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 {"name": "share", "label": "Thị phần click", "field": "share", "align": "left"},
                 {"name": "clicks", "label": "Click ước tính / tháng", "field": "clicks", "align": "right",
                  ":format": "v => v.toLocaleString('vi-VN')"},
-                {"name": "value", "label": "Giá trị / tháng", "field": "value", "align": "right"},
                 {"name": "kws", "label": "Số từ khóa có mặt", "field": "kws", "align": "right"},
             ], rows=rows, row_key="id").props("flat dense").classes("w-full sr-bl-table")
             tb.add_slot("body-cell-name", """
@@ -309,8 +307,6 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                     :class="props.row.chg > 0 ? 'up' : 'down'">{{ props.row.chg > 0 ? '▲' : '▼' }}{{
                     Math.abs(props.row.chg).toLocaleString('vi-VN') }}<q-tooltip>So với lần check trước, cùng tập từ
                     khóa (điểm phần trăm)</q-tooltip></span></div></q-td>""" % mx)
-            tb.add_slot("body-cell-value", """
-                <q-td :props="props"><span class="num">{{ props.row.value_t }}</span></q-td>""")
             most = max((p["n"] for p in trend), default=0)
             trend = [p for p in trend if p["n"] * 2 >= most]
             if len(trend) >= 2:

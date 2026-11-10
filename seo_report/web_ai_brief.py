@@ -8,6 +8,7 @@ from datetime import datetime
 from . import access as A
 from . import ai_brief as B
 from . import ai_http as AH
+from . import ai_settings as AIS
 from . import ai_writer as AW
 from . import points as PT
 from . import ui_theme as T
@@ -55,10 +56,10 @@ def brief_block(ui, cfg, connect, user, rep, todo: list) -> None:
                         at = datetime.fromisoformat(b["at"]).astimezone() if b.get("at") else None
                         stale = b.get("fingerprint") != B.fingerprint(sigs)
                         ui.label((f"{at:%d/%m %H:%M} · " if at else "") + f"từ {b.get('n_signals', '?')} tín hiệu"
-                                 + (" · có tín hiệu mới" if stale else "")).classes("sr-br-sub" + (
-                                     " stale" if stale else ""))
+                                 + (" · có tín hiệu mới" if stale else " · tự cập nhật 7:00 thứ 2–7")).classes(
+                            "sr-br-sub" + (" stale" if stale else ""))
                     else:
-                        ui.label("Chưa phân tích: đang hiện tín hiệu nặng nhất theo quy tắc của tool").classes(
+                        ui.label("Tự cập nhật 7:00 thứ 2–7 · đang hiện các tín hiệu nặng nhất").classes(
                             "sr-br-sub")
                 with ui.row().classes("items-center gap-1 no-wrap gt-sm"):
                     for k in PR_TEXT:
@@ -69,6 +70,7 @@ def brief_block(ui, cfg, connect, user, rep, todo: list) -> None:
                     "unelevated no-caps dense color=deep-purple-1 text-color=deep-purple-9").classes("sr-br-btn")
                 if not sigs:
                     btn.disable()
+                btn.set_visibility(AIS.enabled(site, "brief"))
             if not sigs:
                 ui.label("Không có việc cần xử lý.").classes("text-sm q-px-md q-pb-md")
                 return
@@ -97,7 +99,7 @@ def brief_block(ui, cfg, connect, user, rep, todo: list) -> None:
     async def go(btn) -> None:
         from nicegui import run
         try:
-            prov = AW.provider(cfg)
+            prov = AW.provider(cfg, "brief")
         except AW.NoProvider as e:
             ui.notify(str(e), type="warning", multi_line=True)
             return
@@ -109,9 +111,12 @@ def brief_block(ui, cfg, connect, user, rep, todo: list) -> None:
             out, used = await run.io_bound(B.run, cfg, sigs, prov)
         except AH.AIError as e:
             PT.give_back(entry)
+            AIS.log_call(site, "brief", "manual", str(user), prov, False, str(e))
             btn.props(remove="loading")
             ui.notify(f"AI chưa phân tích được: {e}", type="warning", multi_line=True)
             return
+        AIS.log_call(site, "brief", "manual", str(user), used, True,
+                     credits=PT.cost("ai_brief") if PT.member(user) else 0)
         with connect() as c:
             AW.save(c, site, B.KIND, "overview", out, used, str(user))
             state["brief"] = AW.latest(c, site, B.KIND, "overview")

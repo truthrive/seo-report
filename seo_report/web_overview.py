@@ -5,7 +5,7 @@ tháng thêm xu hướng 12 tháng, theo loại trang, top URL và top query.
 Số GSC/rank/index đọc từ SQLite nên hiện ngay; số GA4 tải trong luồng nền rồi điền vào khối AI.
 """
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from . import ai_format as F
 from . import kpi as KP
@@ -170,8 +170,10 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                             ui.button("Viết nháp mới", on_click=ok).props("unelevated no-caps color=primary")
                     d.open()
                     return
+                from . import ai_settings as AIS
+                task = "report_month" if month else "report_week"
                 try:
-                    prov = AW.provider(cfg)
+                    prov = AW.provider(cfg, task)
                 except AW.NoProvider as e:
                     ui.notify(str(e), type="warning", multi_line=True)
                     return
@@ -183,10 +185,13 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                     d_, used = await run.io_bound(AW.write_report, cfg, rep, prov)
                 except AH.AIError as e:
                     PT.give_back(entry)
+                    AIS.log_call(site, task, "manual", str(user), prov, False, str(e))
                     ui.notify(f"AI chưa viết được: {e}", type="warning", multi_line=True)
                     return
                 finally:
                     btn.props(remove="loading")
+                AIS.log_call(site, task, "manual", str(user), used, True,
+                             credits=PT.cost("ai_report") if PT.member(user) else 0)
                 note.value = d_["note"]
                 if plan is not None and d_["plan"]:
                     plan.value = d_["plan"]
@@ -200,17 +205,57 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 with ui.row().classes("items-center gap-1 no-wrap"):
                     save_icon = ui.icon("check_circle", size="16px")
                     save_state = ui.label().classes("text-xs")
+                from . import ai_settings as _AIS
                 from . import points as _PT
                 ai_btn = ui.button("AI viết nháp" + (f" · {_PT.cost('ai_report')} credit" if _PT.member(user) else ""),
                                    icon="auto_fix_high", on_click=lambda: ai_draft(ai_btn)).props(
                     "unelevated no-caps dense color=purple-1 text-color=deep-purple-9")
                 ai_btn.tooltip("AI đọc số liệu của kỳ này (GSC, thứ hạng, trang / truy vấn tăng giảm) và viết nháp "
                                "nhận xét" + (" và kế hoạch tháng sau" if month else "") + "; không tự lưu")
+                ai_btn.set_visibility(_AIS.enabled(site, "report_month" if month else "report_week"))
                 ai_meta = ui.label().classes("text-xs muted")
             note.on_value_change(paint_state)
             if plan is not None:
                 plan.on_value_change(paint_state)
             paint_state()
+
+            # Bản nháp lịch AI tự viết (Quản trị › AI): chờ team duyệt, không tự vào ô nhận xét
+            from . import ai_auto as _AU
+            from . import ai_writer as _AW
+            with connect() as c:
+                auto = _AW.latest(c, site, "report_note", str(note_key(rep)))
+            if auto and auto.get("by") == _AU.BY and auto.get("note") and auto["note"] != (rep.note or ""):
+                when = datetime.fromisoformat(auto["at"]).astimezone() if auto.get("at") else None
+                with ui.row().classes("w-full items-center no-wrap gap-2 sr-auto-draft") as bar:
+                    ui.icon("auto_awesome", size="18px").style("color:#7C3AED")
+                    ui.label("AI đã tự viết nháp nhận xét" + (" và kế hoạch tháng sau" if month and auto.get("plan")
+                                                             else "")
+                             + (f" lúc {when:%H:%M %d/%m}" if when else "") + ". Xem rồi bấm Dùng bản nháp, "
+                             "sửa và Lưu.").classes("text-sm col")
+
+                    def use_draft():
+                        note.value = auto["note"]
+                        if plan is not None and auto.get("plan"):
+                            plan.value = auto["plan"]
+                        bar.set_visibility(False)
+                        ui.notify("Đã đưa bản nháp vào ô: đọc lại rồi bấm Lưu nhận xét", type="positive")
+                    ui.button("Xem trước", on_click=lambda: preview()).props("flat dense no-caps color=deep-purple-9")
+                    ui.button("Dùng bản nháp", icon="south", on_click=use_draft).props(
+                        "unelevated dense no-caps color=deep-purple-1 text-color=deep-purple-9")
+
+                def preview():
+                    with ui.dialog() as d, ui.card().style("max-width: 640px; border-radius: 14px"):
+                        ui.label("Bản nháp AI").classes("text-lg font-semibold")
+                        ui.label(auto["note"]).classes("text-sm").style("white-space: pre-line")
+                        if month and auto.get("plan"):
+                            ui.label("Kế hoạch tháng sau").classes("text-sm font-semibold q-mt-sm")
+                            ui.label(auto["plan"]).classes("text-sm").style("white-space: pre-line")
+                        with ui.row().classes("w-full justify-end gap-2"):
+                            ui.button("Đóng", on_click=d.close).props("flat no-caps")
+                            ui.button("Dùng bản nháp", on_click=lambda: (use_draft(), d.close())).props(
+                                "unelevated no-caps color=deep-purple-1 text-color=deep-purple-9")
+                    d.on("hide", d.delete)
+                    d.open()
     elif ed:  # tình trạng dữ liệu là việc nội bộ: người chỉ xem không cần
         health_strip(ui, cfg, connect, rep)
 

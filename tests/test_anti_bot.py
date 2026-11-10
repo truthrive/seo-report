@@ -27,6 +27,13 @@ class AntiBotTest(unittest.TestCase):
                    "Bytespider", "Google-Extended"):
             self.assertTrue(AB.is_ai_bot(ua), ua)
 
+    def test_detects_search_engine_bots(self):
+        for ua in ("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                   "Mozilla/5.0 (Linux; Android 6.0.1) Chrome/120 Mobile Safari/537.36 (compatible; Googlebot/2.1)",
+                   "Mozilla/5.0 (compatible; bingbot/2.0)", "Mozilla/5.0 (compatible; AhrefsBot/7.0)",
+                   "Mozilla/5.0 (compatible; Google-InspectionTool/1.0)"):
+            self.assertTrue(AB.is_ai_bot(ua), ua)
+
     def test_normal_browsers_and_empty_pass(self):
         self.assertFalse(AB.is_ai_bot("Mozilla/5.0 (Windows NT 10.0) Chrome/120 Safari/537.36"))
         self.assertFalse(AB.is_ai_bot(""))

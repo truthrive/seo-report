@@ -24,7 +24,9 @@ NOTE = {"rank": "Bấm Check ngay. Check theo lịch của bộ không trừ cre
         "ai_report": "Bấm AI viết nháp ở khối Nhận xét & kết luận của trang Báo cáo.",
         "ai_brief": "Bấm AI phân tích / Cập nhật ở Bản tin AI đầu trang Tổng quan. Mở trang xem bản đã có không tính.",
         "ai_plan": "Tick từ khóa ở Ý tưởng từ khóa rồi bấm AI lập chiến lược (tối đa 80 từ khóa một lần).",
-        "ai_kwbrief": "Bấm AI viết brief ở Tổng quan từ khóa. Xem lại brief đã viết không tính."}
+        "ai_kwbrief": "Bấm AI viết brief ở Tổng quan từ khóa. Xem lại brief đã viết không tính.",
+        "ai_kpi": "Bấm AI đọc sheet cam kết ở trang Sửa cam kết KPI.",
+        "ai_kpi_insight": "Bấm AI nhận định ở đầu trang Cam kết KPI. Xem lại bản đã viết không tính."}
 
 
 def _n(v) -> str:
@@ -135,7 +137,8 @@ CALC_GROUPS = (
     ("Từ khóa", (("aio", "Check AIO", "từ khóa"), ("serp", "Xem kết quả Google", "từ khóa"),
                  ("research", "Research từ khóa", "lần"), ("overview", "Tổng quan từ khóa mới", "từ khóa"),
                  ("volume", "Thêm từ khóa vào bộ", "lần"), ("ai_aio", "AI viết đoạn trả lời AIO", "lần"),
-                 ("ai_plan", "AI lập chiến lược SEO", "lần"), ("ai_kwbrief", "AI viết brief từ khóa", "lần"))),
+                 ("ai_plan", "AI lập chiến lược SEO", "lần"), ("ai_kwbrief", "AI viết brief từ khóa", "lần"),
+                 ("ai_kpi_insight", "AI nhận định KPI", "lần"))),
     ("Website và báo cáo", (("backlink", "Lấy số backlink", "lần"), ("audit", "Quét audit kỹ thuật", "lần"),
                             ("pagespeed", "Lấy số tốc độ trang", "lần"), ("local", "Lấy số Local SEO", "lần"),
                             ("merchant", "Lấy số Merchant Center", "lần"), ("kg", "Kiểm tra Knowledge Graph", "lần"),

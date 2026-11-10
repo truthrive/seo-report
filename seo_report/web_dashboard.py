@@ -89,7 +89,8 @@ def kpi_rank_line(p: dict | None) -> str:
         ch = (m.get("checks") or {}).get(KP.line_id(line))
         if line["kind"] != "rank" or not ch or not ch.get("checked") or not ch.get("total"):
             continue
-        name = f"Top {line['top']}" + (" (bộ riêng)" if line.get("mode") == "per_tier" else "")
+        name = ("Đạt Top mục tiêu" if line.get("mode") == "own" else
+                f"Top {line['top']}" + (" (bộ riêng)" if line.get("mode") == "per_tier" else ""))
         parts.append(f"{name} <b>{ch['count']}/{ch['total']}</b>")
     if not parts:
         return ""
@@ -390,23 +391,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                   on_click=lambda: EV.events_dialog(ui, connect, site, user, ed, reload_events)).props(
                             "flat dense no-caps size=sm color=deep-purple-7").tooltip(
                             "Ghi mốc (Google update, sửa web, đăng bài…) để thấy trên biểu đồ")
-        v = g.get("value")
-        if state["loading"] or v:
-            from . import keyword_research as KR
-            with ui.element("div").classes("sr-db-valrow"):
-                if state["loading"]:
-                    W.stat(ui, "Giá trị traffic SEO", "", "payments", loading=True, tone="green")
-                else:
-                    dl, good = delta(v["value"], v["prev"])
-                    W.stat(ui, "Giá trị traffic SEO", KR.money(v["value"], v["currency"]), "payments", dl, good,
-                           sub=f"Phải trả chừng này nếu mua {F.n(v['priced_clicks'])} click SEO bằng Google Ads · "
-                               f"{prev_label}: {KR.money(v['prev'], v['currency'])}",
-                           info=("Click SEO (không tính từ khóa thương hiệu) nhân với giá thầu Google Ads ước tính "
-                                 "của từng từ khóa.",
-                                 "SEO đang mang về lượng khách tương đương bao nhiêu tiền quảng cáo.",
-                                 "CPC = trung bình giá thầu đầu trang thấp / cao của Keyword Planner, cập nhật mỗi "
-                                 "tháng. Chỉ tính từ khóa Google cho biết và có giá thầu: là mức tối thiểu."),
-                           tone="green")
+        # Giá trị traffic theo CPC: chỉ để đối chiếu, có trong file Excel, không hiện trên Tổng quan
 
     @ui.refreshable
     def ga_row():

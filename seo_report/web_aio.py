@@ -342,7 +342,8 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                     ui.label(r["text"]).classes("sr-aio-text")
                 else:
                     ui.label("Lần check này chưa lưu nội dung chữ (lần check tới sẽ có).").classes("text-sm muted")
-                if ed and not cl:
+                from . import ai_settings as AIS
+                if ed and not cl and AIS.enabled(cfg.site_url, "aio_answer"):
                     def write_it(r=r):
                         from .web_ai_write import answer_dialog
                         with connect() as c:
@@ -477,7 +478,8 @@ def audit_view(ui, connect, cfg, state: dict, show_text, user_=None) -> None:
     from . import access as A_
     from . import web_ai_write as WW
     ui_state = {"key": None, "q": ""}
-    can_write = A_.can_edit(user_)
+    from . import ai_settings as AIS
+    can_write = A_.can_edit(user_) and AIS.enabled(cfg.site_url, "aio_answer")
 
     @ui.refreshable
     def view() -> None:

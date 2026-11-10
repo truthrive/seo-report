@@ -25,7 +25,7 @@ from .web_url import build_url_page
 
 PRIMARY = T.GREEN
 ADMIN_PAGES = ("/projects", "/access", "/budget", "/cai-dat")  # chỉ Owner / Admin thấy trong menu
-OWNER_PAGES = ("/cai-dat",)  # chỉ Owner
+OWNER_PAGES = ("/cai-dat", "/quan-tri-ai")  # chỉ Owner
 NUMBER = "val => val.toLocaleString('vi-VN')"
 # Menu chia nhóm: (tên nhóm hoặc None, [(nhãn, đường dẫn, icon)])
 NAV = [
@@ -42,7 +42,7 @@ NAV = [
     (None, [("Quản trị", "/projects", "admin_panel_settings")]),
 ]
 ADMIN_TABS = (("Dự án", "/projects"), ("Ngân sách & chi phí", "/budget"), ("Phân quyền", "/access"),
-              ("Cài đặt tích hợp", "/cai-dat"))
+              ("Cài đặt tích hợp", "/cai-dat"), ("AI", "/quan-tri-ai"))
 # Mục "URL & Index" (dữ liệu GSC theo URL): một mục trên menu, ba tab = ba màn (link cũ vẫn mở đúng tab)
 URL_TABS = (("Hiệu suất URL", "/url"), ("Nguồn tìm kiếm", "/nguon"), ("Index", "/index"),
             ("Quản lý URL", "/urls"))
@@ -627,8 +627,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     ui.label(P.project["name"]).classes("text-sm font-medium ellipsis")
                     ui.icon("expand_more", size="18px").classes("muted")
                     # nhiều dự án: ô tìm ở đầu, danh sách cuộn trong khung cố định (website đang mở luôn trên cùng)
-                    with ui.menu().classes("sr-proj-menu").style("width: 300px"):
+                    with ui.menu().props(':offset="[0, 6]"').classes("sr-proj-menu").style("width: 320px"):
                         rows_ = []
+                        ui.label(f"Website · {len(P.projects)}").classes("sr-proj-h")
                         if len(P.projects) > 6:
                             def filt(e) -> None:
                                 q_ = (e.value or "").strip().lower()
@@ -637,18 +638,26 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             ui.input(placeholder=f"Tìm trong {len(P.projects)} website", on_change=filt).props(
                                 "outlined dense clearable autofocus").classes("q-ma-sm sr-proj-search").on(
                                 "click", js_handler="e => e.stopPropagation()")
-                        with ui.column().classes("gap-0 w-full").style("max-height: 320px; overflow-y: auto"):
+                        with ui.column().classes("gap-0 w-full sr-proj-list"):
                             for p in sorted(P.projects, key=lambda x: x["slug"] != P.project["slug"]):
                                 cur = p["slug"] == P.project["slug"]
                                 with ui.menu_item(on_click=lambda _, s_=p["slug"]: switch(s_)).classes(
-                                        "items-center gap-2 no-wrap" + (" sr-current" if cur else "")) as it:
-                                    T.project_icon(ui, p, 24)
+                                        "sr-proj-item no-wrap" + (" sr-current" if cur else "")) as it:
+                                    T.project_icon(ui, p, 30)
                                     with ui.column().classes("gap-0 col").style("min-width:0"):
-                                        ui.label(p["name"]).classes("text-sm ellipsis")
-                                        ui.label(PJ.domain(p["site_url"])).classes("text-xs muted ellipsis")
+                                        ui.label(p["name"]).classes("sr-proj-name ellipsis")
+                                        ui.label(PJ.domain(p["site_url"])).classes("sr-proj-dom ellipsis")
                                     if cur:
-                                        ui.icon("check_circle", size="18px").style(f"color:{T.GREEN}")
+                                        ui.label("Đang mở").classes("sr-proj-cur")
+                                    else:
+                                        ui.icon("arrow_forward", size="16px").classes("sr-proj-go")
                                 rows_.append((p, it))
+                        if A.is_admin(user):
+                            ui.separator().classes("q-my-xs")
+                            with ui.menu_item(on_click=lambda: ui.navigate.to("/projects")).classes(
+                                    "sr-proj-item sr-proj-manage no-wrap"):
+                                ui.icon("tune", size="18px")
+                                ui.label("Quản lý dự án").classes("text-sm col")
             else:
                 with ui.row().classes("items-center gap-2 no-wrap"):
                     T.project_icon(ui, P.project, 22)
@@ -1034,6 +1043,16 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         build_research_page(ui, P.cfg, P.connect, user, int(rid) if rid.isdigit() else None, qp.get("tra", ""),
                             preset, view={k: qp[k] for k in ("match", "kind", "view") if qp.get(k)})
 
+    @ui.page("/quan-tri-ai")
+    def ai_admin_page(request: Request):
+        """Quản trị › AI: bật / tắt, model, lịch tự chạy, trần, nhật ký gọi AI. Chỉ Owner."""
+        if not (opened := open_page(request, owner=True)):
+            return
+        user, P = opened
+        shell("AI", user, P, page_ctx(P), period=False, group=False)
+        from .web_ai_admin import build_ai_admin
+        build_ai_admin(ui, base, app_connect, user)
+
     @ui.page("/ai-da-tao")
     def ai_library_page(request: Request):
         """AI đã tạo: mọi bản AI viết cho website (tab thứ ba của Research từ khóa). Chỉ team."""
@@ -1323,7 +1342,10 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
 
     def start_schedule():  # check rank theo lịch (ngày + giờ) của từng bộ, mỗi 15 phút
         from nicegui import background_tasks
+
+        from .ai_auto import auto_loop
         background_tasks.create(schedule_loop(base), name="rank-schedule")
+        background_tasks.create(auto_loop(base), name="ai-auto")  # AI tự chạy theo lịch ở Quản trị › AI
     app.on_startup(start_schedule)
     ui.run(host="127.0.0.1", port=port, title="SEO Report", reload=False, show=show, language="vi",
            storage_secret=_storage_secret(base), favicon=assets / "app-icon.svg")

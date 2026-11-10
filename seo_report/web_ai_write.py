@@ -5,6 +5,7 @@ from html import escape
 
 from . import access as A
 from . import ai_http as AH
+from . import ai_settings as AIS
 from . import ai_writer as AW
 from . import points as PT
 from . import ui_theme as T
@@ -44,7 +45,7 @@ def answer_dialog(ui, connect, cfg, user, keyword_id: int, keyword: str, page_ur
     brand = bs[0]["name"] if bs else ""
     cost = PT.cost("ai_aio")
     try:
-        prov = AW.provider(cfg)
+        prov = AW.provider(cfg, "aio_answer")
     except AW.NoProvider as e:
         prov, no_prov = None, str(e)
     else:
@@ -137,9 +138,11 @@ def answer_dialog(ui, connect, cfg, user, keyword_id: int, keyword: str, page_ur
                                              prov)
         except (AH.AIError, AW.NoProvider) as e:
             PT.give_back(entry)
+            AIS.log_call(site, "aio_answer", "manual", str(user), prov, False, str(e))
             btn.props(remove="loading")
             ui.notify(f"AI chưa viết được: {e}", type="warning", position="bottom-right", multi_line=True)
             return
+        AIS.log_call(site, "aio_answer", "manual", str(user), used, True, credits=PT.cost("ai_aio") if PT.member(user) else 0)
         with connect() as c:
             AW.save(c, site, KIND, ref, draft, used, str(user))
             state["draft"] = AW.latest(c, site, KIND, ref)

@@ -1045,7 +1045,8 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                                   ).props(seg).classes("sr-seg")
                     m.tooltip("Khớp rộng: chứa đủ các từ · Khớp cụm: đúng cụm từ · Mọi ý tưởng: cả từ khóa Google gợi ý")
                 ui.space()
-                if ed:  # AI lập chiến lược: luôn hiện; đã tick thì dùng từ khóa đã chọn, chưa tick thì danh sách đang xem
+                from . import ai_settings as _AIS
+                if ed and _AIS.enabled(cfg.site_url, "kw_strategy"):  # AI lập chiến lược: luôn hiện; đã tick thì dùng từ khóa đã chọn, chưa tick thì danh sách đang xem
                     def ai_plan():
                         from .web_ai_research import plan_dialog
                         want = set(state["sel"])

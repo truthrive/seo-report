@@ -286,6 +286,21 @@ class JudgeTest(unittest.TestCase):
         self.assertEqual((d["target"], d["actual"], d["status"]),
                          ("3 từ khóa (75%)", "50% (2/4 từ khóa)", "Thiếu 1 từ khóa"))
 
+    def test_own_target_line(self):
+        """Đạt Top mục tiêu riêng: chỉ tính từ khóa có Top mục tiêu, so với mục tiêu của chính nó."""
+        own = {"kind": "rank", "top": 0, "mode": "own", "unit": "count", "targets": {"1": 2}}
+        items = [{"target": 3, "rank": 2, "date": "d"}, {"target": 5, "rank": 4, "date": "d"},
+                 {"target": 3, "rank": 7, "date": "d"}, {"target": None, "rank": 1, "date": "d"}]
+        row = {"n": 1, "status": "closed", "rank": {"items": items}, "sessions": {}, "forecast": {}}
+        ch = KP._judge(own, row)
+        self.assertEqual((ch["count"], ch["total"], ch["ok"]), (2, 3, True))
+        self.assertEqual(KP.line_id(own), "own")
+        self.assertEqual(KP.line_label(own), "Từ khóa đạt Top mục tiêu riêng")
+        # ghi ra sheet rồi đọc lại vẫn đúng loại
+        d = {"project": "x", "start": "2026-11-01", "months": [1], "baseline": {}, "lines": [own]}
+        back = KP.parse_kpi(KP.kpi_grid(d), date(2026, 11, 2))["lines"][0]
+        self.assertEqual((back["mode"], back["unit"], back["targets"]["1"]), ("own", "count", 2))
+
 
 class WizardTest(unittest.TestCase):
     SPEC = {"project": "SEO x.vn", "start": "2026-12-01", "months": 6, "baseline": {"organic": 5000, "ai": 120},
@@ -572,3 +587,45 @@ class TabRenameTest(unittest.TestCase):
         self.assertTrue(info["keyword_tab_missing"])
         kpi_set = next(s for s in R.sets(con, cfg.site_url) if s["kind"] == "kpi")
         self.assertEqual(kpi_set["count"], 2)
+
+
+class CustomSetLineTest(unittest.TestCase):
+    """Bộ từ khóa riêng (bộ Cam kết có tên, mốc Top tự chọn): chỉ tính từ khóa của bộ đó, không lẫn vào Top 3/5/10."""
+
+    def test_pool_and_hit(self):
+        from seo_report import kpi as KP
+        items = [{"keyword": "a", "target": 3, "set": 1, "rank": 2},
+                 {"keyword": "b", "target": None, "set": 7, "rank": 15},
+                 {"keyword": "c", "target": None, "set": 7, "rank": 40}]
+        custom = {"kind": "rank", "mode": "shared", "top": 20, "set": 7, "unit": "count", "name": "Thương hiệu"}
+        top3 = {"kind": "rank", "mode": "per_tier", "top": 3, "unit": "count"}
+        self.assertEqual([x["keyword"] for x in KP.rank_pool(custom, items)], ["b", "c"])
+        self.assertEqual([KP.hit(custom, x) for x in KP.rank_pool(custom, items)], [True, False])
+        self.assertEqual([x["keyword"] for x in KP.rank_pool(top3, items)], ["a"])
+
+    def test_tiers_inside_named_set(self):
+        """Bộ Từ khóa thúc đẩy có Top 3 riêng: không lẫn với Top 3 của bộ chính."""
+        from seo_report import kpi as KP
+        items = [{"keyword": "a", "target": 3, "set": 1, "rank": 2},
+                 {"keyword": "d", "target": 3, "set": 7, "rank": 1}]
+        main3 = {"kind": "rank", "mode": "per_tier", "top": 3, "unit": "count"}
+        push3 = {"kind": "rank", "mode": "per_tier", "top": 3, "unit": "count", "set": 7, "name": "Thúc đẩy"}
+        claimed = KP.claimed_sets([main3, push3])
+        self.assertEqual([x["keyword"] for x in KP.rank_pool(main3, items, claimed)], ["a"])
+        self.assertEqual([x["keyword"] for x in KP.rank_pool(push3, items, claimed)], ["d"])
+        self.assertEqual(KP.line_id(push3), "top3@7")
+        self.assertEqual(KP.line_label(push3), "Thúc đẩy · Top 3")
+
+
+class LineGroupsTest(unittest.TestCase):
+    def test_groups_by_set(self):
+        from seo_report import web_kpi as W
+        lines = [{"kind": "rank", "mode": "per_tier", "top": 3, "unit": "count"},
+                 {"kind": "rank", "mode": "per_tier", "top": 3, "unit": "count", "set": 7, "name": "Thúc đẩy"},
+                 {"kind": "level", "source": "organic"},
+                 {"kind": "rank", "mode": "per_tier", "top": 20, "unit": "count", "set": 7, "name": "Thúc đẩy"}]
+        g = W.line_groups(lines)
+        self.assertEqual([(k, n, len(x)) for k, n, x in g],
+                         [("main", "Cam kết", 1), ("s7", "Thúc đẩy", 2), ("traffic", "Lượt truy cập", 1)])
+        self.assertEqual(W._in_group(lines[3]), "Top 20")
+        self.assertEqual(W._in_group(lines[2]), "Organic traffic")

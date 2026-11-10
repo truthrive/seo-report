@@ -650,18 +650,25 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         from . import keyword_research as KR
         cur = fc["currency"]
         explain(f"Từ khóa đang theo dõi hạng chưa vào top {fc['target']}: lên được top {fc['target']} thì có thêm bao "
-                "nhiêu click và tiền mỗi tháng (volume × tỷ lệ nhấp theo vị trí, × giá thầu Google Ads).", [
-                    "Nhiều tiền trước: nên đẩy các từ khóa đầu danh sách. “Sắp vào mùa”: 2 tháng tới người tìm "
-                    "nhiều hơn trung bình năm từ 20%, nên đẩy ngay.",
+                "nhiêu click mỗi tháng.", [
+                    "Từ khóa đầu danh sách đáng đẩy nhất. “Sắp vào mùa”: 2 tháng tới người tìm nhiều hơn bình thường, "
+                    "nên đẩy ngay.",
                     f"Không tính {fc['no_volume']} từ khóa gần như không ai tìm (Google Ads không có số)."
                     if fc["no_volume"] else "Ước tính, dùng để xếp thứ tự ưu tiên."])
+        if fc["rows"] and ed:  # giá trị theo giá thầu Google Ads: chỉ để đối chiếu, có trong file Excel
+            from datetime import date as _d
+
+            from .web_export import export_menu
+            with ui.row().classes("w-full justify-end q-mb-xs"):
+                export_menu(ui, cfg, connect, f"day-len-top_{_d.today():%Y-%m-%d}", lambda: forecast_xlsx(fc, site),
+                            label="Xuất Excel (kèm giá trị ước tính theo giá thầu Google Ads)", user=user,
+                            category="audit")
         if not fc["rows"]:
             T.empty_state(ui, "emoji_events", "Không có từ khóa nào cần đẩy",
                           "Các từ khóa đều đã ở top 3.")
             return
         with ui.element("div").classes("sr-op-audit-sum"):
             for num, lab in ((f"+{fc['gain']:,}".replace(",", "."), "click / tháng nếu mọi từ khóa lên top 3"),
-                             (KR.money(fc["value"], cur), "giá trị / tháng (theo giá thầu Google Ads)"),
                              (f"{len(fc['rows'])}", "từ khóa chưa vào top 3"),
                              (f"{sum(1 for r in fc['rows'] if r['soon'])}", "từ khóa sắp vào mùa")):
                 with ui.element("div").classes("sr-op-stat"):
@@ -677,7 +684,6 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
              ":format": "v => v === null || v === undefined ? 'chưa thấy' : v"},
             {"name": "volume", "label": "Volume / tháng", "field": "volume", "align": "right", ":format": NUM},
             {"name": "gain", "label": "+ Click / tháng", "field": "gain", "align": "right"},
-            {"name": "value", "label": "+ Giá trị / tháng", "field": "value", "align": "right"},
             {"name": "season", "label": "Mùa", "field": "peak", "align": "left"},
         ], rows=data, row_key="id", pagination=20).props("flat dense binary-state-sort").classes(
             "w-full sr-bl-table")
@@ -686,8 +692,6 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
               <div class="sr-bl-sub">{{ props.row.set }}<span v-if="props.row.path"> · {{ props.row.path }}</span>
               </div></q-td>""")
         T.bar_slot(tb, "gain", max(r["gain"] for r in data))
-        tb.add_slot("body-cell-value", """
-            <q-td :props="props"><span class="num">{{ props.row.value_t }}</span></q-td>""")
         tb.add_slot("body-cell-season", """
             <q-td :props="props"><span v-if="props.row.soon" class="sr-bl-type k-lost">sắp vào mùa</span>
               <span v-if="props.row.peak_t" class="muted text-xs q-ml-xs">cao điểm {{ props.row.peak_t }}</span>
@@ -797,3 +801,31 @@ def audit_xlsx(au: dict, site: str) -> bytes:
 
 def _p(v) -> str:
     return f"{v:.1f}".replace(".", ",") if v else "–"
+
+
+def forecast_xlsx(fc: dict, site: str) -> bytes:
+    """Excel tab Đẩy lên top: mỗi từ khóa + click thêm + giá trị ước tính (click × giá thầu Google Ads, để đối chiếu)."""
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Đẩy lên top"
+    cur = fc.get("currency") or ""
+    ws.append(["Từ khóa", "Bộ", "Trang", "Vị trí", "Volume / tháng", "+ Click / tháng",
+               f"+ Giá trị ước tính / tháng ({cur})", "Sắp vào mùa"])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="F3F3ED")
+    for r in fc["rows"]:
+        ws.append([r["keyword"], r.get("set", ""), r.get("url") or "", r.get("rank"), r.get("volume"), r.get("gain"),
+                   round(r["value"]) if r.get("value") is not None else None, "Có" if r.get("soon") else ""])
+    ws.append([])
+    ws.append(["Giá trị ước tính = click thêm × giá thầu Google Ads của từ khóa: chỉ để đối chiếu, không phải doanh thu."])
+    for col, w in zip("ABCDEFGH", (34, 18, 50, 8, 14, 14, 22, 12)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

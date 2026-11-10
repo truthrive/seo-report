@@ -54,10 +54,12 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                     def ai_brief():
                         from .web_ai_research import brief_dialog
                         brief_dialog(ui, connect, cfg, user, state["data"])
+                    from . import ai_settings as AIS
                     ui.button("AI viết brief", icon="auto_awesome", on_click=ai_brief).props(
                         "unelevated dense no-caps color=deep-purple-1 text-color=deep-purple-9").tooltip(
                         "AI viết dàn ý bài cho từ khóa này" + (f" · {PT.cost('ai_kwbrief')} credit"
-                                                            if PT.member(user) else ""))
+                                                            if PT.member(user) else "")).set_visibility(
+                        AIS.enabled(cfg.site_url, "kw_brief"))
                     ui.button(icon="refresh", on_click=lambda: load(True)).props(
                         'flat round dense aria-label="Lấy số mới từ Google Ads"').tooltip("Lấy số mới từ Google Ads")
                 export_menu(ui, cfg, connect, f"tong-quan-tu-khoa_{_slug(d['keyword'])}", make_xlsx, user=user,

@@ -56,8 +56,11 @@ def _meta(d: dict) -> str:
 async def _run(ui, user, cfg, action: str, detail: str, fn, *args):
     """Trừ credit, gọi AI trong luồng phụ, hoàn credit khi lỗi. Trả (kết quả, nhà cung cấp) hoặc None."""
     from nicegui import run
+
+    from . import ai_settings as AIS
+    task = AIS.ACTION_TASK.get(action, action)
     try:
-        prov = AW.provider(cfg)
+        prov = AW.provider(cfg, task)
     except AW.NoProvider as e:
         ui.notify(str(e), type="warning", multi_line=True)
         return None
@@ -65,11 +68,15 @@ async def _run(ui, user, cfg, action: str, detail: str, fn, *args):
     if entry is False:
         return None
     try:
-        return await run.io_bound(fn, cfg, *args, prov)
+        res = await run.io_bound(fn, cfg, *args, prov)
     except AH.AIError as e:
         PT.give_back(entry)
+        AIS.log_call(cfg.site_url, task, "manual", str(user), prov, False, str(e))
         ui.notify(f"AI chưa viết được: {e}", type="warning", multi_line=True, position="bottom-right")
         return None
+    AIS.log_call(cfg.site_url, task, "manual", str(user), res[1], True,
+                 credits=PT.cost(action) if PT.member(user) else 0)
+    return res
 
 
 # ---------------------------------------------------------------- chiến lược cho nhóm từ khóa

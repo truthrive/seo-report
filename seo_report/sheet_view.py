@@ -29,6 +29,12 @@ NOTE = "Tab do tool SEO Report ghi tự động: thêm / sửa trên tool. Sửa
 MAX_DATE_COLS = 26  # tab bộ: tối đa 26 lần check gần nhất (khoảng nửa năm nếu check hằng tuần)
 PROTECT_TAG = "seo-report"
 _SETTING = "sheet_view_tabs"  # {sheet id: {"kpi": gid, "data": gid, "set:<id>": gid}}
+# Tab OKRs (chốt lại 2026-11-10): tool chỉ ghi vào tab RIÊNG do chính tool tạo, tên "<tên đợt> (tool)"; không bao giờ
+# nhận tab có sẵn trên sheet theo tên (tool từng ghi đè tab OKR team tự làm vì trùng tên đợt). Tab tool tạo được ghi nhớ
+# ở _CREATED; chỉ tab trong danh sách này mới được tool ghi / đổi tên / xóa.
+OKR_TABS = True
+OKR_SUFFIX = " (tool)"
+_CREATED = "sheet_view_created"  # {sheet id: [gid tab do tool tạo]}
 
 
 def set_title(name: str) -> str:
@@ -101,6 +107,18 @@ def _saved(con, sid: str) -> dict[str, int]:
     return {k: int(v) for k, v in (json.loads(raw).get(sid, {}) if raw else {}).items()}
 
 
+def _created(con, sid: str) -> set[int]:
+    raw = KP._setting(con, _CREATED)
+    return {int(x) for x in (json.loads(raw).get(sid, []) if raw else [])}
+
+
+def _save_created(con, sid: str, gids: set[int]) -> None:
+    raw = KP._setting(con, _CREATED)
+    allv = json.loads(raw) if raw else {}
+    allv[sid] = sorted(gids)
+    KP._setting(con, _CREATED, json.dumps(allv))
+
+
 def _save(con, sid: str, ids: dict[str, int]) -> None:
     raw = KP._setting(con, _SETTING)
     allv = json.loads(raw) if raw else {}
@@ -121,7 +139,8 @@ def info_rows(con, site: str, stamp: str, weekly_tab: str, ver: dict | None) -> 
     head = len(rows) - 1
     rows += [[INFO_TAB, "Tool", "Tool ghi, không sửa ở đây."],
              [KP.KPI_TAB, "Tool", "Sửa trên tool: KPI cam kết → Sửa cam kết."],
-             ["OKRs <đợt>", "Tool", "Sửa trên tool: Công việc & OKR → Sửa OKR. Mỗi đợt một tab."],
+             [f"OKRs <đợt>{OKR_SUFFIX}", "Tool", "Sửa trên tool: Công việc & OKR → Sửa OKR. Mỗi đợt một tab riêng của "
+              "tool; tab OKR team tự làm tool không đụng."],
              [f"{SET_PREFIX}<tên bộ>", "Tool", "Từ khóa và thứ hạng của từng bộ; sửa trên tool: Từ khóa & Thứ hạng."],
              [DATA_TAB, "Tool", "Mỗi từ khóa trong mỗi lần check, để lọc / làm pivot."],
              [weekly_tab, "Team, trên sheet", "Tool chỉ đọc. Không đổi tên cột ở hàng tiêu đề (tool đọc theo tên cột)."],
@@ -140,10 +159,11 @@ def plan(con, site: str, end: date, today: date | None = None,
     out["info"] = (INFO_TAB, info_rows(con, site, stamp, weekly_tab, ver)[0])
     if ver:
         out["kpi"] = (KP.KPI_TAB, KP.kpi_grid(ver))
-    if O.tool_owned(con):  # OKR sửa trên tool: mỗi đợt một tab (khóa theo mã đợt, đổi tên đợt vẫn đúng tab)
+    if OKR_TABS and O.tool_owned(con):  # OKR sửa trên tool: mỗi đợt một tab (khóa theo mã đợt)
         ids = O.cycle_ids(con)
         for c in O.cycle_list(con):
-            out[f"okr:{ids[c['name']]}"] = (O.tab_title(c["name"]), O.sheet_rows(con, c["name"], NOTE, stamp, today))
+            out[f"okr:{ids[c['name']]}"] = (O.tab_title(c["name"])[:83] + OKR_SUFFIX,
+                                            O.sheet_rows(con, c["name"], NOTE, stamp, today))
     for st in R.sets(con, site):
         out[f"set:{st['id']}"] = (set_title(st["name"]), set_rows(con, site, end, st, stamp))
     out[DATA_TAB] = (DATA_TAB, data_rows(con, site, stamp))
@@ -178,10 +198,13 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
     # tự thiết kế (đọc trước đây, vd "2. KPI SEO 12 tháng": có ghi chú, công thức) — tool tạo tab riêng bên cạnh.
     if linked and f"set:{linked}" not in saved and old_ids.get(KP.KW_TAB) in props:
         saved[f"set:{linked}"] = old_ids[KP.KW_TAB]  # tab Từ khóa cam kết cũ thành tab của bộ Cam kết
+    created = _created(con, sid) & set(props)  # tab do tool tạo (còn trên sheet)
     reqs, ids, final = [], {}, {}  # final: tên tab thật sau khi ghi (đổi tên trùng tab khác thì giữ tên cũ)
     for key, (title, _) in want.items():
         gid = saved.get(key)
-        if gid not in props:
+        if key.startswith("okr:"):  # tab OKR: chỉ tab tool tự tạo, không bao giờ nhận tab có sẵn theo tên
+            gid = gid if gid in created else None
+        elif gid not in props:
             gid = by_title.get(title.strip().lower())
         if gid in props and gid not in ids.values():
             ids[key] = gid
@@ -200,7 +223,8 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
             reqs.append({"addSheet": {"properties": {"title": title}}})
     deleted = 0
     for key, gid in saved.items():  # bộ đã xóa: xóa tab của bộ
-        if key.startswith(("set:", "okr:")) and key not in want and gid in props and gid not in ids.values():
+        okr_own = key.startswith("okr:") and gid in created  # chỉ xóa tab OKR do tool tạo (đợt đã xóa trên tool)
+        if (key.startswith("set:") or okr_own) and key not in want and gid in props and gid not in ids.values():
             reqs.append({"deleteSheet": {"sheetId": gid}})
             deleted += 1
     if reqs:
@@ -211,7 +235,10 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
                 p = next(x for x in added if x["title"] == title)
                 ids[key] = p["sheetId"]
                 props[p["sheetId"]] = {"properties": p, "protectedRanges": []}
+                if key.startswith("okr:"):
+                    created.add(p["sheetId"])
     _save(con, sid, ids)
+    _save_created(con, sid, created)
     ranges = ["'" + final[k].replace("'", "''") + "'" for k in want]
     sh.spreadsheets().values().batchClear(spreadsheetId=sid, body={"ranges": ranges}).execute()
     sh.spreadsheets().values().batchUpdate(spreadsheetId=sid, body={
@@ -232,9 +259,20 @@ def publish(con, cfg, today: date | None = None, sh=None) -> dict:
         if not any(p.get("description") == PROTECT_TAG for p in props.get(gid, {}).get("protectedRanges") or []):
             fmt.append({"addProtectedRange": {"protectedRange": {"range": {"sheetId": gid}, "warningOnly": True,
                                                                  "description": PROTECT_TAG}}})
-    fmt += _weekly_header_lock(sh, sid, meta, weekly_tab, set(ids.values()))
+    ours = set(ids.values())
+    for gid, sheet in props.items():
+        if gid in ours:
+            continue
+        for pr in sheet.get("protectedRanges") or []:
+            if pr.get("description") == PROTECT_TAG and pr.get("protectedRangeId") is not None:
+                fmt.append({"deleteProtectedRange": {"protectedRangeId": pr["protectedRangeId"]}})
+    fmt += _weekly_header_lock(sh, sid, meta, weekly_tab, ours)
     if fmt:
-        sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": fmt}).execute()
+        try:  # định dạng là phụ: lỗi (vd tab có ô gộp không cố định cột được) không được làm cả lần ghi thất bại,
+            # nếu không máy chủ coi như chưa ghi và ghi lại sau mỗi 15 phút
+            sh.spreadsheets().batchUpdate(spreadsheetId=sid, body={"requests": fmt}).execute()
+        except Exception as e:  # noqa: BLE001
+            print(f"[sheet_view] bỏ qua lỗi định dạng sheet: {str(e)[:200]}", flush=True)
     info = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tabs": len(want),
             "rows": len(want["data"][1]) - 2, "deleted": deleted}
     KP._setting(con, "sheet_view_published", json.dumps(info))
@@ -306,7 +344,7 @@ def fingerprint(con, site: str) -> str:
              con.execute("SELECT MAX(id) FROM kpi_versions").fetchone(),
              con.execute("SELECT COUNT(*), MAX(id), GROUP_CONCAT(name || state || schedule) FROM rank_sets "
                          "WHERE site = ?", (site,)).fetchone(),
-             O.changed_at(con), O.tool_owned(con)]
+             O.changed_at(con), O.tool_owned(con), OKR_TABS, OKR_SUFFIX]  # đổi cách ghi tab OKR: ghi lại
     return json.dumps(parts, default=str)
 
 

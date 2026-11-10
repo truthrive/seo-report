@@ -33,14 +33,26 @@ def ensure(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
 
 
-def provider(cfg) -> dict:
-    """Nhà cung cấp sẽ dùng: {name, style, base, key, model}. Chưa có nhà cung cấp nào đủ khóa + model → NoProvider."""
+def provider(cfg, task: str | None = None) -> dict:
+    """Nhà cung cấp sẽ dùng: {name, style, base, key, model}. task: Owner có thể chọn nhà cung cấp / model riêng cho
+    tác vụ ở Quản trị › AI. Chưa có nhà cung cấp nào đủ khóa + model → NoProvider."""
+    from . import ai_settings as AIS
     from . import integrations as I
+    spec = AIS.choose_provider(cfg, task)
+    if spec and spec["provider"] != "auto":
+        p = spec["provider"]
+        s = AH.settings_for(cfg, p) if p in I.BY_KEY else None
+        if not s:
+            raise NoProvider(f"{I.BY_KEY[p].name if p in I.BY_KEY else p} chưa có khóa: Owner nhập ở Cài đặt tích hợp")
+        s["model"] = spec["model"] or s["model"] or DEFAULT_MODEL.get(p, "")
+        if not s["model"]:
+            raise NoProvider(f"Chưa chọn model cho {I.BY_KEY[p].name} ở Quản trị › AI")
+        return {"name": I.BY_KEY[p].name, "key_name": p, **s}
     for p in ORDER:
         s = AH.settings_for(cfg, p)
         if not s:
             continue
-        s["model"] = s["model"] or DEFAULT_MODEL.get(p, "")
+        s["model"] = (spec or {}).get("model") or s["model"] or DEFAULT_MODEL.get(p, "")
         if s["model"]:
             return {"name": I.BY_KEY[p].name, "key_name": p, **s}
     raise NoProvider("Chưa có nhà cung cấp AI: Owner nhập khóa (và model) ở Quản trị > Cài đặt tích hợp > Nhà cung cấp AI")

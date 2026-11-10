@@ -22,6 +22,16 @@ AI_BOTS = (
     "kangaroo bot", "velenpublicwebcrawler", "iaskspider", "panscient", "sidetrade",
 )
 
+# Bot công cụ tìm kiếm / SEO khác: tool nội bộ, không cần lên Google, nên chặn luôn để không lộ gì ra kết quả tìm kiếm.
+# (Kết nối Search Console / GA4 dùng API có đăng nhập, không phụ thuộc việc Googlebot vào được tool.)
+AI_BOTS += (
+    "googlebot", "google-inspectiontool", "storebot-google", "adsbot-google", "mediapartners-google",
+    "feedfetcher-google", "google-read-aloud", "googleproducer", "apis-google", "google-site-verification",
+    "bingbot", "bingpreview", "msnbot", "adidxbot", "yandex", "baiduspider", "sogou", "exabot", "slurp",
+    "duckduckbot", "seznambot", "naver", "yeti/", "coccocbot", "applebot", "ia_archiver", "archive.org_bot",
+    "ahrefsbot", "semrushbot", "mj12bot", "dotbot", "rogerbot", "screaming frog", "blexbot", "dataforseobot",
+)
+
 BLOCKED_BODY = b"Forbidden"
 ROBOT_TAGS = "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai"
 

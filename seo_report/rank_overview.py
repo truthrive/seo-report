@@ -230,7 +230,7 @@ def _attention(con, site: str, st: dict, kws: list[dict], today: date) -> dict |
             late = [r for r in due if r["month"]["gap"]]
             if late:
                 r = late[0]
-                return {"text": f"KPI tháng {kn['month']}: Top {r['top']} cần {r['month']['need']}, đang {r['count']}",
+                return {"text": f"KPI tháng {kn['month']}: {'Đạt Top mục tiêu' if not r['top'] else 'Top ' + str(r['top'])} cần {r['month']['need']}, đang {r['count']}",
                         "tone": "red", "filter": "miss"}
             if due:
                 return {"text": f"KPI tháng {kn['month']}: đạt", "tone": "green", "filter": None}
