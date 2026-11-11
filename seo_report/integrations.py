@@ -91,16 +91,25 @@ INTEGRATIONS = [
 ]
 from .ai_http import STYLES as _AI_STYLES  # noqa: E402
 
-INTEGRATIONS.append(Integration(
-    "gateway", "Cổng API tùy chỉnh", "hub",
-    "Dùng cổng AI riêng (proxy / gateway, Ollama, nhà cung cấp khác) bằng gọi API trực tiếp: nhập Base URL, chọn "
-    "kiểu route mà cổng hỗ trợ, tên model và khóa. Thông tin này có trong trang hướng dẫn của cổng.",
-    [Field("base_url", "Base URL", placeholder="https://api.example.com/v1",
-           hint="Phần đứng trước route, thường kết thúc bằng /v1"),
-     Field("api_style", "Kiểu route", options=_AI_STYLES),
-     Field("model", "Model", placeholder="tên model đúng như cổng ghi"),
-     Field("api_key", "Khóa API", secret=True, placeholder="sk-…")],
-    default_path="secrets/ai_gateway.toml", required=("base_url", "model", "api_key"), group="ai"))
+GATEWAY_NAME = "Cổng API tùy chỉnh"
+
+
+def _gateway(key: str, name: str) -> Integration:
+    """Một cổng API (proxy / router như 9router, Ollama, nhà bán lại…): key "gateway" là cổng đầu tiên, các cổng thêm
+    sau có key gw2, gw3…; mỗi cổng một file khóa riêng."""
+    return Integration(
+        key, name, "hub",
+        "Dùng cổng AI riêng (proxy / router như 9router, Ollama, nhà cung cấp khác) bằng gọi API trực tiếp: nhập Base "
+        "URL, chọn kiểu route mà cổng hỗ trợ, tên model và khóa. Thông tin này có trong trang hướng dẫn của cổng.",
+        [Field("base_url", "Base URL", placeholder="https://api.example.com/v1",
+               hint="Phần đứng trước route, thường kết thúc bằng /v1"),
+         Field("api_style", "Kiểu route", options=_AI_STYLES),
+         Field("model", "Model", placeholder="tên model đúng như cổng ghi"),
+         Field("api_key", "Khóa API", secret=True, placeholder="sk-…")],
+        default_path=f"secrets/ai_{key}.toml", required=("base_url", "model", "api_key"), group="ai")
+
+
+INTEGRATIONS.append(_gateway("gateway", GATEWAY_NAME))
 AI_PROVIDERS = [x.key for x in INTEGRATIONS if x.group == "ai"]
 BY_KEY = {x.key: x for x in INTEGRATIONS}
 
@@ -317,6 +326,14 @@ def _test_gateway(cfg, v: dict, opener=None) -> tuple[bool, str]:
     model = (v.get("model") or "").strip()
     if model and ids and model not in ids:
         return True, f"Khóa dùng được, nhưng cổng không liệt kê model “{model}”: kiểm tra lại tên model"
+    if model:  # gọi thử một câu rất ngắn: lộ ra lỗi chỉ có khi gọi model (hết hạn mức, đổi giá, model tắt…)
+        from . import ai_http as AH
+        try:
+            AH.complete(style, base, key, model, "Trả lời: OK", max_tokens=5, timeout=40, opener=opener,
+                        allow_cut=True)
+        except AH.AIError as e:
+            return False, f"Khóa dùng được nhưng gọi model lỗi: {e}"
+        return True, "Khóa và model dùng được" + (f" (cổng có {len(ids)} model)" if ids else "")
     return True, "Khóa dùng được" + (f", cổng có {len(ids)} model" if ids else "")
 
 
@@ -325,7 +342,140 @@ TESTS = {"dataforseo": _test_dataforseo, "google_ads": _test_google_ads, "ai": _
 
 
 def test(cfg, key: str, values: dict) -> tuple[bool, str]:
+    if is_gateway(key):
+        return _test_gateway(cfg, values)
     return TESTS[key](cfg, values)
+
+
+# ---- Nhiều cổng API: danh sách cổng (tên, key) lưu ở secrets/ai_gateways.json; khóa từng cổng ở file riêng ----
+MAX_GATEWAYS = 8
+
+
+def is_gateway(key: str | None) -> bool:
+    return bool(key) and (key == "gateway" or (key.startswith("gw") and key[2:].isdigit()))
+
+
+def _gw_file(cfg) -> Path:
+    return Path(cfg.client_secret).parent / "ai_gateways.json"
+
+
+def gateways(cfg) -> list[dict]:
+    """[{key, name}] theo thứ tự; cổng "gateway" luôn đứng đầu."""
+    try:
+        rows = json.loads(_gw_file(cfg).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        rows = []
+    out = [{"key": "gateway", "name": GATEWAY_NAME}]
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict) or not is_gateway(r.get("key")):
+            continue
+        name = " ".join(str(r.get("name") or "").split())[:40]
+        if r["key"] == "gateway":
+            out[0]["name"] = name or GATEWAY_NAME
+        elif all(x["key"] != r["key"] for x in out):
+            out.append({"key": r["key"], "name": name or r["key"]})
+    return out
+
+
+def _save_gateways(cfg, rows: list[dict]) -> None:
+    p = _gw_file(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+    sync_gateways(cfg)
+
+
+def sync_gateways(cfg) -> None:
+    """Đăng ký các cổng trong danh sách vào INTEGRATIONS / BY_KEY / AI_PROVIDERS (bỏ cổng đã xóa)."""
+    try:
+        rows = gateways(cfg)
+    except (AttributeError, TypeError):  # cấu hình không có thư mục khóa (test)
+        return
+    want = {r["key"]: r["name"] for r in rows}
+    for it in [x for x in INTEGRATIONS if is_gateway(x.key)]:
+        if it.key not in want:
+            INTEGRATIONS.remove(it)
+            BY_KEY.pop(it.key, None)
+    for key, name in want.items():
+        it = BY_KEY.get(key)
+        if it is None:
+            it = _gateway(key, name)
+            INTEGRATIONS.append(it)
+            BY_KEY[key] = it
+        it.name = name
+    AI_PROVIDERS[:] = [x.key for x in INTEGRATIONS if x.group == "ai"]
+
+
+def add_gateway(cfg, name: str) -> str:
+    rows = gateways(cfg)
+    if len(rows) >= MAX_GATEWAYS:
+        raise ValueError(f"Tối đa {MAX_GATEWAYS} cổng API")
+    name = " ".join((name or "").split())[:40]
+    if not name:
+        raise ValueError("Đặt tên cho cổng (ví dụ: 9router, ckey.vn)")
+    if any(r["name"].lower() == name.lower() for r in rows):
+        raise ValueError("Đã có cổng trùng tên")
+    n = 2
+    while any(r["key"] == f"gw{n}" for r in rows):
+        n += 1
+    rows.append({"key": f"gw{n}", "name": name})
+    _save_gateways(cfg, rows)
+    return f"gw{n}"
+
+
+def rename_gateway(cfg, key: str, name: str) -> None:
+    rows = gateways(cfg)
+    name = " ".join((name or "").split())[:40]
+    if not name:
+        raise ValueError("Tên cổng không được để trống")
+    if any(r["name"].lower() == name.lower() and r["key"] != key for r in rows):
+        raise ValueError("Đã có cổng trùng tên")
+    for r in rows:
+        if r["key"] == key:
+            r["name"] = name
+    _save_gateways(cfg, rows)
+
+
+def remove_gateway(cfg, key: str) -> None:
+    """Xóa một cổng thêm sau (cả file khóa của cổng). Cổng đầu tiên chỉ xóa được khóa, không xóa khỏi danh sách."""
+    if key == "gateway" or not is_gateway(key):
+        raise ValueError("Không xóa được cổng này")
+    it = BY_KEY.get(key)
+    if it:
+        p = path_of(cfg, it)
+        if p.exists():
+            p.unlink()
+    _save_gateways(cfg, [r for r in gateways(cfg) if r["key"] != key])
+
+
+_MODELS_CACHE: dict = {}
+
+
+def gateway_models(cfg, key: str, opener=None) -> list[str]:
+    """Tên các model cổng liệt kê (gọi trang danh sách model, miễn phí); nhớ 10 phút."""
+    import time
+    from urllib.request import Request, urlopen
+    v = load(cfg, key)
+    base = (v.get("base_url") or "").strip().rstrip("/")
+    if not base or not v.get("api_key"):
+        return []
+    hit = _MODELS_CACHE.get((key, base))
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    style = v.get("api_style") or "chat"
+    root = base[:-3] if base.endswith("/v1") else base
+    url = f"{root}/api/tags" if style in ("ollama", "generate") else f"{base}/models"
+    head = {"Authorization": f"Bearer {v['api_key']}", "x-api-key": v["api_key"], "User-Agent": "seo-report"}
+    try:
+        with (opener or urlopen)(Request(url, headers=head), timeout=20) as r:
+            data = json.loads(r.read() or b"{}")
+    except Exception:  # noqa: BLE001
+        return []
+    ids = sorted({m.get("id") or m.get("name", "").removeprefix("models/")
+                  for m in (data.get("data") or data.get("models") or []) if isinstance(m, dict)} - {""})
+    _MODELS_CACHE[(key, base)] = (time.time(), ids)
+    return ids
 
 
 # ---- Thư mục Google Drive (config.toml [drive] parent_folder) ----

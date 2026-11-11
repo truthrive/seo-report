@@ -22,12 +22,21 @@ def _months(n: int = 6) -> list[str]:
     return out
 
 
-def build_ai_admin(ui, base, app_connect, user) -> None:
+def _vn_at(iso: str) -> str:
+    from datetime import datetime
+    try:
+        return f"{datetime.fromisoformat(iso).astimezone():%H:%M %d/%m}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def build_ai_admin(ui, base, app_connect, user, local: bool = True) -> None:
     from . import db
     from . import integrations as I
     from . import projects as PJ
     with app_connect() as c:
         projects = PJ.list_projects(c)
+    I.sync_gateways(base)
     providers = {"auto": "Tự chọn (nhà cung cấp đầu tiên có khóa)",
                  **{k: I.BY_KEY[k].name for k in I.AI_PROVIDERS if I.configured(base, k)}}
     T.page_header(ui, "smart_toy", "Quản trị AI", "Bật / tắt, model và lịch tự chạy của các tính năng AI.",
@@ -66,6 +75,127 @@ def build_ai_admin(ui, base, app_connect, user) -> None:
                 ui.notify("Đã lưu trần", type="positive")
                 stats.refresh()
             ui.button("Lưu", icon="check", on_click=save_cap).props("unelevated no-caps dense")
+
+    # ---------------------------------------------------------------- nhà cung cấp AI (khóa)
+    with T.section(ui, "Nhà cung cấp AI", "key",
+                   "Nhập khóa của nhà cung cấp bạn dùng. Có khóa của nhiều nhà cung cấp thì đặt được model dự phòng "
+                   "khác nhà cung cấp ở mục dưới."):
+        from .web_settings import ai_provider_cards
+
+        def provider_saved(_it):
+            ui.notify("Đang tải lại trang để cập nhật danh sách nhà cung cấp…")
+            ui.timer(1.2, ui.navigate.reload, once=True)
+        ai_provider_cards(ui, base, app_connect, user, local, on_saved=provider_saved)
+
+    # ---------------------------------------------------------------- model dự phòng
+    with T.section(ui, "Model dự phòng", "swap_horiz",
+                   "Khi model chính bị chặn (cổng đổi giá, hết hạn mức, khóa sai, model bị gỡ), tool lần lượt thử các "
+                   "model dưới đây theo thứ tự để AI không dừng, và báo lên chuông thông báo để bạn xử lý model chính."):
+        with AIS._connect() as c:
+            fb_rows = [dict(x) for x in AIS.fallbacks(c)]
+            blk = AIS.block_status(c)
+        if blk:
+            with ui.row().classes("w-full items-start no-wrap gap-2 sr-aia-block q-mb-sm"):
+                ui.icon("error_outline", size="18px")
+                with ui.column().classes("gap-0 col"):
+                    ui.label(f"Model chính {blk['name']} · {blk['model']} đang bị chặn từ "
+                             f"{_vn_at(blk['at'])}").classes("text-sm font-semibold")
+                    ui.label(blk["error"]).classes("text-xs")
+                    ui.label(("Đang dùng dự phòng: " + blk["fallback"]) if blk.get("fallback") else
+                             "Chưa có model dự phòng chạy được: các tính năng AI đang dừng.").classes("text-xs")
+        fb_opts = {k: v for k, v in providers.items() if k != "auto"}
+
+        async def fill_models(inp, key):
+            """Gợi ý tên model theo danh sách của cổng (miễn phí, nhớ 10 phút)."""
+            from nicegui import run
+            ids = await run.io_bound(I.gateway_models, base, key)
+            if ids:
+                inp.set_autocomplete(ids)
+
+        def move(i, d):
+            j = i + d
+            if 0 <= j < len(fb_rows):
+                fb_rows[i], fb_rows[j] = fb_rows[j], fb_rows[i]
+                fb_list.refresh()
+
+        async def try_model(row, out):
+            from nicegui import run
+
+            from . import ai_http as AH
+            from . import ai_writer as AW
+            chain = AW.fallback_chain(base, [row])
+            if not chain:
+                out.text = "Nhà cung cấp này chưa có model: ghi tên model"
+                out.style(f"color:{T.RED}")
+                return
+            fb = chain[0]
+            out.text = "Đang gọi thử…"
+            out.style("color:inherit")
+            try:
+                await run.io_bound(AH.complete, fb["style"], fb["base"], fb["key"], fb["model"], "Trả lời: OK",
+                                   max_tokens=5, timeout=40, allow_cut=True)
+            except AH.AIError as e:
+                out.text = f"Lỗi: {e}"
+                out.style(f"color:{T.RED}")
+                return
+            out.text = f"Dùng được: {fb['model']}"
+            out.style(f"color:{T.GREEN}")
+
+        def save_fb():
+            with AIS._connect() as c:
+                saved = AIS.set_fallbacks(c, fb_rows)
+            fb_rows[:] = [dict(x) for x in saved]
+            fb_list.refresh()
+            ui.notify(f"Đã lưu {len(saved)} model dự phòng" if saved else "Đã tắt model dự phòng", type="positive")
+
+        def add_row():
+            fb_rows.append({"provider": next(iter(fb_opts)), "model": ""})
+            fb_list.refresh()
+
+        def drop_row(i):
+            fb_rows.pop(i)
+            fb_list.refresh()
+
+        @ui.refreshable
+        def fb_list():
+            if not fb_opts:
+                ui.label("Chưa có nhà cung cấp nào có khóa: nhập khóa ở mục Nhà cung cấp AI phía trên.").classes(
+                    "text-sm muted")
+                return
+            if not fb_rows:
+                ui.label("Chưa có model dự phòng.").classes("text-sm muted")
+            for i, row in enumerate(fb_rows):
+                with ui.row().classes("w-full items-center gap-2 no-wrap sr-aia-fb"):
+                    ui.label(str(i + 1)).classes("sr-aia-fb-n")
+                    with ui.row().classes("col items-center gap-2 wrap").style("min-width:0"):
+                        ui.select(fb_opts, value=row["provider"] if row.get("provider") in fb_opts else None,
+                                  label="Nhà cung cấp",
+                                  on_change=lambda e, r=row: (r.update(provider=e.value, model=""),
+                                                              fb_list.refresh())).props(
+                            "outlined dense options-dense").classes("w-56")
+                        m_in = ui.input("Model", value=row.get("model") or "",
+                                        placeholder="để trống: model mặc định của nhà cung cấp",
+                                        on_change=lambda e, r=row: r.update(model=e.value)).props(
+                            "outlined dense").classes("col").style("min-width:200px")
+                        if I.is_gateway(row.get("provider")):
+                            m_in.props["placeholder"] = "gõ vài chữ để chọn model của cổng"
+                            ui.timer(0.1, lambda inp=m_in, k=row["provider"]: fill_models(inp, k), once=True)
+                        res = ui.label().classes("text-xs")
+                    with ui.row().classes("items-center gap-0 no-wrap"):
+                        ui.button(icon="bolt", on_click=lambda _, r=row, lb=res: try_model(r, lb)).props(
+                            "flat dense round").tooltip("Gọi thử 1 câu rất ngắn (tốn vài đồng)")
+                        ui.button(icon="arrow_upward", on_click=lambda _, i=i: move(i, -1)).props(
+                            "flat dense round" + (" disable" if i == 0 else "")).tooltip("Thử trước")
+                        ui.button(icon="close", on_click=lambda _, i=i: drop_row(i)).props(
+                            "flat dense round").tooltip("Bỏ dòng này")
+            with ui.row().classes("w-full items-center justify-between gap-2 q-mt-xs"):
+                ui.button("Thêm model dự phòng", icon="add", on_click=add_row).props(
+                    "flat dense no-caps" + (" disable" if len(fb_rows) >= AIS.MAX_FALLBACKS else ""))
+                ui.button("Lưu", icon="check", on_click=save_fb).props("unelevated no-caps dense")
+        fb_list()
+        ui.label("Nên chọn nhà cung cấp khác với model chính (ví dụ model chính trên cổng API thì dự phòng là "
+                 "DeepSeek / OpenAI / Gemini), để khi một bên lỗi thì bên kia vẫn chạy.").classes(
+            "text-xs muted q-mt-xs")
 
     # ---------------------------------------------------------------- từng tác vụ
     with T.section(ui, "Tác vụ AI", "tune", "Áp cho mọi dự án; dự án nào cần khác thì đổi ở mục bên dưới."):
@@ -252,7 +382,7 @@ def task_card(ui, base, task: str, name: str, desc: str, kind: str | None, provi
         test_btn.props("loading")
         try:
             out = await run.io_bound(AH.complete, pr["style"], pr["base"], pr["key"], pr["model"],
-                                     "Trả lời đúng một chữ: OK", "", 20, 60)
+                                     "Trả lời đúng một chữ: OK", "", 200, 60, allow_cut=True)
             AIS.log_call("", task, "test", "Owner", pr, True)
             ui.notify(f"Model trả lời: {out[:40]}", type="positive", position="bottom-right")
         except AH.AIError as e:

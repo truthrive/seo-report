@@ -278,7 +278,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
         todo = sorted([c_ for c_ in checks if c_["ids"] and c_["level"] in ("high", "medium")],
                       key=lambda c_: c_["level"] != "high")  # cần sửa trước, giữ thứ tự trong cùng mức
         if todo:
-            with T.section(ui, "Việc cần làm với sản phẩm", "fact_check",
+            with T.section(ui, "Việc cần làm", "fact_check",
                            "Bấm một mục để xem các sản phẩm đó."):
                 with ui.element("div").classes("sr-au-todo"):
                     for c_ in todo[:6]:

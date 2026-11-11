@@ -56,7 +56,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
     from nicegui import run
     site = cfg.site_url
     ed = A.can_edit(user)
-    right = T.page_header(ui, "travel_explore", "Nguồn tìm kiếm",
+    right = T.page_header(ui, "travel_explore", "Nguồn traffic",
                           "Khách đến từ đâu trên Google: tìm kiếm, hình ảnh, video, Tin tức, Discover.")
     right.classes("no-wrap")
     state = {"type": "web", "days": 28}

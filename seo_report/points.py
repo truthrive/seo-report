@@ -37,6 +37,7 @@ COSTS = {
     "ai_kwbrief": ("AI viết brief từ khóa", 5),
     "ai_kpi": ("AI đọc sheet cam kết KPI", 10),
     "ai_kpi_insight": ("AI nhận định KPI", 5),
+    "backlink_gap": ("Backlink GAP đối thủ", 30),
 }
 
 SCHEMA = """

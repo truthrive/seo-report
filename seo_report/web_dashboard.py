@@ -356,7 +356,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
     def gsc_row():
         g = state["ga4"] or {}
         W.group_head(ui, "Google Search Console", "travel_explore",
-                     f"Kỳ đang chọn · {days} ngày, so với {days} ngày trước đó", "/url", "Hiệu suất URL")
+                     f"Kỳ đang chọn · {days} ngày, so với {days} ngày trước đó", "/url", "URL Performance URL")
         with ui.element("div").classes("sr-db-split"):
             with ui.element("div").classes("sr-db-quad"):
                 dl, good = delta(clicks, clicks_prev)

@@ -142,6 +142,74 @@ def set_cap(con, value: int) -> None:
     _put(con, "", "cap", max(0, int(value)))
 
 
+MAX_FALLBACKS = 5
+
+
+def fallbacks(con) -> list[dict]:
+    """Các model dự phòng theo thứ tự thử (chung mọi tác vụ, mọi dự án): [{"provider", "model"}]."""
+    ensure(con)
+    v = _get(con, "", "fallbacks")
+    if v is None:  # bản cũ chỉ lưu một model dự phòng
+        old = _get(con, "", "fallback")
+        v = [old] if old else []
+    return [x for x in v if isinstance(x, dict) and x.get("provider")]
+
+
+def set_fallbacks(con, items: list[dict]) -> list[dict]:
+    """Lưu danh sách (bỏ dòng trống, bỏ dòng trùng, tối đa MAX_FALLBACKS)."""
+    ensure(con)
+    out, seen = [], set()
+    for x in items or []:
+        p, m = (x.get("provider") or "").strip(), (x.get("model") or "").strip()
+        if not p or (p, m) in seen:
+            continue
+        seen.add((p, m))
+        out.append({"provider": p, "model": m})
+    out = out[:MAX_FALLBACKS]
+    _put(con, "", "fallbacks", out)
+    return out
+
+
+def fallback(con) -> dict | None:
+    """Model dự phòng đầu tiên (giữ cho chỗ cũ)."""
+    v = fallbacks(con)
+    return v[0] if v else None
+
+
+def set_fallback(con, provider: str | None, model: str = "") -> None:
+    set_fallbacks(con, [{"provider": provider, "model": model}] if provider else [])
+
+
+def block_status(con) -> dict | None:
+    """Lần gần nhất model chính bị chặn (giá mới / hết hạn mức / khóa sai): {"at", "name", "model", "error",
+    "fallback"}; None khi model chính đã gọi lại được."""
+    ensure(con)
+    return _get(con, "", "ai_block")
+
+
+def note_block(prov: dict, error: str, fb: dict | None) -> None:
+    try:
+        with _connect() as con:
+            ensure(con)
+            _put(con, "", "ai_block", {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                       "name": prov.get("name", ""), "model": prov.get("model", ""),
+                                       "error": (error or "")[:300],
+                                       "fallback": f"{fb['name']} · {fb['model']}" if fb else None})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def clear_block(prov: dict) -> None:
+    """Model chính gọi được lại: bỏ cảnh báo (chỉ khi cảnh báo là của chính model này)."""
+    try:
+        with _connect() as con:
+            b = block_status(con)
+            if b and b.get("model") == prov.get("model") and b.get("name") == prov.get("name"):
+                _put(con, "", "ai_block", None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def choose_provider(cfg, task: str | None) -> dict | None:
     """Nhà cung cấp / model Owner chọn cho tác vụ; None = để tool tự chọn (thứ tự mặc định)."""
     if not task or task not in DEFAULTS:

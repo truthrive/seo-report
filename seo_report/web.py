@@ -32,8 +32,8 @@ NAV = [
     (None, [("Tổng quan", "/", "space_dashboard"), ("Báo cáo", "/report", "summarize")]),
     ("Kế hoạch", [("KPI cam kết", "/kpi", "flag"), ("Công việc & OKR", "/okr", "task_alt"),
                   ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
-    ("Từ khóa", [("Từ khóa & Thứ hạng", "/rank", "leaderboard"), ("Research từ khóa", "/tu-khoa", "manage_search"),
-                 ("Đối thủ", "/doi-thu", "groups"), ("Cơ hội SEO", "/co-hoi", "insights")]),
+    ("Từ khóa", [("Thứ hạng từ khóa", "/rank", "leaderboard"), ("Keyword Research", "/tu-khoa", "manage_search"),
+                 ("Đối thủ", "/doi-thu", "groups"), ("SEO Opportunities", "/co-hoi", "insights")]),
     ("Website", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
                  ("Backlink", "/backlink", "add_link")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
@@ -44,11 +44,11 @@ NAV = [
 ADMIN_TABS = (("Dự án", "/projects"), ("Ngân sách & chi phí", "/budget"), ("Phân quyền", "/access"),
               ("Cài đặt tích hợp", "/cai-dat"), ("AI", "/quan-tri-ai"))
 # Mục "URL & Index" (dữ liệu GSC theo URL): một mục trên menu, ba tab = ba màn (link cũ vẫn mở đúng tab)
-URL_TABS = (("Hiệu suất URL", "/url"), ("Nguồn tìm kiếm", "/nguon"), ("Index", "/index"),
+URL_TABS = (("URL Performance", "/url"), ("Nguồn traffic", "/nguon"), ("Index", "/index"),
             ("Quản lý URL", "/urls"))
-RESEARCH_TABS = (("Tổng quan từ khóa", "/tu-khoa"), ("Ý tưởng từ khóa", "/research"), ("AI đã tạo", "/ai-da-tao"))
+RESEARCH_TABS = (("Keyword Overview", "/tu-khoa"), ("Keyword Ideas", "/research"), ("Thư viện AI", "/ai-da-tao"))
 NAV_PARENT = {title: "URL & Index" for title, _ in URL_TABS}  # màn → mục menu được tô sáng
-NAV_PARENT["Tổng quan từ khóa"] = NAV_PARENT["Ý tưởng từ khóa"] = NAV_PARENT["AI đã tạo"] = "Research từ khóa"
+NAV_PARENT["Keyword Overview"] = NAV_PARENT["Keyword Ideas"] = NAV_PARENT["Thư viện AI"] = "Keyword Research"
 NAV_PARENT.update({title: "Quản trị" for title, _ in ADMIN_TABS})
 EDIT_PAGES = ("/urls", "/ai?tab=chat-luong")
 
@@ -465,7 +465,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             "/tu-khoa": list(RESEARCH_TABS),
             "/projects": [(t, h) for t, h in ADMIN_TABS if h not in OWNER_PAGES or A.is_owner(user)],
             "/toc-do": q("/toc-do", WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS),
-            "/backlink": q("/backlink", WB.PAGE_TABS), "/local": q("/local", WL.TABS),
+            "/backlink": q("/backlink", [t for t in WB.PAGE_TABS if not (cl and t[0] in WB.TEAM_TABS)]), "/local": q("/local", WL.TABS),
             "/merchant": q("/merchant", WM.TABS),
             "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"), ("trang-dich", "Trang đích"),
                              ("ai-google", "AI trên Google"), *([] if cl else [("co-hoi", "Cơ hội SEO/GEO")])]),
@@ -513,7 +513,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 subs_of = sub_nav(user, P)
                 for group_name, items in NAV:
                     if A.is_client(user):
-                        items = [("Nguồn tìm kiếm", "/nguon", "travel_explore") if h == "/url" else (lb, h, ic)
+                        items = [("Nguồn traffic", "/nguon", "travel_explore") if h == "/url" else (lb, h, ic)
                                  for lb, h, ic in items if h not in skip]
                     items = [(label, href, icon) for label, href, icon in items
                              if (href != "/yeu-cau" or A.is_client(user))  # trang yêu cầu của khách: chỉ khách
@@ -814,9 +814,24 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         ctx = page_ctx(P)
-        budget_card = shell("Hiệu suất URL", user, P, ctx)
+        focus = missing = None
+        u = (request.query_params.get("u") or "").strip()
+        if u:  # mở thẳng một URL (vd từ trang Backlink): chuyển sang nhóm chứa URL đó
+            with P.connect() as c:
+                uid = U._match_existing(c, P.site, U.normalize(u))
+                gids = [g for (g,) in c.execute("SELECT group_id FROM url_group_members WHERE url_id = ?",
+                                                (uid,))] if uid else []
+            if gids:
+                if ctx["group"] not in gids:
+                    ctx["group"] = gids[0]
+                    app.storage.user[group_key(P)] = gids[0]
+                focus = uid
+            else:
+                missing = U.normalize(u)
+        budget_card = shell("URL Performance", user, P, ctx)
         url_tabs(user, "/url")
-        build_url_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh, ctx=ctx)
+        build_url_page(ui, P.cfg, P.connect, user, on_budget_change=budget_card.refresh, ctx=ctx, focus=focus,
+                       missing=missing)
 
     @ui.page("/ho-tro")
     def requests_page(request: Request):
@@ -1005,7 +1020,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request)):
             return
         user, P = opened
-        shell("Cơ hội SEO", user, P, page_ctx(P), period=False, group=False)
+        shell("SEO Opportunities", user, P, page_ctx(P), period=False, group=False)
         from .web_opps import build_opps_page
         build_opps_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
@@ -1022,7 +1037,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request)):
             return
         user, P = opened
-        shell("Tổng quan từ khóa", user, P, page_ctx(P), period=False, group=False)
+        shell("Keyword Overview", user, P, page_ctx(P), period=False, group=False)
         research_tabs("/tu-khoa")
         from .web_kw_overview import build_overview_page
         build_overview_page(ui, P.cfg, P.connect, user, request.query_params.get("kw", ""))
@@ -1033,7 +1048,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request)):
             return
         user, P = opened
-        shell("Ý tưởng từ khóa", user, P, page_ctx(P), period=False, group=False)
+        shell("Keyword Ideas", user, P, page_ctx(P), period=False, group=False)
         research_tabs("/research")
         from .web_research import build_research_page
         rid = request.query_params.get("id", "")
@@ -1051,7 +1066,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         shell("AI", user, P, page_ctx(P), period=False, group=False)
         from .web_ai_admin import build_ai_admin
-        build_ai_admin(ui, base, app_connect, user)
+        build_ai_admin(ui, base, app_connect, user,
+                       A.is_local(request.client.host if request.client else None, request.headers))
 
     @ui.page("/ai-da-tao")
     def ai_library_page(request: Request):
@@ -1059,7 +1075,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request)):
             return
         user, P = opened
-        shell("AI đã tạo", user, P, page_ctx(P), period=False, group=False)
+        shell("Thư viện AI", user, P, page_ctx(P), period=False, group=False)
         research_tabs("/ai-da-tao")
         from .web_ai_library import build_ai_library
         build_ai_library(ui, P.cfg, P.connect, user)
@@ -1070,7 +1086,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request, client_ok=True)):
             return
         user, P = opened
-        shell("Nguồn tìm kiếm", user, P, page_ctx(P), period=False, group=False)
+        shell("Nguồn traffic", user, P, page_ctx(P), period=False, group=False)
         url_tabs(user, "/nguon")
         from .web_sources import build_sources_page
         build_sources_page(ui, P.cfg, P.connect, user)
@@ -1123,7 +1139,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         if not (opened := open_page(request, client_ok=True)):
             return
         user, P = opened
-        budget_card = shell("Từ khóa & Thứ hạng", user, P, page_ctx(P), period=False, group=False)
+        budget_card = shell("Thứ hạng từ khóa", user, P, page_ctx(P), period=False, group=False)
         bo = request.query_params.get("bo", "")  # bộ (tab) đang mở
         if bo == "doi-thu":  # link cũ: Đối thủ đã thành trang riêng
             ui.navigate.to("/doi-thu")

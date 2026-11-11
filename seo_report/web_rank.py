@@ -725,7 +725,7 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
     ids = [0] + [x["id"] for x in all_sets]  # 0 = Tổng quan (mặc định), rồi từng bộ (Đối thủ: trang /doi-thu)
     state = {"sid": set_id if set_id in ids else 0, "hooks": {}}
 
-    right = T.page_header(ui, "leaderboard", "Từ khóa & Thứ hạng",
+    right = T.page_header(ui, "leaderboard", "Thứ hạng từ khóa",
                           "Vị trí trên Google của từng bộ từ khóa và từ khóa nào vừa lên / xuống.")
     with right:
         if cfg.rank.paused and not cl:
@@ -1697,7 +1697,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             with ui.tabs().classes("w-full sr-tabs").props("align=left no-caps dense inline-label") as tabs:
                 t1 = ui.tab("Vị trí", icon="show_chart")
                 t0 = ui.tab("Kết quả Google", icon="travel_explore")
-                t2 = ui.tab(f"Các lần check · {len(hist)}", icon="event_note")
+                t2 = ui.tab(f"Lịch sử check · {len(hist)}", icon="event_note")
                 t3 = ui.tab(f"Nhật ký · {len(log)}", icon="history")
                 if cl:
                     t3.set_visibility(False)
@@ -1820,7 +1820,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                             ui.label("Không tải được nội dung AI Overview").classes("text-xs muted")
                 # ---- Nguồn AI trích ----
                 if cur["aio"] and cur["refs"]:
-                    ui.label("Nguồn AI Overview trích").classes("sr-section-title").style("font-size:14px")
+                    ui.label("AI Overview trích nguồn").classes("sr-section-title").style("font-size:14px")
                     for x in cur["refs"]:
                         me = R._host_match(x["domain"], host)
                         with ui.row().classes("w-full items-center no-wrap gap-2 sr-serp-row" + (" me" if me else "")):
@@ -1855,7 +1855,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                             if ahead:
                                 ui.label(f"xếp trên {own_name}").classes("sr-delta down")
                 # ---- Top 10 ----
-                ui.label("10 kết quả đầu trên Google").classes("sr-section-title").style("font-size:14px")
+                ui.label("Top 10 trên Google").classes("sr-section-title").style("font-size:14px")
                 ref_hosts = {x["domain"] for x in cur["refs"]}
                 for x in R.compare_top10(cur["top10"], prev["top10"] if prev else None):
                     me = R._host_match(x["domain"], host)
@@ -2883,6 +2883,31 @@ async def fetch_intents(base) -> None:
             traceback.print_exc()
 
 
+async def check_built_links(base) -> None:
+    """Kiểm tra link đã xây (tải trang đặt link, miễn phí) cho từng dự án: mỗi link một lần mỗi tuần."""
+    from contextlib import closing
+
+    from nicegui import run
+
+    from . import backlink_build as BB
+    from . import db
+    from . import projects as PJ
+
+    with closing(db.connect(base.db_path)) as c:
+        projects = PJ.list_projects(c)
+    for p in projects:
+        cfg = PJ.config_for(base, p)
+
+        def work(cfg=cfg):
+            with closing(db.connect(cfg.db_path)) as c:
+                return BB.check_due(c, cfg.site_url)
+        try:
+            await run.io_bound(work)
+        except Exception:  # noqa: BLE001  (lượt sau thử lại)
+            import traceback
+            traceback.print_exc()
+
+
 async def schedule_loop(base) -> None:
     import asyncio
     await asyncio.sleep(60)  # để máy chủ khởi động xong
@@ -2890,6 +2915,7 @@ async def schedule_loop(base) -> None:
         await scheduled_checks(base)
         await fetch_intents(base)
         await publish_sheets(base)
+        await check_built_links(base)
         await asyncio.sleep(15 * 60)
 
 

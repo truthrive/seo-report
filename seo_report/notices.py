@@ -11,7 +11,8 @@ from datetime import date, datetime, timedelta, timezone
 from . import access as A
 
 KINDS = {"okr": ("Công việc & OKR", "task_alt"), "support": ("Yêu cầu hỗ trợ", "support_agent"),
-         "rank": ("Thứ hạng", "leaderboard"), "seo": ("Cơ hội SEO", "insights"), "system": ("Dữ liệu & hệ thống", "dns")}
+         "rank": ("Thứ hạng", "leaderboard"), "seo": ("Cơ hội SEO", "insights"),
+         "backlink": ("Backlink", "add_link"), "system": ("Dữ liệu & hệ thống", "dns")}
 LEVELS = {"high": ("Cần xử lý", "red"), "medium": ("Nên xem", "amber"), "info": ("Thông tin", "blue")}
 _ORDER = {"high": 0, "medium": 1, "info": 2}
 STALE_DAYS = 5  # GSC thường chậm 2–3 ngày; quá 5 ngày chưa có ngày mới là có vấn đề kết nối
@@ -118,6 +119,36 @@ def _rank(con, cfg, end: date, today: date) -> list[dict]:
     return out
 
 
+def _ai_block(user) -> list[dict]:
+    """Model AI chính bị chặn (cổng đổi giá, hết hạn mức, khóa sai): báo Owner / Admin để vào xử lý."""
+    from . import ai_settings as AIS
+    if not A.is_admin(user):
+        return []
+    try:
+        with AIS._connect() as c:
+            b = AIS.block_status(c)
+    except Exception:  # noqa: BLE001
+        return []
+    if not b:
+        return []
+    title = (f"Model AI chính bị chặn, đang dùng dự phòng ({b['fallback']})" if b.get("fallback") else
+             "Các tính năng AI đang dừng: model chính bị chặn")
+    return [_n("system", "medium" if b.get("fallback") else "high", f"ai_block:{b['model']}:{b['at'][:10]}", title,
+               b.get("error", ""), "/quan-tri-ai", b["at"])]
+
+
+def _backlink(con, cfg) -> list[dict]:
+    """Mất link từ website mạnh, link spam mới tăng, link đã xây bị mất / đổi: từ dữ liệu đã lưu, không gọi API."""
+    from . import backlink_build as BB
+    from . import backlinks as BL
+    if not _has(con, "backlink_lists") and not _has(con, "backlink_built"):
+        return []
+    ls = BL.lists(con, cfg.site_url) if _has(con, "backlink_lists") else {}
+    at = max(((v or {}).get("fetched_at") or "" for v in ls.values()), default="")
+    return [_n("backlink", a["level"], a["key"], a["title"], a["detail"], a["href"], at)
+            for a in BB.alerts(con, cfg.site_url, ls)]
+
+
 DECAY_NOTICE_MIN = 30  # chỉ báo trang mất từ 30 click / 28 ngày (ít hơn xem ở trang Cơ hội SEO)
 
 
@@ -207,7 +238,8 @@ def collect(con, cfg, user, end: date | None = None, today: date | None = None) 
     out = _support(con, user)
     if not A.is_client(user):  # khách hàng chỉ nhận câu trả lời cho yêu cầu của mình
         for src in (lambda: _okr(con, today), lambda: _rank(con, cfg, end, today),
-                    lambda: _seo(con, cfg), lambda: _system(con, cfg, user, today)):
+                    lambda: _seo(con, cfg), lambda: _backlink(con, cfg), lambda: _ai_block(user),
+                    lambda: _system(con, cfg, user, today)):
             try:
                 out += src()
             except Exception:  # noqa: BLE001 — một nguồn lỗi không làm mất cả trang thông báo

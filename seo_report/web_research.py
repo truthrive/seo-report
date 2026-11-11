@@ -163,7 +163,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         rec = state["rec"]
         seeds = KR.split_keywords(rec["seed"]) if rec and rec["mode"] in ("keywords", "list") else []
         seed = f"{len(seeds)} từ khóa" if len(seeds) > 1 else (seed_label(rec["seed"]) if rec else "")
-        ui.html('<h1 class="sr-title sr-kr-h1" style="margin:0">Ý tưởng từ khóa'
+        ui.html('<h1 class="sr-title sr-kr-h1" style="margin:0">Keyword Ideas'
                 + (f': <span class="soft">{_esc(seed)}</span>' if rec else "") + "</h1>")
         if len(seeds) > 1:
             ui.label(", ".join(seeds)).classes("text-sm sr-kr-seedline").tooltip("\n".join(seeds)).props(

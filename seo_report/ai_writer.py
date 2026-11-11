@@ -33,11 +33,44 @@ def ensure(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
 
 
+def fallback_chain(cfg, specs: list[dict], main: dict | None = None) -> list[dict]:
+    """Danh sách model dự phòng dùng được (đã có khóa, có model), bỏ dòng trùng model chính hoặc trùng nhau."""
+    from . import integrations as I
+    I.sync_gateways(cfg)
+    out, seen = [], {(main.get("key_name"), main.get("model"))} if main else set()
+    for spec in specs or []:
+        p = spec.get("provider")
+        s = AH.settings_for(cfg, p) if p in I.BY_KEY else None
+        if not s:
+            continue
+        s["model"] = spec.get("model") or s["model"] or DEFAULT_MODEL.get(p, "")
+        if not s["model"] or (p, s["model"]) in seen:
+            continue
+        seen.add((p, s["model"]))
+        out.append({"name": I.BY_KEY[p].name, "key_name": p, **s})
+    return out
+
+
+def _with_fallback(cfg, prov: dict) -> dict:
+    """Gắn các model dự phòng (Quản trị › AI) vào provider."""
+    from . import ai_settings as AIS
+    try:
+        with AIS._connect() as con:
+            specs = AIS.fallbacks(con)
+    except Exception:  # noqa: BLE001
+        specs = []
+    chain = fallback_chain(cfg, specs, prov)
+    if chain:
+        prov["fallbacks"] = chain
+    return prov
+
+
 def provider(cfg, task: str | None = None) -> dict:
     """Nhà cung cấp sẽ dùng: {name, style, base, key, model}. task: Owner có thể chọn nhà cung cấp / model riêng cho
     tác vụ ở Quản trị › AI. Chưa có nhà cung cấp nào đủ khóa + model → NoProvider."""
     from . import ai_settings as AIS
     from . import integrations as I
+    I.sync_gateways(cfg)
     spec = AIS.choose_provider(cfg, task)
     if spec and spec["provider"] != "auto":
         p = spec["provider"]
@@ -47,14 +80,14 @@ def provider(cfg, task: str | None = None) -> dict:
         s["model"] = spec["model"] or s["model"] or DEFAULT_MODEL.get(p, "")
         if not s["model"]:
             raise NoProvider(f"Chưa chọn model cho {I.BY_KEY[p].name} ở Quản trị › AI")
-        return {"name": I.BY_KEY[p].name, "key_name": p, **s}
-    for p in ORDER:
+        return _with_fallback(cfg, {"name": I.BY_KEY[p].name, "key_name": p, **s})
+    for p in [*ORDER, *(k for k in I.AI_PROVIDERS if k not in ORDER)]:  # cổng API thêm sau: sau cùng
         s = AH.settings_for(cfg, p)
         if not s:
             continue
         s["model"] = (spec or {}).get("model") or s["model"] or DEFAULT_MODEL.get(p, "")
         if s["model"]:
-            return {"name": I.BY_KEY[p].name, "key_name": p, **s}
+            return _with_fallback(cfg, {"name": I.BY_KEY[p].name, "key_name": p, **s})
     raise NoProvider("Chưa có nhà cung cấp AI: Owner nhập khóa (và model) ở Quản trị > Cài đặt tích hợp > Nhà cung cấp AI")
 
 
@@ -134,7 +167,7 @@ def write_aio(cfg, keyword: str, brand: str, page: str, aio_text: str, sources: 
               prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     """Gọi AI viết đoạn trả lời; trả (bản nháp, nhà cung cấp đã dùng). Lỗi → AH.AIError / NoProvider."""
     prov = prov or provider(cfg)
-    text = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"],
+    text = AH.ask(prov, expect_json=True, prompt=
                        aio_prompt(keyword, brand, page, aio_text, sources, issue), system=SYSTEM_AIO,
                        max_tokens=1500, timeout=120, opener=opener)
     return _json(text), prov
@@ -215,7 +248,7 @@ def report_prompt(rep) -> str:
 
 def write_report(cfg, rep, prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     prov = prov or provider(cfg)
-    text = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"], report_prompt(rep),
+    text = AH.ask(prov, expect_json=True, prompt=report_prompt(rep),
                        system=SYSTEM_REPORT, max_tokens=1500, timeout=120, opener=opener)
     m = re.search(r"\{.*\}", text or "", re.S)
     try:

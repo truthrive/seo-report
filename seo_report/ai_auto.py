@@ -15,6 +15,7 @@ import time as _time
 from contextlib import closing
 from datetime import date, datetime, timedelta
 
+from . import ai_http as AH
 from . import ai_settings as AIS
 
 log = logging.getLogger(__name__)
@@ -219,6 +220,10 @@ async def auto_loop(base) -> None:
                         log.info("AI tự chạy %s %s: %s", cfg.site_url, task, res)
                     except CapReached as e:
                         log.info("AI tự chạy %s %s: %s", cfg.site_url, task, e)
+                    except AH.QuotaError as e:  # hết hạn mức / giá mới / khóa sai: gọi lại cũng lỗi, chờ đổi cài đặt
+                        log.warning("AI tự chạy %s %s dừng hôm nay: %s", cfg.site_url, task, e)
+                        with connect() as c:
+                            mark(c, task, now.date(), f"lỗi: {str(e)[:200]}")
                     except Exception as e:  # noqa: BLE001 — lỗi một tác vụ không dừng các tác vụ khác
                         log.warning("AI tự chạy %s %s lỗi (lần %d): %s", cfg.site_url, task, n + 1, e)
                         _FAILS[key] = (n + 1, _time.time())

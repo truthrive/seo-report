@@ -183,7 +183,7 @@ def check(raw: dict, f: dict) -> dict:
 
 def write(cfg, f: dict, prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     prov = prov or AW.provider(cfg, "kpi_insight")
-    out = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"],
+    out = AH.ask(prov, expect_json=True, prompt=
                       "Dữ liệu tiến độ KPI (JSON):\n" + json.dumps(f, ensure_ascii=False)
                       + "\n\nTrả về JSON đúng dạng:\n" + SHAPE, system=SYSTEM, max_tokens=2500, timeout=150,
                       opener=opener)

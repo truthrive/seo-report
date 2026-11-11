@@ -191,7 +191,7 @@ def validate(raw: dict, sigs: list[dict]) -> dict:
 def run(cfg, sigs: list[dict], prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     """Gọi AI rồi kiểm tra đầu ra. Lỗi → AH.AIError / AW.NoProvider."""
     prov = prov or AW.provider(cfg)
-    text = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"], prompt(sigs), system=SYSTEM,
+    text = AH.ask(prov, expect_json=True, prompt=prompt(sigs), system=SYSTEM,
                        max_tokens=1500, timeout=120, opener=opener)
     m = re.search(r"\{.*\}", text or "", re.S)
     try:

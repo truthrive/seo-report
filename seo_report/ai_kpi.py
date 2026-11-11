@@ -150,7 +150,7 @@ def check(raw: dict, text: str) -> dict:
 
 def read(cfg, text: str, prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     prov = prov or AW.provider(cfg, "kpi_import")
-    out = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"],
+    out = AH.ask(prov, expect_json=True, prompt=
                       "Nội dung sheet:\n" + text + "\n\nTrả về JSON đúng dạng:\n" + SHAPE, system=SYSTEM,
                       max_tokens=6000, timeout=180, opener=opener)
     m = re.search(r"\{.*\}", out or "", re.S)

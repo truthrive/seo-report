@@ -746,7 +746,7 @@ def health_strip(ui, cfg, connect, rep) -> None:
 
 
 def rank_section(ui, rep, site) -> None:
-    with T.section(ui, f"Rank thực tế · {len(rep.ranks)} keyword", "leaderboard",
+    with T.section(ui, f"Thứ hạng thực tế · {len(rep.ranks)} từ khóa", "leaderboard",
                    "DataForSEO, mobile toàn VN · " + ("lần check cuối trong tháng so với cuối tháng trước"
                                                       if rep.kind == "month" else
                                                       "lần check mới nhất đến hết tuần kế tiếp"), href="/rank"):
@@ -821,7 +821,7 @@ def month_sections(ui, rep, site) -> None:
         change_slot(tbl)
     with ui.row().classes("w-full gap-4 items-stretch"):
         with ui.element("div").style("flex: 1 1 460px; min-width: 0"):
-            with T.section(ui, "Top 10 URL của tháng", "star", "Toàn site, theo click"):
+            with T.section(ui, "Top 10 trang", "star", "Toàn site, theo click"):
                 tbl = ui.table(columns=[
                     {"name": "url", "label": "URL", "field": "url", "align": "left", "classes": "ellipsis",
                      "style": "max-width: 260px", "headerStyle": "max-width: 260px"},
@@ -832,7 +832,7 @@ def month_sections(ui, rep, site) -> None:
                 T.bar_slot(tbl, "clicks", max((r["clicks"] for r in rep.top_urls), default=1))
                 change_slot(tbl)
         with ui.element("div").style("flex: 1 1 460px; min-width: 0"):
-            with T.section(ui, "Top 10 từ khóa của tháng", "search", "Query theo click · GSC ẩn query hiếm"):
+            with T.section(ui, "Top 10 từ khóa", "search", "Query theo click · GSC ẩn query hiếm"):
                 tbl = ui.table(columns=[
                     {"name": "query", "label": "Query", "field": "query", "align": "left", "classes": "ellipsis",
                      "style": "max-width: 260px", "headerStyle": "max-width: 260px"},

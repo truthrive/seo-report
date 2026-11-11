@@ -151,7 +151,7 @@ def write(cfg, rows: list[dict], brand: str = "", prov: dict | None = None, open
     if not rows:
         raise AH.AIError("Chưa chọn từ khóa nào")
     prov = prov or AW.provider(cfg)
-    text = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"], prompt(rows, brand), system=SYSTEM,
+    text = AH.ask(prov, expect_json=True, prompt=prompt(rows, brand), system=SYSTEM,
                        max_tokens=4000, timeout=180, opener=opener)
     m = re.search(r"\{.*\}", text or "", re.S)
     try:

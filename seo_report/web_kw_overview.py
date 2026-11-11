@@ -37,7 +37,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         d = state["data"] if not state["loading"] and not state["err"] else None
         with ui.row().classes("w-full items-end gap-2 no-wrap"):
             with ui.column().classes("gap-0 col").style("min-width:0"):
-                ui.html('<h1 class="sr-title" style="margin:0">Tổng quan từ khóa'
+                ui.html('<h1 class="sr-title" style="margin:0">Keyword Overview'
                         + (f': <span class="soft">{_esc(state["kw"])}</span>' if state["kw"] else "") + "</h1>")
                 if d:
                     at = datetime.fromisoformat(d["at"]).astimezone()
@@ -233,7 +233,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         kwq = quote(d["keyword"])
         with ui.element("div").classes("sr-card sr-ko-ideas-box w-full q-mt-md"):
             with ui.row().classes("w-full items-center gap-2"):
-                ui.label("Ý tưởng từ khóa").classes("text-base font-semibold col")
+                ui.label("Keyword Ideas").classes("text-base font-semibold col")
                 ui.link("Mở tab Ý tưởng →", f"/research?kw={kwq}").classes("sr-ko-more q-mt-none")
             with ui.element("div").classes("sr-ko-ipanels"):
                 for icon, title, rows, more, grp in (

@@ -15,26 +15,12 @@ GOOGLE_NOTICES = {"ok": ("positive", "Đã kết nối Google với đủ quyề
                   "fail": ("negative", "Kết nối Google không thành công: thử lại sau ít phút")}
 
 
-def build_settings_page(ui, base, app_connect, user, config_path, local: bool, google_origin: str | None,
-                        google_notice: str | None = None) -> None:
-    """local: đang mở trên máy chạy tool (không hỏi lại mật khẩu). google_origin: địa chỉ localhost để Google quay
-    về sau khi đăng nhập (None khi mở qua tên miền)."""
-    from nicegui import run
+def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
+    """Các khối dùng chung của màn cài đặt: hỏi lại mật khẩu, nhật ký, một dòng cài đặt, thẻ tích hợp (nhập / kiểm tra /
+    lưu mã). on_saved(it): gọi sau khi lưu xong một tích hợp."""
+    from types import SimpleNamespace
 
-    owner = A.is_owner(user)
-    T.page_header(ui, "settings", "Cài đặt tích hợp",
-                  "Kết nối Google và các dịch vụ dữ liệu dùng chung cho mọi website.", eyebrow="Quản trị",
-                  tone="grey")
-    if not owner:
-        ui.label("Chỉ Chủ tool sửa được cài đặt tích hợp.").classes("text-sm muted")
-        return
-    if not local:
-        T.status_chip(ui, "Đang mở qua tên miền: lưu mã API sẽ hỏi lại mật khẩu đăng nhập của bạn", "amber", "lock")
-    # Chất lượng dữ liệu (kiểm tra số GA4 / GSC của dự án đang mở) không còn trên menu: lối tắt ở đây
-    with ui.row().classes("items-center gap-1 q-mb-sm"):
-        ui.icon("verified", size="16px").classes("muted")
-        ui.link("Chất lượng dữ liệu của dự án đang mở (kiểm tra số GA4 / Search Console)",
-                "/ai?tab=chat-luong").classes("text-sm")
+    from nicegui import run
 
     async def confirm_identity() -> bool:
         """Sửa từ xa: hỏi lại mật khẩu đăng nhập (đếm sai như màn đăng nhập). Tại máy chạy tool thì không hỏi."""
@@ -109,7 +95,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         if it.key == "google_api":
             return (f"key {v['api_key']} · PageSpeed Insights, Chrome UX Report" if v.get("api_key")
                     else "Chưa có: trang Tốc độ & Core Web Vitals chưa lấy được số")
-        if it.key == "gateway":
+        if I.is_gateway(it.key):
             from urllib.parse import urlparse
             return (f"{urlparse(v.get('base_url', '')).hostname or v.get('base_url')} · {v.get('model') or '–'} · "
                     f"khóa {v['api_key']}" if v.get("api_key") else "Chưa có: dùng khi có cổng AI riêng")
@@ -149,7 +135,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                     if f.hint:
                         inp.props["hint"] = f.hint  # hiện khi đang gõ vào ô
                     inputs[f.key] = inp
-            if it.key == "gateway":  # ví dụ cURL theo các ô đang nhập (khóa để $API_KEY)
+            if I.is_gateway(it.key):  # ví dụ cURL theo các ô đang nhập (khóa để $API_KEY)
                 from . import ai_http as AH
                 ui.label("Ví dụ cURL (thay $API_KEY bằng khóa khi thử ở terminal)").classes("text-xs muted")
                 code = ui.code("", language="bash").classes("w-full")
@@ -200,6 +186,8 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                 paint()
                 toggle(editor, edit_btn)
                 ui.notify(f"Đã lưu {it.name}. {msg}", type="positive", multi_line=True)
+                if on_saved:
+                    on_saved(it)
 
             with ui.row().classes("w-full items-center justify-end gap-2"):
                 test_btn = ui.button("Kiểm tra", on_click=lambda: check(False)).props(
@@ -207,6 +195,106 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                 ui.button("Hủy", on_click=lambda: toggle(editor, edit_btn)).props("flat no-caps")
                 save_btn = ui.button("Lưu", icon="check", on_click=lambda: check(True)).props(
                     "unelevated no-caps").tooltip("Tool thử kết nối trước; không chạy thì không lưu")
+
+    return SimpleNamespace(confirm_identity=confirm_identity, log=log, setting_row=setting_row, chip=chip,
+                           toggle=toggle, summary_of=summary_of, integration_card=integration_card)
+
+
+def ai_provider_cards(ui, base, app_connect, user, local: bool, on_saved=None) -> None:
+    """Thẻ nhập khóa các nhà cung cấp AI (đặt ở Quản trị › AI), rồi các cổng API (thêm / đổi tên / xóa được)."""
+    I.sync_gateways(base)
+    k = _kit(ui, base, app_connect, user, local, on_saved)
+
+    def reload_soon(msg: str):
+        ui.notify(msg, type="positive")
+        ui.timer(0.8, ui.navigate.reload, once=True)
+
+    def name_dialog(title: str, value: str, done):
+        with ui.dialog() as d, ui.card().style("min-width: 360px; border-radius: 14px"):
+            ui.label(title).classes("text-lg font-semibold")
+            inp = ui.input("Tên cổng", value=value, placeholder="ví dụ: 9router, ckey.vn").props(
+                "outlined dense autofocus").classes("w-full")
+            err = ui.label().classes("text-sm").style(f"color:{T.RED}")
+
+            def ok():
+                try:
+                    done(inp.value)
+                except ValueError as e:
+                    err.text = str(e)
+                    return
+                d.close()
+            inp.on("keydown.enter", ok)
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                ui.button("Lưu", on_click=ok).props("unelevated no-caps")
+        d.open()
+
+    def ask_remove(key: str, name: str):
+        with ui.dialog() as d, ui.card().style("max-width: 420px; border-radius: 14px"):
+            ui.label(f"Xóa cổng {name}?").classes("text-lg font-semibold")
+            ui.label("Xóa luôn khóa đã lưu của cổng này. Tác vụ hoặc model dự phòng đang dùng cổng này sẽ không gọi "
+                     "được nữa.").classes("text-sm")
+
+            def go():
+                I.remove_gateway(base, key)
+                k.log(f"Xóa cổng API {name}")
+                d.close()
+                reload_soon(f"Đã xóa cổng {name}")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                ui.button("Xóa", icon="delete", on_click=go).props("unelevated no-caps color=negative")
+        d.open()
+
+    for it in [x for x in I.INTEGRATIONS if x.group == "ai" and not I.is_gateway(x.key)]:
+        k.integration_card(it)
+    ui.label("Cổng API").classes("sr-nav-group q-mt-md")
+    ui.label("Mỗi cổng (router như 9router, nhà bán lại, Ollama…) có Base URL, model và khóa riêng; dùng được làm "
+             "model chính của tác vụ hoặc model dự phòng.").classes("text-xs muted")
+    for it in [x for x in I.INTEGRATIONS if I.is_gateway(x.key)]:
+        k.integration_card(it)
+        with ui.row().classes("w-full justify-end gap-1").style("margin-top:-6px"):
+            ui.button("Đổi tên", icon="drive_file_rename_outline", on_click=lambda _, it=it: name_dialog(
+                "Đổi tên cổng", it.name,
+                lambda v, it=it: (I.rename_gateway(base, it.key, v), reload_soon("Đã đổi tên cổng")))).props(
+                "flat dense no-caps size=sm color=grey-8")
+            if it.key != "gateway":
+                ui.button("Xóa cổng", icon="delete_outline",
+                          on_click=lambda _, it=it: ask_remove(it.key, it.name)).props(
+                    "flat dense no-caps size=sm color=grey-8")
+
+    def add(v):
+        key = I.add_gateway(base, v)
+        k.log(f"Thêm cổng API {v}", key)
+        reload_soon(f"Đã thêm cổng {v}: bấm Sửa ở cổng mới để nhập Base URL, model và khóa")
+    ui.button("Thêm cổng API", icon="add", on_click=lambda: name_dialog("Thêm cổng API", "", add)).props(
+        "outline dense no-caps").classes("q-mt-xs").props(
+        "disable" if len(I.gateways(base)) >= I.MAX_GATEWAYS else "")
+    ui.label("Mã được lưu an toàn trên máy chạy tool, trang chỉ hiện 4 ký tự cuối.").classes("text-xs muted q-mt-xs")
+
+
+def build_settings_page(ui, base, app_connect, user, config_path, local: bool, google_origin: str | None,
+                        google_notice: str | None = None) -> None:
+    """local: đang mở trên máy chạy tool (không hỏi lại mật khẩu). google_origin: địa chỉ localhost để Google quay
+    về sau khi đăng nhập (None khi mở qua tên miền)."""
+    from nicegui import run
+
+    owner = A.is_owner(user)
+    T.page_header(ui, "settings", "Cài đặt tích hợp",
+                  "Kết nối Google và các dịch vụ dữ liệu dùng chung cho mọi website.", eyebrow="Quản trị",
+                  tone="grey")
+    if not owner:
+        ui.label("Chỉ Chủ tool sửa được cài đặt tích hợp.").classes("text-sm muted")
+        return
+    if not local:
+        T.status_chip(ui, "Đang mở qua tên miền: lưu mã API sẽ hỏi lại mật khẩu đăng nhập của bạn", "amber", "lock")
+    # Chất lượng dữ liệu (kiểm tra số GA4 / GSC của dự án đang mở) không còn trên menu: lối tắt ở đây
+    with ui.row().classes("items-center gap-1 q-mb-sm"):
+        ui.icon("verified", size="16px").classes("muted")
+        ui.link("Chất lượng dữ liệu của dự án đang mở (kiểm tra số GA4 / Search Console)",
+                "/ai?tab=chat-luong").classes("text-sm")
+
+    k = _kit(ui, base, app_connect, user, local)
+    log, setting_row, chip, toggle, integration_card = k.log, k.setting_row, k.chip, k.toggle, k.integration_card
 
     def go_google(switch: bool):
         from . import auth
@@ -308,10 +396,10 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
             if it.group != "ai":
                 integration_card(it)
         ui.label("Nhà cung cấp AI").classes("sr-nav-group q-mt-md")
-        ui.label("Nhập khóa của nhà cung cấp bạn dùng. AI chỉ chạy khi có người bấm.").classes("text-xs muted")
-        for it in I.INTEGRATIONS:
-            if it.group == "ai":
-                integration_card(it)
+        with ui.row().classes("items-center gap-1"):
+            ui.icon("smart_toy", size="16px").classes("muted")
+            ui.link("Khóa các nhà cung cấp AI và model dự phòng nằm ở Quản trị › AI", "/quan-tri-ai").classes(
+                "text-sm")
         ui.label("Mã được lưu an toàn trên máy chạy tool, trang chỉ hiện 4 ký tự cuối.").classes("text-xs muted q-mt-sm")
 
     if google_notice in GOOGLE_NOTICES:

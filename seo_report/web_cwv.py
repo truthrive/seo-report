@@ -28,7 +28,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
     from nicegui import background_tasks, run
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: số tốc độ, không danh sách việc cần sửa / nên sửa của team
-    right = T.page_header(ui, "speed", "Tốc độ & Core Web Vitals",
+    right = T.page_header(ui, "speed", "Tốc độ trang & Core Web Vitals",
                           "Website nhanh hay chậm với người dùng thật, trang nào cần sửa.")
     right.classes("no-wrap")  # nút Kiểm tra ngay + Xuất cùng một hàng
     state = {"form": "PHONE", "metric": "lcp", "running": False, "filter": None,

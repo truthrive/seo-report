@@ -11,8 +11,9 @@ from . import seo_value as SVL
 from . import site_audit as SA
 from . import ui_theme as T
 
-TABS = (("audit", "Audit kỹ thuật"), ("du-bao", "Dự báo từ khóa"), ("len-top", "Sắp lên top"), ("giam", "Trang tụt traffic"),
-        ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"), ("thuc-the", "Thực thể thương hiệu"))
+TABS = (("audit", "Technical Audit"), ("du-bao", "Dự báo từ khóa"), ("len-top", "Sắp lên Top"),
+        ("giam", "Trang tụt traffic"), ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"),
+        ("thuc-the", "Thực thể thương hiệu"))
 NUM = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
 POS = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})"
 TAB_ICON = {"audit": "fact_check", "du-bao": "query_stats", "len-top": "trending_up", "giam": "trending_down",
@@ -36,7 +37,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
     with connect() as c:
         end = K.latest_date(c, site)
     cur, prev = O.window(end), O.window(end, back=1)
-    T.page_header(ui, "insights", "Cơ hội SEO",
+    T.page_header(ui, "insights", "SEO Opportunities",
                   f"Việc nên làm để tăng traffic, tính từ Search Console 28 ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}).")
     ed = A.can_edit(user)
     state = {"tab": start if start in dict(TABS) else "audit", "data": None, "strike": "all", "new": "signal",

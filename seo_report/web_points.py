@@ -26,7 +26,8 @@ NOTE = {"rank": "Bấm Check ngay. Check theo lịch của bộ không trừ cre
         "ai_plan": "Tick từ khóa ở Ý tưởng từ khóa rồi bấm AI lập chiến lược (tối đa 80 từ khóa một lần).",
         "ai_kwbrief": "Bấm AI viết brief ở Tổng quan từ khóa. Xem lại brief đã viết không tính.",
         "ai_kpi": "Bấm AI đọc sheet cam kết ở trang Sửa cam kết KPI.",
-        "ai_kpi_insight": "Bấm AI nhận định ở đầu trang Cam kết KPI. Xem lại bản đã viết không tính."}
+        "ai_kpi_insight": "Bấm AI nhận định ở đầu trang Cam kết KPI. Xem lại bản đã viết không tính.",
+        "backlink_gap": "Mỗi đối thủ một lần khi bấm Tìm backlink GAP ở trang Backlink. Xem lại kết quả không tính."}
 
 
 def _n(v) -> str:

@@ -37,8 +37,11 @@ def _vn(d: str) -> str:
         return "–"
 
 
-PAGE_TABS = (("overview", "Tổng quan"), ("domains", "Website trỏ về"), ("changes", "Link mới / mất"),
-             ("anchors", "Anchor text"), ("pages", "Trang được link"))
+PAGE_TABS = (("overview", "Tổng quan"), ("needs", "Trang cần link"), ("built", "Link đã xây"),
+             ("gap", "Backlink GAP"),
+             ("domains", "Website trỏ về"), ("changes", "Link mới / mất"), ("anchors", "Anchor text"),
+             ("pages", "Trang được link"))
+TEAM_TABS = ("needs", "built", "gap")  # việc của team: khách hàng không thấy
 CHECK_TAB = AU.CHECK_TAB  # mục kiểm tra nào nằm ở tab nào
 
 
@@ -179,7 +182,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
             b.tooltip(f"Lấy ngay số tổng + các danh sách đã chọn · {PT.cost('backlink')} credit" if PT.member(user)
                       else "Lấy ngay số backlink mới (tốn phí dữ liệu)")
 
-    keys = [k for k, _ in PAGE_TABS]
+    page_tabs = [t for t in PAGE_TABS if not (cl and t[0] in TEAM_TABS)]  # khách hàng: không thấy tab việc của team
+    keys = [k for k, _ in page_tabs]
     start = "changes" if start == "audit" else start  # link cũ ?tab=audit
     state = {"tab": start if start in keys else "overview", "q": {k: "" for k in BL.LIST_KINDS},
              "f": {k: None for k in BL.LIST_KINDS}}  # f: mục kiểm tra đang dùng làm bộ lọc của từng tab
@@ -197,6 +201,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                            "credit)." if PT.member(user) else
                            "Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách (khoảng 0,15 USD lần "
                            "đầu).") if ed else "Số backlink sẽ có sau lần lấy đầu tiên.")
+            if not cl:
+                from . import web_backlink_build as WBB  # ghi link đã xây không cần số DataForSEO
+                WBB.built_panel(ui, cfg, connect, user)
             return
         status_line(bl, st, due)
         checks = AU.audit(ls, brand_terms_of(own)) if ls and not cl else []
@@ -207,7 +214,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
             return name + (f" · {F.n(d_['total'] or len(d_['items']))}" if d_ else "")
         with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
-            for k, name in PAGE_TABS:
+            for k, name in page_tabs:
                 with ui.tab(k, label(k, name)):
                     high = sum(1 for c_ in by_tab.get(k, []) if c_["level"] == "high")
                     if high:  # chấm đỏ: tab có việc cần xử lý
@@ -218,6 +225,14 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 kpis(bl, ls)
                 todo(checks)
                 trend(bl)
+            from . import web_backlink_build as WBB
+            if not cl:
+                with ui.tab_panel("needs").classes("q-px-none"):
+                    WBB.needs_panel(ui, cfg, connect, ls)
+                with ui.tab_panel("built").classes("q-px-none"):
+                    WBB.built_panel(ui, cfg, connect, user)
+                with ui.tab_panel("gap").classes("q-px-none"):
+                    WBB.gap_panel(ui, cfg, connect, user)
             for k in BL.LIST_KINDS:
                 with ui.tab_panel(k).classes("q-px-none"):
                     list_panel(k, ls, own, by_tab[k])

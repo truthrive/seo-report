@@ -84,7 +84,7 @@ def check_brief(raw: dict) -> dict:
 
 def write_brief(cfg, d: dict, brand: str = "", prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     prov = prov or AW.provider(cfg)
-    text = AH.complete(prov["style"], prov["base"], prov["key"], prov["model"], brief_prompt(d, brand),
+    text = AH.ask(prov, expect_json=True, prompt=brief_prompt(d, brand),
                        system=SYSTEM_BRIEF, max_tokens=2500, timeout=150, opener=opener)
     raw = _json(text)
     if raw is None:

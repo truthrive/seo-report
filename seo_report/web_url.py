@@ -1,4 +1,6 @@
 """Màn URL 3 cột: danh sách URL của nhóm ở giữa, chi tiết keyword của URL đang chọn bên phải."""
+from urllib.parse import quote
+
 from . import indexing as IX
 from . import keywords as K
 from . import rank as R
@@ -74,10 +76,24 @@ def organic_sessions_by_week(cfg, url: str, wks: list) -> dict[str, int]:
     return out
 
 
-def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict | None = None) -> None:
+def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict | None = None,
+                   focus: int | None = None, missing: str | None = None) -> None:
+    """focus: id URL mở sẵn (link ?u= từ trang khác). missing: URL được mở nhưng chưa thuộc nhóm URL nào."""
     from .access import can_edit
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không kiểm tra index, không sửa target, không thêm keyword / gắn ★
+    if missing:
+        with ui.row().classes("w-full items-center gap-2 sr-bb-miss"):
+            ui.icon("info", size="18px")
+            ui.label(f"{_short(missing, site)} chưa thuộc nhóm URL nào nên chưa có trong danh sách.").classes(
+                "text-sm col")
+            if can_edit(user):
+                def add_here():
+                    with connect() as c:
+                        g = ctx["group"] if ctx else U.ensure_group(c, site)
+                        U.add_to_group(c, site, g, missing, str(user))
+                    ui.navigate.to("/url?u=" + quote(missing, safe=""))
+                ui.button("Thêm vào nhóm đang xem", icon="add", on_click=add_here).props("flat no-caps dense")
     with connect() as c:
         U.assign_urls(c, site)
         K.ensure_tables(c)
@@ -431,6 +447,9 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     </q-td>""")
                 ui.label("Volume: lượt tìm mỗi tháng tại Việt Nam (Google Ads).").classes("text-xs muted")
 
+        from . import web_backlink_build as WBB  # backlink của URL này (website trỏ về, link đã xây)
+        WBB.url_block(ui, cfg, connect, user, row["url"])
+
         with ui.dialog() as add_dialog, ui.card().style("min-width: 560px; border-radius: 14px"):
             ui.label(f"Thêm keyword SEO cho {row['path']}").classes("text-lg font-semibold")
             ui.label("Mỗi dòng một keyword. URL mục tiêu là URL này. Volume lấy ngay sau khi thêm.").classes(
@@ -475,7 +494,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             render_detail.refresh()
 
         # ---- Khối 2: keyword GSC nhận diện cho URL này ----
-        with T.section(ui, "Keyword GSC nhận diện", "manage_search",
+        with T.section(ui, "Từ khóa trên GSC", "manage_search",
                        "Từ khóa chính và từ khóa phụ của trang. ★ = đưa vào từ khóa cam kết"):
             if c_now:
                 ui.label(f"Thấy được {visible / c_now * 100:.0f}% click theo từ khóa; phần còn lại Google ẩn.").classes("text-xs muted")
@@ -602,6 +621,10 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         render_list.refresh()
 
     load_group()
+    if focus and focus in {r["id"] for r in state["rows"]}:
+        state["url"] = focus
+        ui.timer(0.6, lambda: ui.run_javascript(  # cuộn danh sách tới URL vừa mở
+            "document.querySelector('.sr-url-item.selected')?.scrollIntoView({block: 'center'})"), once=True)
     render_list.refresh()
     render_detail.refresh()
     group_select.on_value_change(on_group)

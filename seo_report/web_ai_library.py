@@ -147,7 +147,7 @@ def build_ai_library(ui, cfg, connect, user, kinds: tuple = RESEARCH_KINDS, head
     from . import access as A
     can_del = A.can_edit(user)
     if header:
-        T.page_header(ui, "auto_awesome", "AI đã tạo", "Chiến lược SEO và brief AI đã viết cho website này.",
+        T.page_header(ui, "auto_awesome", "Thư viện AI", "Chiến lược SEO và brief AI đã viết cho website này.",
                       eyebrow="Research")
     state = {"kind": "all", "q": ""}
 
