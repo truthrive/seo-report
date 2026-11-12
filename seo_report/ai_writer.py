@@ -65,7 +65,69 @@ def _with_fallback(cfg, prov: dict) -> dict:
     return prov
 
 
+def migrate_combos(con, cfg) -> None:
+    """Lần đầu có combo: dựng combo Mặc định từ cách cũ (model chính tự chọn + model dự phòng chung); tác vụ nào đã
+    chọn riêng nhà cung cấp / model thì có combo riêng mang tên tác vụ."""
+    from . import ai_settings as AIS
+    from . import integrations as I
+    if AIS.has_combos(con):
+        return
+    I.sync_gateways(cfg)
+    fbs = [{"provider": f["provider"], "model": f.get("model") or ""} for f in AIS.fallbacks(con)]
+    main = []
+    for p in [*ORDER, *(k for k in I.AI_PROVIDERS if k not in ORDER)]:
+        s = AH.settings_for(cfg, p)
+        if s and (s["model"] or DEFAULT_MODEL.get(p)):
+            main = [{"provider": p, "model": s["model"] or DEFAULT_MODEL.get(p, "")}]
+            break
+    items = [{"id": AIS.DEFAULT_COMBO, "name": "Mặc định", "steps": main + fbs}]
+    own = {}
+    for t, (name, _d, _k) in AIS.TASKS.items():
+        st = AIS.task_settings(con, t)
+        if st.get("provider", "auto") == "auto" and not st.get("model"):
+            continue
+        p = st["provider"] if st.get("provider") != "auto" else (main[0]["provider"] if main else "")
+        if not p:
+            continue
+        key = (p, st.get("model") or "")
+        if key not in own:
+            own[key] = f"c{len(own) + 2}"
+            items.append({"id": own[key], "name": name, "steps": [{"provider": p, "model": key[1]}] + fbs})
+        AIS.save_task(con, t, {"combo": own[key]})
+    AIS.save_combos(con, items)
+
+
+def combo_provider(cfg, combo: dict) -> dict:
+    """Provider của combo: model 1 là model chính, các model sau là dự phòng (thử lần lượt)."""
+    chain = fallback_chain(cfg, combo.get("steps") or [])
+    if not chain:
+        raise NoProvider(f"Combo “{combo.get('name')}” chưa có model dùng được: thêm model ở Quản trị › AI › Combo AI")
+    prov = {**chain[0], "combo": combo.get("name", "")}
+    if chain[1:]:
+        prov["fallbacks"] = chain[1:]
+    return prov
+
+
 def provider(cfg, task: str | None = None) -> dict:
+    """Nhà cung cấp sẽ dùng cho tác vụ: theo combo tác vụ chọn ở Quản trị › AI. Chưa có file dữ liệu chính (lệnh
+    terminal, test) thì theo cách cũ: nhà cung cấp đầu tiên có khóa."""
+    from . import ai_settings as AIS
+    from . import integrations as I
+    I.sync_gateways(cfg)
+    try:
+        with AIS._connect() as con:
+            migrate_combos(con, cfg)
+            combo = AIS.task_combo(con, task)
+    except NoProvider:
+        raise
+    except Exception:  # noqa: BLE001
+        combo = None
+    if combo is not None:
+        return combo_provider(cfg, combo)
+    return _provider_old(cfg, task)
+
+
+def _provider_old(cfg, task: str | None = None) -> dict:
     """Nhà cung cấp sẽ dùng: {name, style, base, key, model}. task: Owner có thể chọn nhà cung cấp / model riêng cho
     tác vụ ở Quản trị › AI. Chưa có nhà cung cấp nào đủ khóa + model → NoProvider."""
     from . import ai_settings as AIS
@@ -102,6 +164,26 @@ def latest(con, site: str, kind: str, ref: str) -> dict | None:
     except ValueError:
         data = {"answer": row[0]}
     return {**data, "provider": row[1], "model": row[2], "by": row[3], "at": row[4]}
+
+
+def history(con, site: str, kind: str, refs: list[str] | None = None, limit: int = 50) -> list[dict]:
+    """Các bản AI đã viết (mới trước) của một loại; refs: chỉ các ref này (None = mọi ref)."""
+    ensure(con)
+    sql = "SELECT id, ref, content, provider, model, by, at FROM ai_drafts WHERE site = ? AND kind = ?"
+    args: list = [site, kind]
+    if refs is not None:
+        if not refs:
+            return []
+        sql += f" AND ref IN ({','.join('?' * len(refs))})"
+        args += list(refs)
+    out = []
+    for i, ref, content, prov, model, by, at in con.execute(sql + " ORDER BY id DESC LIMIT ?", args + [limit]):
+        try:
+            data = json.loads(content)
+        except ValueError:
+            data = {}
+        out.append({**data, "id": i, "ref": ref, "provider": prov, "model": model, "by": by, "at": at})
+    return out
 
 
 def save(con, site: str, kind: str, ref: str, data: dict, prov: dict, by: str) -> None:

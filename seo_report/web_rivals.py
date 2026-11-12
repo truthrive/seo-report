@@ -461,4 +461,56 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
         with connect() as c:
             return RO.competitor_workbook(c, cfg, end)
 
+    # ------------------------------------------------------------------ khoảng trống backlink (từ lần chạy GAP)
+    def backlink_card() -> None:
+        """Mỗi đối thủ: số website trỏ về họ (link dofollow) mà chưa trỏ về mình. Lấy từ lần chạy Backlink GAP gần
+        nhất, không gọi API. Khách xem số; team có nút sang danh sách website nên xin link / chạy lại."""
+        from . import backlink_gap as BG
+        from .access import is_client
+        team = not is_client(user)
+        with connect() as c:
+            g = BG.by_rival(c, cfg)
+            n_rivals = len(BG.rivals(c, cfg))
+        if not n_rivals:
+            return
+        with ui.element("div").classes("sr-card q-pa-md w-full q-mt-md"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-xs"):
+                with ui.element("span").classes("sr-bx-icon").style("background:#EEF6EF"):
+                    ui.icon("add_link", size="16px").style("color:#1E7C31").props('aria-hidden="true"')
+                ui.label("Khoảng trống backlink").classes("sr-bx-title col")
+                if team:
+                    ui.button("Xem website nên xin link" if g else "Chạy Backlink GAP", icon="arrow_forward",
+                              on_click=lambda: ui.navigate.to("/backlink?tab=gap")).props(
+                        "flat dense no-caps color=primary")
+            if not g or not g["rows"]:
+                ui.label("Chưa có số backlink của đối thủ." + (
+                    " Chạy Backlink GAP (tốn phí, có ghi giá trước khi chạy) để so sánh." if team else "")).classes(
+                    "text-sm muted")
+                return
+            ui.label(f"Số website trỏ về đối thủ (link dofollow) mà chưa trỏ về website của bạn · cập nhật "
+                     f"{_vn(g['fetched_at'])}").classes("text-xs muted")
+            rows = g["rows"][::-1]  # biểu đồ thanh ngang: nhiều nhất nằm trên
+            ui.echart({
+                "animation": False,
+                "grid": {"left": 8, "right": 48, "top": 8, "bottom": 8, "containLabel": True},
+                "tooltip": {"trigger": "item", ":formatter": "p => p.name + ': ' + p.value.toLocaleString('vi-VN') + "
+                                                            "' website trỏ về đối thủ mà chưa trỏ về mình'"},
+                "xAxis": {"type": "value", "show": False},
+                "yAxis": {"type": "category", "data": [r["name"] for r in rows], "axisTick": {"show": False},
+                          "axisLine": {"show": False}, "axisLabel": {"color": "#4A4A40", "fontSize": 12}},
+                "series": [{"type": "bar", "data": [r["total"] for r in rows], "barMaxWidth": 16,
+                            "itemStyle": {"color": "#1E7C31", "borderRadius": [0, 4, 4, 0]},
+                            "label": {"show": True, "position": "right", "color": "#4A4A40", "fontSize": 12,
+                                      ":formatter": "p => p.value.toLocaleString('vi-VN')"}}],
+            }).classes("w-full").style(f"height:{40 + 30 * len(rows)}px")
+            notes = []
+            if g["shared"]:
+                notes.append(f"{g['shared']:,} website uy tín trỏ về từ 2 đối thủ trở lên (không tính website spam): dễ "
+                             "xin link nhất".replace(",", "."))
+            if g["missing"]:
+                notes.append("Chưa có số: " + ", ".join(g["missing"]) + " (thêm sau lần chạy gần nhất)")
+            for n_ in notes:
+                ui.label(n_).classes("text-xs muted")
+
     overview()
+    backlink_card()

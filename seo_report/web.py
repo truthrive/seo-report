@@ -253,7 +253,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             if not rows:
                 return
             online = sum(r["status"] != PR.OFFLINE for r in rows)
-            box = T.avatar_group(ui, rows, max_shown=4, size=28, ring="#F4F4EF",
+            box = T.avatar_group(ui, rows, max_shown=4, size=28, ring=T.PAGE_BG,
                                  label=f"{len(rows)} người có quyền ở {P.project['name']}, {online} đang online. "
                                        "Bấm để xem danh sách")
             with box:
@@ -316,15 +316,40 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             ui.label(f"Đã dùng {b['used']:,} credit · đặt lại ngày 1".replace(",", ".")).classes("text-xs muted")
 
     def credit_dialog(user) -> None:
-        """Popup máy tính credit (bấm thẻ credit / mục Máy tính credit trong menu tài khoản)."""
+        """Credit của tôi (popup): số dư tháng này + máy tính credit. Mở từ thẻ credit, menu tài khoản, nút +."""
+        from . import points as PT
         from . import web_points as WP
+        b = PT.my_balance(user)
+        if b is None:  # Owner / Admin: không giới hạn, vẫn ghi số đã dùng
+            try:
+                with app_connect() as c:
+                    b = {**PT.balance(c, str(user)), "unlimited": True}
+            except Exception:  # noqa: BLE001
+                b = None
         with ui.dialog() as dlg, ui.card().classes("sr-pt-dlg q-pa-none"):
             with ui.row().classes("w-full items-center no-wrap gap-2 sr-pt-dlg-head"):
-                ui.label("Máy tính credit").classes("text-base font-semibold col")
+                ui.label("Credit của tôi").classes("text-base font-semibold col")
                 ui.button("Lịch sử trừ credit", icon="history", on_click=lambda: ui.navigate.to("/diem")).props(
                     "flat no-caps dense")
                 ui.button(icon="close", on_click=dlg.close).props('flat round dense aria-label="Đóng"')
             with ui.element("div").classes("sr-pt-dlg-body"):
+                if b:
+                    with ui.element("div").classes("sr-pt-bal"):
+                        if b.get("unlimited"):
+                            ui.label("Không giới hạn").classes("sr-pt-bal-num")
+                            ui.label(f"Owner / Admin · tháng này đã dùng {b['used']:,} credit".replace(",", ".")
+                                     ).classes("text-xs muted")
+                        else:
+                            with ui.row().classes("items-baseline gap-1 no-wrap"):
+                                ui.label(f"{b['left']:,}".replace(",", ".")).classes("sr-pt-bal-num num")
+                                ui.label(f"còn lại / {b['limit']:,} credit tháng này".replace(",", ".")).classes(
+                                    "text-sm muted")
+                            ratio = b["used"] / b["limit"] if b["limit"] else 1
+                            ui.html(f'<div class="sr-kp-bar thin"><i style="width:{min(ratio, 1) * 100:.1f}%;'
+                                    f'background:{"#B7791F" if ratio >= .8 else T.GREEN}"></i></div>').classes("w-full")
+                            ui.label(f"Đã dùng {b['used']:,} · đặt lại ngày 1".replace(",", ".")).classes(
+                                "text-xs muted")
+                ui.label("Máy tính credit").classes("sr-rai-h q-mt-sm")
                 WP.calculator(ui, user, framed=False)
         dlg.on("hide", dlg.delete)
         dlg.open()
@@ -418,9 +443,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         return out
 
     def float_group(user, P, active: str) -> None:
-        """Nhóm nút nổi góc dưới phải: nút + mở 3 thao tác nhanh theo vai trò, nút về đầu trang (cuộn quá 400px).
-        Khách hàng: ba loại góp ý gửi cho đội SEO. Người được sửa: thêm từ khóa, thêm đối thủ, trả lời góp ý.
-        Người còn lại: tra từ khóa và máy tính credit. Mỗi thao tác mở popup (web_quick.py), không rời trang."""
+        """Nhóm nút nổi góc dưới phải: nút + mở thao tác nhanh theo vai trò, nút về đầu trang (cuộn quá 400px).
+        Khách hàng: ba loại góp ý gửi cho đội SEO. Người được sửa: thêm từ khóa, tra từ khóa, việc cần làm từ Bản tin
+        AI, credit của tôi, sửa hồ sơ. Người còn lại: tra từ khóa và credit. Mỗi thao tác mở popup, không rời trang."""
         from .fab import FloatGroup
         if A.is_client(user):
             from .web_feedback import feedback_opener
@@ -429,27 +454,152 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                         {"key": "data", "icon": "report_gmailerrorred", "label": "Báo lỗi số liệu"},
                         {"key": "idea", "icon": "lightbulb_outline", "label": "Gửi đề xuất"}],
                        fab_label="Gửi yêu cầu cho đội SEO", on_action=lambda k: open_fb(k))
-        elif A.can_edit(user):
-            from . import feedback as FB
-            with P.connect() as c:
-                n_new = FB.count_new(c)
-            from . import web_quick as Q
-            run_ = {"kw": lambda: Q.add_keywords(ui, P, user), "rival": lambda: Q.add_rival(ui, P, user),
-                    "look": lambda: Q.lookup_keyword(ui, P, user), "calc": lambda: credit_dialog(user),
-                    "fb": lambda: ui.navigate.to("/ho-tro")}
-            FloatGroup([{"key": "kw", "icon": "playlist_add", "label": "Thêm từ khóa theo dõi"},
-                        {"key": "rival", "icon": "group_add", "label": "Thêm đối thủ"},
-                        {"key": "look", "icon": "manage_search", "label": "Tra từ khóa"},
-                        {"key": "calc", "icon": "calculate", "label": "Máy tính credit"},
-                        {"key": "fb", "icon": "support_agent", "label": "Xử lý yêu cầu hỗ trợ",
-                         **({"badge": f"{n_new} mới"} if n_new else {})}],
-                       fab_label="Thao tác nhanh", on_action=lambda k: run_[k]())
         else:
-            from . import web_quick as Q
-            FloatGroup([{"key": "look", "icon": "manage_search", "label": "Tra từ khóa"},
-                        {"key": "calc", "icon": "calculate", "label": "Máy tính credit"}],
-                       fab_label="Thao tác nhanh",
-                       on_action=lambda k: Q.lookup_keyword(ui, P, user) if k == "look" else credit_dialog(user))
+            # Người trong team / tài khoản chỉ xem: nút nhanh do từng người tự chọn (quick_prefs), mục cuối "Tùy chỉnh"
+            from . import quick_prefs as QP
+            from . import web_quick as Q  # số yêu cầu hỗ trợ mới: nhãn ở mục Yêu cầu hỗ trợ trên menu trái
+            from .web_profile import profile_dialog
+            ed_ = A.can_edit(user)
+            with app_connect() as c:
+                items = QP.get(c, str(user), ed_)
+            open_profile = profile_dialog(ui, base, app_connect, user)
+            run_ = {"kw": lambda: Q.add_keywords(ui, P, user), "look": lambda: Q.lookup_keyword(ui, P, user),
+                    "profile": lambda: open_profile(), "credit": lambda: credit_dialog(user),
+                    "todo": lambda: Q.brief_todo(ui, P, user), "rival": lambda: Q.add_rival(ui, P, user),
+                    "fb": lambda: ui.navigate.to("/ho-tro")}
+
+            def act(k: str) -> None:
+                if k == QP.CUSTOM["key"]:
+                    quick_custom(user, P, ed_)
+                elif k.startswith("page:"):
+                    ui.navigate.to(k[5:])
+                elif k.startswith("link:"):
+                    ui.navigate.to(k[5:], new_tab=k[5:].startswith("http"))
+                elif k in run_:
+                    run_[k]()
+            FloatGroup(items + [QP.CUSTOM], fab_label="Thao tác nhanh", on_action=act)
+
+    def page_choices(user, P) -> list[dict]:
+        """Các trang / tab người này mở được, để làm lối tắt: [{"key": "page:/…", "label", "icon"}]."""
+        subs = sub_nav(user, P)
+        out = []
+        for group_name, items in NAV:
+            for label, href, icon in items:
+                if href == "/yeu-cau" or (href in ADMIN_PAGES and not A.is_admin(user)) or \
+                        (href in OWNER_PAGES and not A.is_owner(user)):
+                    continue
+                tabs = subs.get(href) or []
+                if not tabs:
+                    out.append({"key": f"page:{href}", "label": label, "icon": icon})
+                for tab, h in tabs:
+                    if (h in ADMIN_PAGES and not A.is_admin(user)) or (h in OWNER_PAGES and not A.is_owner(user)):
+                        continue
+                    out.append({"key": f"page:{h}", "label": f"{label} · {tab}" if tab != label else label,
+                                "icon": icon})
+        return out
+
+    def quick_custom(user, P, ed_: bool) -> None:
+        """Tùy chỉnh nút nhanh: bật / tắt thao tác có sẵn, thêm lối tắt trang, thêm liên kết riêng, sắp thứ tự."""
+        from . import quick_prefs as QP
+        with app_connect() as c:
+            cur = [dict(x) for x in QP.get(c, str(user), ed_)]
+        pages = page_choices(user, P)
+        page_by = {x["key"]: x for x in pages}
+        avail = [x for x in (QP.builtin(k, ed_) for k in QP.BUILTIN) if x]
+        state = {"items": cur}
+        with ui.dialog() as dlg, ui.card().style("width: 560px; max-width: 96vw; border-radius: 14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.icon("tune", size="20px").classes("text-primary")
+                ui.label("Tùy chỉnh nút nhanh").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=dlg.close).props('flat round dense aria-label="Đóng"')
+            ui.label(f"Chọn tối đa {QP.MAX_ITEMS} nút cho nút + và menu chuột phải. Chỉ áp dụng cho tài khoản của bạn."
+                     ).classes("text-xs muted")
+
+            @ui.refreshable
+            def chosen() -> None:
+                items = state["items"]
+                ui.label(f"Đang dùng · {len(items)}/{QP.MAX_ITEMS}").classes("sr-rai-h q-mt-sm")
+                if not items:
+                    ui.label("Chưa có nút nào.").classes("text-sm muted")
+                for i, x in enumerate(items):
+                    with ui.row().classes("w-full items-center no-wrap gap-2 sr-qc-row"):
+                        ui.icon(x["icon"], size="20px").classes("text-primary")
+                        ui.label(x["label"]).classes("text-sm col ellipsis")
+                        if x["key"].startswith(("page:", "link:")):
+                            ui.label(x["key"][5:]).classes("text-xs muted ellipsis").style("max-width:180px")
+                        ui.button(icon="arrow_upward", on_click=lambda _, i=i: move(i, -1)).props(
+                            "flat round dense size=sm" + (" disable" if i == 0 else "")).tooltip("Lên trước")
+                        ui.button(icon="close", on_click=lambda _, i=i: (items.pop(i), chosen.refresh(), adders.refresh())
+                                  ).props("flat round dense size=sm").tooltip("Bỏ")
+
+            def move(i, d):
+                it = state["items"]
+                j = i + d
+                if 0 <= j < len(it):
+                    it[i], it[j] = it[j], it[i]
+                    chosen.refresh()
+
+            def add(x: dict) -> None:
+                if len(state["items"]) >= QP.MAX_ITEMS:
+                    ui.notify(f"Tối đa {QP.MAX_ITEMS} nút: bỏ bớt một nút trước", type="warning")
+                    return
+                if any(y["key"] == x["key"] for y in state["items"]):
+                    ui.notify("Nút này đã có", type="warning")
+                    return
+                state["items"].append(dict(x))
+                chosen.refresh()
+                adders.refresh()
+
+            @ui.refreshable
+            def adders() -> None:
+                have = {x["key"] for x in state["items"]}
+                free = [x for x in avail if x["key"] not in have]
+                ui.label("Thêm nút").classes("sr-rai-h q-mt-md")
+                if free:
+                    with ui.row().classes("w-full gap-1 wrap"):
+                        for x in free:
+                            ui.button(x["label"], icon=x["icon"], on_click=lambda _, x=x: add(x)).props(
+                                "outline dense no-caps size=sm color=grey-9")
+                with ui.row().classes("w-full items-end gap-2 no-wrap q-mt-sm"):
+                    opts = {k: v["label"] for k, v in page_by.items() if k not in have}
+                    ui.select(opts, label="Thêm lối tắt tới trang / tab (gõ để tìm)", with_input=True,
+                              on_change=lambda e: e.value and add(page_by[e.value])).props(
+                        "outlined dense options-dense").classes("col")
+                with ui.row().classes("w-full items-end gap-2 no-wrap q-mt-sm"):
+                    nm = ui.input("Tên liên kết riêng", placeholder="ví dụ: Sheet báo cáo khách").props(
+                        "outlined dense").classes("col")
+                    url = ui.input("Địa chỉ", placeholder="https://… hoặc /duong-dan").props(
+                        "outlined dense").classes("col")
+
+                    def add_link():
+                        u = (url.value or "").strip()
+                        items = QP.clean([{"key": f"link:{u}", "label": nm.value or u}], ed_)
+                        if not items:
+                            ui.notify("Địa chỉ phải bắt đầu bằng https:// hoặc /", type="warning")
+                            return
+                        add(items[0])
+                    ui.button("Thêm", icon="add_link", on_click=add_link).props("unelevated dense no-caps")
+            chosen()
+            adders()
+
+            def save():
+                with app_connect() as c:
+                    QP.save(c, str(user), state["items"], ed_)
+                dlg.close()
+                ui.notify("Đã lưu nút nhanh", type="positive")
+                ui.navigate.reload()
+
+            def to_default():
+                state["items"] = QP.defaults(ed_)
+                chosen.refresh()
+                adders.refresh()
+            with ui.row().classes("w-full justify-between q-mt-md"):
+                ui.button("Về mặc định", on_click=to_default).props("flat no-caps color=grey-8")
+                with ui.row().classes("gap-2"):
+                    ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+                    ui.button("Lưu", icon="check", on_click=save).props("unelevated no-caps")
+        dlg.on("hide", dlg.delete)
+        dlg.open()
 
     def sub_nav(user, P) -> dict[str, list[tuple[str, str]]]:
         """Tab con của từng mục menu (đúng tab có trên trang, theo quyền): mục → [(tên tab, địa chỉ)].
@@ -751,7 +901,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         shell("Backlink", user, P, page_ctx(P), period=False, group=False)
         from .web_backlink import build_backlink_page
-        build_backlink_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+        build_backlink_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""),
+                            request.query_params.get("xem", ""))
 
     @ui.page("/aio")
     def aio_page(request: Request):
@@ -1067,7 +1218,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         shell("AI", user, P, page_ctx(P), period=False, group=False)
         from .web_ai_admin import build_ai_admin
         build_ai_admin(ui, base, app_connect, user,
-                       A.is_local(request.client.host if request.client else None, request.headers))
+                       A.is_local(request.client.host if request.client else None, request.headers),
+                       open_key=request.query_params.get("gw"))
 
     @ui.page("/ai-da-tao")
     def ai_library_page(request: Request):

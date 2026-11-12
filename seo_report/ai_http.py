@@ -152,38 +152,40 @@ def complete(style: str, base: str, key: str, model: str, prompt: str, system: s
             detail = e.read().decode("utf-8", "replace")[:300]
         except Exception:  # noqa: BLE001
             detail = ""
+        # câu lỗi hiện cho người dùng: không kèm tên model (model chỉ xem ở Quản trị › AI, nhật ký có cột riêng)
+        detail = re.sub(r'"model"\s*:\s*"[^"]*"\s*,?\s*', "", detail)
         low = detail.lower()
         if e.code == 403 and "upstream" in low:
-            raise QuotaError(f"Model “{model}” đang bị phía người bán trên cổng từ chối (lỗi của họ, không phải khóa): "
+            raise QuotaError("Model AI chính đang bị phía người bán trên cổng từ chối (lỗi của họ, không phải khóa): "
                              "chọn model khác hoặc thêm model dự phòng ở Quản trị › AI") from e
         if e.code in (401, 403):
             raise QuotaError("Khóa API không đúng hoặc không có quyền") from e
         if e.code == 402 or "insufficient_quota" in low:
             if "price" in low:
-                raise QuotaError(f"Cổng AI đã đổi giá model “{model}”: vào trang quản lý của cổng để chấp nhận giá mới, "
+                raise QuotaError("Cổng AI đã đổi giá model đang dùng: vào trang quản lý của cổng để chấp nhận giá mới, "
                                  "hoặc chọn model khác ở Quản trị › AI") from e
             raise QuotaError("Tài khoản AI hết hạn mức / hết tiền: nạp thêm ở trang của nhà cung cấp hoặc đổi model") from e
         if e.code == 404 or (e.code == 400 and "model" in low and ("not found" in low or "not exist" in low
                                                                       or "invalid" in low)):
-            raise QuotaError(f"Model “{model}” không còn trên nhà cung cấp (bị gỡ hoặc sai tên): chọn model khác ở "
+            raise QuotaError("Model đang dùng không còn trên nhà cung cấp (bị gỡ hoặc sai tên): chọn model khác ở "
                              "Quản trị › AI") from e
         if e.code in (502, 503, 504):
-            raise UpstreamError(f"Model “{model}” tạm thời không phản hồi (lỗi {e.code} phía nhà cung cấp), thử lại sau "
+            raise UpstreamError(f"Model AI tạm thời không phản hồi (lỗi {e.code} phía nhà cung cấp), thử lại sau "
                                 "hoặc thêm model dự phòng ở Quản trị › AI") from e
         if e.code == 429:
             raise AIError("Nhà cung cấp đang giới hạn lượt gọi hoặc hết hạn mức, thử lại sau") from e
         raise AIError(f"Nhà cung cấp báo lỗi {e.code}: {detail}") from e
     except URLError as e:
         if isinstance(e.reason, TimeoutError):
-            raise UpstreamError(f"Model “{model}” không trả lời sau {timeout} giây (hết giờ chờ)") from e
+            raise UpstreamError(f"Model AI không trả lời sau {timeout} giây (hết giờ chờ)") from e
         raise UpstreamError("Không kết nối được tới nhà cung cấp AI (kiểm tra Base URL và mạng)") from e
     except TimeoutError as e:
-        raise UpstreamError(f"Model “{model}” không trả lời sau {timeout} giây (hết giờ chờ)") from e
+        raise UpstreamError(f"Model AI không trả lời sau {timeout} giây (hết giờ chờ)") from e
     except (OSError, ValueError) as e:  # mất kết nối giữa chừng / trả về không phải JSON
         raise UpstreamError(f"Nhà cung cấp trả lời hỏng giữa chừng: {type(e).__name__}") from e
     out = parse(style, data)
     if not allow_cut and cut_off(style, data):
-        raise TruncatedError(f"Câu trả lời của “{model}” bị cắt cụt (hết {max_tokens} chữ)")
+        raise TruncatedError(f"Câu trả lời của AI bị cắt cụt (hết {max_tokens} chữ)")
     return out
 
 
@@ -224,7 +226,7 @@ def _one(p: dict, prompt: str, expect_json: bool, kw: dict) -> str:
         more = {**kw, "max_tokens": min(int(kw.get("max_tokens") or 1024) * 2, MAX_TOKENS_CAP)}
         out = complete(p["style"], p["base"], p["key"], p["model"], prompt, **more)
     if expect_json and not json_ok(out):
-        raise FormatError(f"Model “{p['model']}” không trả về đúng định dạng")
+        raise FormatError("AI không trả về đúng định dạng")
     return out
 
 

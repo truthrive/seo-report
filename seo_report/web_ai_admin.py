@@ -30,14 +30,15 @@ def _vn_at(iso: str) -> str:
         return ""
 
 
-def build_ai_admin(ui, base, app_connect, user, local: bool = True) -> None:
+def build_ai_admin(ui, base, app_connect, user, local: bool = True, open_key: str | None = None) -> None:
+    from . import ai_writer as AW
     from . import db
     from . import integrations as I
     from . import projects as PJ
     with app_connect() as c:
         projects = PJ.list_projects(c)
     I.sync_gateways(base)
-    providers = {"auto": "Tự chọn (nhà cung cấp đầu tiên có khóa)",
+    providers = {"auto": "",
                  **{k: I.BY_KEY[k].name for k in I.AI_PROVIDERS if I.configured(base, k)}}
     T.page_header(ui, "smart_toy", "Quản trị AI", "Bật / tắt, model và lịch tự chạy của các tính năng AI.",
                   eyebrow="Quản trị")
@@ -77,55 +78,52 @@ def build_ai_admin(ui, base, app_connect, user, local: bool = True) -> None:
             ui.button("Lưu", icon="check", on_click=save_cap).props("unelevated no-caps dense")
 
     # ---------------------------------------------------------------- nhà cung cấp AI (khóa)
-    with T.section(ui, "Nhà cung cấp AI", "key",
-                   "Nhập khóa của nhà cung cấp bạn dùng. Có khóa của nhiều nhà cung cấp thì đặt được model dự phòng "
-                   "khác nhà cung cấp ở mục dưới."):
+    with T.section(ui, "Kết nối AI", "key",
+                   "Cổng API và nhà cung cấp đã kết nối. Model của chúng dùng để tạo combo ở mục dưới."):
         from .web_settings import ai_provider_cards
 
         def provider_saved(_it):
-            ui.notify("Đang tải lại trang để cập nhật danh sách nhà cung cấp…")
-            ui.timer(1.2, ui.navigate.reload, once=True)
-        ai_provider_cards(ui, base, app_connect, user, local, on_saved=provider_saved)
+            ui.notify("Đang tải lại trang để cập nhật danh sách…")
+            ui.timer(1.2, lambda: ui.navigate.to("/quan-tri-ai"), once=True)
+        ai_provider_cards(ui, base, app_connect, user, local, on_saved=provider_saved, open_key=open_key)
 
-    # ---------------------------------------------------------------- model dự phòng
-    with T.section(ui, "Model dự phòng", "swap_horiz",
-                   "Khi model chính bị chặn (cổng đổi giá, hết hạn mức, khóa sai, model bị gỡ), tool lần lượt thử các "
-                   "model dưới đây theo thứ tự để AI không dừng, và báo lên chuông thông báo để bạn xử lý model chính."):
+    # ---------------------------------------------------------------- combo (router)
+    with T.section(ui, "Combo AI", "alt_route",
+                   "Mỗi combo là danh sách model thử lần lượt: model 1 lỗi (bị chặn, sập, hết giờ chờ, trả sai) thì tool "
+                   "chuyển sang model 2, rồi 3… Mỗi tác vụ chọn một combo ở mục Tác vụ AI."):
         with AIS._connect() as c:
-            fb_rows = [dict(x) for x in AIS.fallbacks(c)]
+            AW.migrate_combos(c, base)
+            cstate = [{**x, "steps": [dict(st) for st in x["steps"]]} for x in AIS.combos(c)]
+            users = AIS.combo_users(c)
             blk = AIS.block_status(c)
         if blk:
             with ui.row().classes("w-full items-start no-wrap gap-2 sr-aia-block q-mb-sm"):
                 ui.icon("error_outline", size="18px")
                 with ui.column().classes("gap-0 col"):
-                    ui.label(f"Model chính {blk['name']} · {blk['model']} đang bị chặn từ "
+                    ui.label(f"Model {blk['name']} · {blk['model']} đang bị chặn từ "
                              f"{_vn_at(blk['at'])}").classes("text-sm font-semibold")
                     ui.label(blk["error"]).classes("text-xs")
-                    ui.label(("Đang dùng dự phòng: " + blk["fallback"]) if blk.get("fallback") else
-                             "Chưa có model dự phòng chạy được: các tính năng AI đang dừng.").classes("text-xs")
-        fb_opts = {k: v for k, v in providers.items() if k != "auto"}
+                    ui.label(("Đang chạy bằng model kế tiếp trong combo: " + blk["fallback"]) if blk.get("fallback")
+                             else "Các model khác trong combo cũng lỗi: tác vụ AI đang dừng.").classes("text-xs")
+        step_opts = {k: v for k, v in providers.items() if k != "auto"}
 
-        async def fill_models(inp, key):
-            """Gợi ý tên model theo danh sách của cổng (miễn phí, nhớ 10 phút)."""
+        async def fill_models(sel, key, cur):
+            """Nạp danh sách model của nhà cung cấp / cổng vào ô chọn (miễn phí, nhớ 10 phút), kèm giá nếu cổng ghi."""
             from nicegui import run
-            ids = await run.io_bound(I.gateway_models, base, key)
-            if ids:
-                inp.set_autocomplete(ids)
-
-        def move(i, d):
-            j = i + d
-            if 0 <= j < len(fb_rows):
-                fb_rows[i], fb_rows[j] = fb_rows[j], fb_rows[i]
-                fb_list.refresh()
+            cat = await run.io_bound(I.model_catalog, base, key)
+            opts = {m["id"]: f"{m['id']}  ·  {m['price']}" if m["price"] else m["id"] for m in cat}
+            if cur and cur not in opts:
+                opts = {cur: cur, **opts}
+            sel.set_options(opts, value=cur or None)
+            sel.props(f'label="Model ({len(cat)})"' if cat else 'label="Model (không lấy được danh sách: gõ tên)"')
 
         async def try_model(row, out):
             from nicegui import run
 
             from . import ai_http as AH
-            from . import ai_writer as AW
             chain = AW.fallback_chain(base, [row])
             if not chain:
-                out.text = "Nhà cung cấp này chưa có model: ghi tên model"
+                out.text = "Chưa có model: gõ tên model"
                 out.style(f"color:{T.RED}")
                 return
             fb = chain[0]
@@ -133,75 +131,134 @@ def build_ai_admin(ui, base, app_connect, user, local: bool = True) -> None:
             out.style("color:inherit")
             try:
                 await run.io_bound(AH.complete, fb["style"], fb["base"], fb["key"], fb["model"], "Trả lời: OK",
-                                   max_tokens=5, timeout=40, allow_cut=True)
+                                   max_tokens=200, timeout=40, allow_cut=True)
             except AH.AIError as e:
                 out.text = f"Lỗi: {e}"
                 out.style(f"color:{T.RED}")
                 return
-            out.text = f"Dùng được: {fb['model']}"
+            out.text = "Dùng được"
             out.style(f"color:{T.GREEN}")
 
-        def save_fb():
+        def combo_options() -> dict:
+            return {x["id"]: x["name"] for x in cstate}
+
+        def sync_task_selects():
+            opts = combo_options()
+            for sel in combo_selects:
+                sel.set_options(opts, value=sel.value if sel.value in opts else AIS.DEFAULT_COMBO)
+
+        def save_combo(cb):
             with AIS._connect() as c:
-                saved = AIS.set_fallbacks(c, fb_rows)
-            fb_rows[:] = [dict(x) for x in saved]
-            fb_list.refresh()
-            ui.notify(f"Đã lưu {len(saved)} model dự phòng" if saved else "Đã tắt model dự phòng", type="positive")
+                stored = [x for x in AIS.combos(c) if x["id"] != cb["id"]]
+                pos = next((i for i, x in enumerate(cstate) if x["id"] == cb["id"]), len(stored))
+                stored.insert(min(pos, len(stored)), cb)
+                saved = AIS.save_combos(c, stored)
+            fresh = next(x for x in saved if x["id"] == cb["id"])
+            cb.update(name=fresh["name"], steps=[dict(st) for st in fresh["steps"]], new=False)
+            combos_view.refresh()
+            sync_task_selects()
+            ui.notify(f"Đã lưu combo {cb['name']}", type="positive", position="bottom-right")
 
-        def add_row():
-            fb_rows.append({"provider": next(iter(fb_opts)), "model": ""})
-            fb_list.refresh()
+        def remove_combo(cb):
+            with ui.dialog() as d, ui.card().style("max-width: 420px; border-radius: 14px"):
+                ui.label(f"Xóa combo {cb['name']}?").classes("text-lg font-semibold")
+                ui.label("Tác vụ đang dùng combo này sẽ chuyển về combo Mặc định.").classes("text-sm")
 
-        def drop_row(i):
-            fb_rows.pop(i)
-            fb_list.refresh()
+                def go():
+                    with AIS._connect() as c:
+                        AIS.save_combos(c, [x for x in AIS.combos(c) if x["id"] != cb["id"]])
+                    cstate.remove(cb)
+                    d.close()
+                    combos_view.refresh()
+                    sync_task_selects()
+                    ui.notify(f"Đã xóa combo {cb['name']}", type="positive", position="bottom-right")
+                with ui.row().classes("w-full justify-end gap-2"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                    ui.button("Xóa", icon="delete", on_click=go).props("unelevated no-caps color=negative")
+            d.open()
+
+        def new_combo():
+            with AIS._connect() as c:
+                cid = AIS.new_combo_id(c)
+            have = {x["id"] for x in cstate}
+            n = int(cid[1:])
+            while f"c{n}" in have:
+                n += 1
+            cstate.append({"id": f"c{n}", "name": "Combo mới", "new": True,
+                           "steps": [{"provider": next(iter(step_opts)), "model": ""}] if step_opts else []})
+            combos_view.refresh()
+
+        def move(cb, i, d):
+            j = i + d
+            if 0 <= j < len(cb["steps"]):
+                cb["steps"][i], cb["steps"][j] = cb["steps"][j], cb["steps"][i]
+                combos_view.refresh()
 
         @ui.refreshable
-        def fb_list():
-            if not fb_opts:
-                ui.label("Chưa có nhà cung cấp nào có khóa: nhập khóa ở mục Nhà cung cấp AI phía trên.").classes(
+        def combos_view():
+            if not step_opts:
+                ui.label("Chưa có cổng / nhà cung cấp nào kết nối: thêm ở mục Kết nối AI phía trên.").classes(
                     "text-sm muted")
                 return
-            if not fb_rows:
-                ui.label("Chưa có model dự phòng.").classes("text-sm muted")
-            for i, row in enumerate(fb_rows):
-                with ui.row().classes("w-full items-center gap-2 no-wrap sr-aia-fb"):
-                    ui.label(str(i + 1)).classes("sr-aia-fb-n")
-                    with ui.row().classes("col items-center gap-2 wrap").style("min-width:0"):
-                        ui.select(fb_opts, value=row["provider"] if row.get("provider") in fb_opts else None,
-                                  label="Nhà cung cấp",
-                                  on_change=lambda e, r=row: (r.update(provider=e.value, model=""),
-                                                              fb_list.refresh())).props(
-                            "outlined dense options-dense").classes("w-56")
-                        m_in = ui.input("Model", value=row.get("model") or "",
-                                        placeholder="để trống: model mặc định của nhà cung cấp",
-                                        on_change=lambda e, r=row: r.update(model=e.value)).props(
-                            "outlined dense").classes("col").style("min-width:200px")
-                        if I.is_gateway(row.get("provider")):
-                            m_in.props["placeholder"] = "gõ vài chữ để chọn model của cổng"
-                            ui.timer(0.1, lambda inp=m_in, k=row["provider"]: fill_models(inp, k), once=True)
-                        res = ui.label().classes("text-xs")
-                    with ui.row().classes("items-center gap-0 no-wrap"):
-                        ui.button(icon="bolt", on_click=lambda _, r=row, lb=res: try_model(r, lb)).props(
-                            "flat dense round").tooltip("Gọi thử 1 câu rất ngắn (tốn vài đồng)")
-                        ui.button(icon="arrow_upward", on_click=lambda _, i=i: move(i, -1)).props(
-                            "flat dense round" + (" disable" if i == 0 else "")).tooltip("Thử trước")
-                        ui.button(icon="close", on_click=lambda _, i=i: drop_row(i)).props(
-                            "flat dense round").tooltip("Bỏ dòng này")
-            with ui.row().classes("w-full items-center justify-between gap-2 q-mt-xs"):
-                ui.button("Thêm model dự phòng", icon="add", on_click=add_row).props(
-                    "flat dense no-caps" + (" disable" if len(fb_rows) >= AIS.MAX_FALLBACKS else ""))
-                ui.button("Lưu", icon="check", on_click=save_fb).props("unelevated no-caps dense")
-        fb_list()
-        ui.label("Nên chọn nhà cung cấp khác với model chính (ví dụ model chính trên cổng API thì dự phòng là "
-                 "DeepSeek / OpenAI / Gemini), để khi một bên lỗi thì bên kia vẫn chạy.").classes(
-            "text-xs muted q-mt-xs")
+            for cb in cstate:
+                with ui.element("div").classes("sr-aia-combo"):
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        ui.input("Tên combo", value=cb["name"], on_change=lambda e, cb=cb: cb.update(name=e.value)).props(
+                            "outlined dense" + (" readonly" if cb["id"] == AIS.DEFAULT_COMBO else "")).classes("w-56")
+                        who = users.get(cb["id"]) or []
+                        ui.label(("Dùng cho: " + ", ".join(who)) if who else
+                                 ("Chưa lưu" if cb.get("new") else "Chưa tác vụ nào dùng")).classes(
+                            "text-xs muted col").style("min-width:0")
+                        if cb["id"] != AIS.DEFAULT_COMBO:
+                            ui.button(icon="delete_outline", on_click=lambda _, cb=cb: (
+                                (cstate.remove(cb), combos_view.refresh()) if cb.get("new") else remove_combo(cb))
+                            ).props("flat dense round color=grey-7").tooltip("Xóa combo")
+                    if not cb["steps"]:
+                        ui.label("Chưa có model nào.").classes("text-sm muted q-mt-xs")
+                    for i, row in enumerate(cb["steps"]):
+                        with ui.row().classes("w-full items-center gap-2 no-wrap sr-aia-fb"):
+                            ui.label(str(i + 1)).classes("sr-aia-fb-n")
+                            with ui.row().classes("col items-center gap-2 wrap").style("min-width:0"):
+                                ui.select(step_opts, value=row["provider"] if row.get("provider") in step_opts else None,
+                                          label="Cổng / nhà cung cấp",
+                                          on_change=lambda e, r=row: (r.update(provider=e.value, model=""),
+                                                                      combos_view.refresh())).props(
+                                    "outlined dense options-dense").classes("w-56")
+                                cur = row.get("model") or ""
+                                m_in = ui.select({cur: cur} if cur else {}, value=cur or None, label="Model",
+                                                 with_input=True, new_value_mode="add-unique", clearable=True,
+                                                 on_change=lambda e, r=row: r.update(model=e.value or "")).props(
+                                    'outlined dense options-dense '
+                                    'input-debounce=0 placeholder="bấm để chọn, hoặc gõ để lọc"').classes(
+                                    "col").style("min-width:200px")
+                                if row.get("provider") in step_opts:
+                                    ui.timer(0.1, lambda s=m_in, k=row["provider"], c=cur: fill_models(s, k, c),
+                                             once=True)
+                                res = ui.label().classes("text-xs")
+                            with ui.row().classes("items-center gap-0 no-wrap"):
+                                ui.button(icon="bolt", on_click=lambda _, r=row, lb=res: try_model(r, lb)).props(
+                                    "flat dense round").tooltip("Gọi thử 1 câu rất ngắn (tốn vài đồng)")
+                                ui.button(icon="arrow_upward", on_click=lambda _, cb=cb, i=i: move(cb, i, -1)).props(
+                                    "flat dense round" + (" disable" if i == 0 else "")).tooltip("Thử trước")
+                                ui.button(icon="close", on_click=lambda _, cb=cb, i=i: (
+                                    cb["steps"].pop(i), combos_view.refresh())).props("flat dense round").tooltip(
+                                    "Bỏ model này")
+                    with ui.row().classes("w-full items-center justify-between gap-2 q-mt-xs"):
+                        ui.button("Thêm model", icon="add", on_click=lambda _, cb=cb: (
+                            cb["steps"].append({"provider": next(iter(step_opts)), "model": ""}),
+                            combos_view.refresh())).props(
+                            "flat dense no-caps" + (" disable" if len(cb["steps"]) >= AIS.MAX_STEPS else ""))
+                        ui.button("Lưu combo", icon="check", on_click=lambda _, cb=cb: save_combo(cb)).props(
+                            "unelevated no-caps dense")
+            ui.button("Tạo combo", icon="add", on_click=new_combo).props("outline dense no-caps q-mt-sm")
+        combo_selects: list = []
+        combos_view()
 
     # ---------------------------------------------------------------- từng tác vụ
     with T.section(ui, "Tác vụ AI", "tune", "Áp cho mọi dự án; dự án nào cần khác thì đổi ở mục bên dưới."):
         with ui.element("div").classes("sr-aia-tasks"):
             for task, (name, desc, kind) in AIS.TASKS.items():
-                task_card(ui, base, task, name, desc, kind, providers)
+                combo_selects.append(task_card(ui, base, task, name, desc, kind, combo_options()))
 
     # ---------------------------------------------------------------- riêng từng dự án
     with T.section(ui, "Riêng từng dự án", "domain", "Để \"Theo chung\" là dùng cài đặt ở trên."):
@@ -288,7 +345,8 @@ def build_ai_admin(ui, base, app_connect, user, local: bool = True) -> None:
         log_table()
 
 
-def task_card(ui, base, task: str, name: str, desc: str, kind: str | None, providers: dict) -> None:
+def task_card(ui, base, task: str, name: str, desc: str, kind: str | None, combo_opts: dict):
+    """Thẻ một tác vụ; trả ô chọn combo (để trang cập nhật danh sách khi tạo / xóa combo)."""
     with AIS._connect() as c:
         st = AIS.task_settings(c, task)
     with ui.element("div").classes("sr-aia-card"):
@@ -298,12 +356,12 @@ def task_card(ui, base, task: str, name: str, desc: str, kind: str | None, provi
                 ui.label(desc).classes("text-xs muted")
             on = ui.switch("Đang dùng", value=bool(st["enabled"])).props("dense color=deep-purple-6")
         with ui.row().classes("w-full items-end gap-2 q-mt-sm"):
-            prov = ui.select(providers, value=st.get("provider") if st.get("provider") in providers else "auto",
-                             label="Nhà cung cấp").props("outlined dense options-dense").classes("sr-aia-prov")
-            model = ui.input("Model", value=st.get("model", ""), placeholder="để trống: theo Cài đặt tích hợp").props(
-                "outlined dense").classes("col")
+            combo = ui.select(combo_opts, value=st.get("combo") if st.get("combo") in combo_opts
+                              else AIS.DEFAULT_COMBO, label="Combo AI").props(
+                "outlined dense options-dense").classes("sr-aia-prov")
+            ui.space()
             test_btn = ui.button("Gọi thử", icon="bolt", on_click=lambda: test()).props("flat dense no-caps")
-            test_btn.tooltip("Gửi một câu ngắn để kiểm tra model (tốn một lượt rất nhỏ)")
+            test_btn.tooltip("Gửi một câu ngắn qua combo này (tốn một lượt rất nhỏ)")
         sch = {}
         if kind:
             with ui.row().classes("w-full items-center gap-3 q-mt-sm sr-aia-sched"):
@@ -339,7 +397,7 @@ def task_card(ui, base, task: str, name: str, desc: str, kind: str | None, provi
             b.props(remove=DAY_OFF).props(DAY_ON)
 
     def save() -> None:
-        vals = {"enabled": bool(on.value), "provider": prov.value or "auto", "model": (model.value or "").strip()}
+        vals = {"enabled": bool(on.value), "combo": combo.value or AIS.DEFAULT_COMBO}
         if kind:
             hm = (sch["time"].value or "07:00").strip()
             try:
@@ -364,29 +422,26 @@ def task_card(ui, base, task: str, name: str, desc: str, kind: str | None, provi
 
         from . import ai_http as AH
         from . import ai_writer as AW
-        p, mdl = prov.value or "auto", (model.value or "").strip()
         try:
-            if p == "auto":
-                pr = AW.provider(base)
-                pr["model"] = mdl or pr["model"]
-            else:
-                s = AH.settings_for(base, p)
-                if not s:
-                    raise AW.NoProvider("Nhà cung cấp này chưa có khóa")
-                pr = {"name": providers[p], **s, "model": mdl or s["model"] or AW.DEFAULT_MODEL.get(p, "")}
-                if not pr["model"]:
-                    raise AW.NoProvider("Chưa có model")
+            with AIS._connect() as c:
+                cb = next((x for x in AIS.combos(c) if x["id"] == combo.value), None)
+            if cb is None:
+                raise AW.NoProvider("Combo chưa lưu: bấm Lưu combo trước")
+            pr = AW.combo_provider(base, cb)
         except AW.NoProvider as e:
             ui.notify(str(e), type="warning")
             return
         test_btn.props("loading")
         try:
-            out = await run.io_bound(AH.complete, pr["style"], pr["base"], pr["key"], pr["model"],
-                                     "Trả lời đúng một chữ: OK", "", 200, 60, allow_cut=True)
+            out = await run.io_bound(AH.ask, pr, "Trả lời đúng một chữ: OK", max_tokens=200, timeout=60,
+                                     allow_cut=True)
             AIS.log_call("", task, "test", "Owner", pr, True)
-            ui.notify(f"Model trả lời: {out[:40]}", type="positive", position="bottom-right")
+            ui.notify(f"{pr['name']} · {pr['model']} trả lời: {out[:40] or '(trống)'}", type="positive",
+                      position="bottom-right", multi_line=True)
         except AH.AIError as e:
             AIS.log_call("", task, "test", "Owner", pr, False, str(e))
             ui.notify(f"Lỗi: {e}", type="negative", multi_line=True, position="bottom-right")
         finally:
             test_btn.props(remove="loading")
+
+    return combo

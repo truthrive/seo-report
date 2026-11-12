@@ -18,7 +18,7 @@ NOTE = {"rank": "Bấm Check ngay. Check theo lịch của bộ không trừ cre
         "pagespeed": "Bấm kiểm tra ở trang Tốc độ trang.",
         "local": "Bấm Lấy số mới ở trang Local SEO.",
         "merchant": "Bấm Lấy số mới ở trang Merchant Center.",
-        "kg": "Bấm Kiểm tra ngay ở tab Thực thể thương hiệu.",
+        "kg": "Bấm Kiểm tra ngay ở tab Brand Entity (SEO Opportunities).",
         "sheets": "Lưu file lên Google Sheets / Drive. Tải Excel về máy không tính.",
         "ai_aio": "Bấm Viết bằng AI / Viết lại ở AI Overview > Việc nên làm. Xem lại bản đã viết không tính.",
         "ai_report": "Bấm AI viết nháp ở khối Nhận xét & kết luận của trang Báo cáo.",
@@ -27,6 +27,10 @@ NOTE = {"rank": "Bấm Check ngay. Check theo lịch của bộ không trừ cre
         "ai_kwbrief": "Bấm AI viết brief ở Tổng quan từ khóa. Xem lại brief đã viết không tính.",
         "ai_kpi": "Bấm AI đọc sheet cam kết ở trang Sửa cam kết KPI.",
         "ai_kpi_insight": "Bấm AI nhận định ở đầu trang Cam kết KPI. Xem lại bản đã viết không tính.",
+        "ai_rank_insight": "Bấm AI nhận định ở một bộ của trang Thứ hạng từ khóa. Xem lại bản đã viết không tính.",
+        "ai_rank_diag": "Bấm AI chẩn đoán trong chi tiết một từ khóa (trang Thứ hạng).",
+        "ai_rank_target": "Bấm AI gợi ý URL mục tiêu ở bảng từ khóa (tối đa 60 từ khóa một lần).",
+        "ai_rank_actions": "Tick từ khóa rồi bấm AI việc cần làm (tối đa 15 từ khóa một lần).",
         "backlink_gap": "Mỗi đối thủ một lần khi bấm Tìm backlink GAP ở trang Backlink. Xem lại kết quả không tính."}
 
 
@@ -139,7 +143,9 @@ CALC_GROUPS = (
                  ("research", "Research từ khóa", "lần"), ("overview", "Tổng quan từ khóa mới", "từ khóa"),
                  ("volume", "Thêm từ khóa vào bộ", "lần"), ("ai_aio", "AI viết đoạn trả lời AIO", "lần"),
                  ("ai_plan", "AI lập chiến lược SEO", "lần"), ("ai_kwbrief", "AI viết brief từ khóa", "lần"),
-                 ("ai_kpi_insight", "AI nhận định KPI", "lần"))),
+                 ("ai_kpi_insight", "AI nhận định KPI", "lần"), ("ai_rank_insight", "AI nhận định thứ hạng", "lần"),
+                 ("ai_rank_diag", "AI chẩn đoán từ khóa", "lần"), ("ai_rank_target", "AI gợi ý URL mục tiêu", "lần"),
+                 ("ai_rank_actions", "AI việc cần làm theo từ khóa", "lần"))),
     ("Website và báo cáo", (("backlink", "Lấy số backlink", "lần"), ("audit", "Quét audit kỹ thuật", "lần"),
                             ("pagespeed", "Lấy số tốc độ trang", "lần"), ("local", "Lấy số Local SEO", "lần"),
                             ("merchant", "Lấy số Merchant Center", "lần"), ("kg", "Kiểm tra Knowledge Graph", "lần"),

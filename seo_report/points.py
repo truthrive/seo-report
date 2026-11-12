@@ -37,6 +37,10 @@ COSTS = {
     "ai_kwbrief": ("AI viết brief từ khóa", 5),
     "ai_kpi": ("AI đọc sheet cam kết KPI", 10),
     "ai_kpi_insight": ("AI nhận định KPI", 5),
+    "ai_rank_insight": ("AI nhận định thứ hạng", 5),
+    "ai_rank_diag": ("AI chẩn đoán từ khóa", 3),
+    "ai_rank_target": ("AI gợi ý URL mục tiêu", 5),
+    "ai_rank_actions": ("AI việc cần làm theo từ khóa", 5),
     "backlink_gap": ("Backlink GAP đối thủ", 30),
 }
 

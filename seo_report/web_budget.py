@@ -382,7 +382,32 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                          "tắt check rank cho website đó. Volume keyword (mỗi tháng một lần) tính chung vào ngân sách."
                          ).classes("text-sm")
 
-    log_state = {"month": today.strftime("%Y-%m"), "project": "all", "kind": "all"}
+    log_state = {"month": today.strftime("%Y-%m"), "project": "all", "kind": "all", "free": False}
+
+    def runner_labels() -> dict:
+        """email -> nhóm quyền: Owner / Admin, hoặc theo dự án (Member / Guest)."""
+        out = {"acct": {}, "proj": {}}
+        try:
+            with app_connect() as c:
+                for e, role in c.execute("SELECT email, role FROM access_users WHERE removed_at IS NULL"):
+                    out["acct"][e.lower()] = role
+                for e, proj, role in c.execute("SELECT email, project, role FROM project_members"):
+                    out["proj"][(e.lower(), proj)] = role
+        except Exception:  # noqa: BLE001  (bảng chưa có: chỉ hiện tên)
+            pass
+        return out
+    who = runner_labels()
+
+    def runner(by: str, slug: str) -> str:
+        """Người chạy hiển thị: Lịch tự động · tên · nhóm quyền; dòng cũ chưa ghi người chạy: –."""
+        if not by:
+            return "–"
+        if by == "lịch":
+            return "Lịch tự động"
+        acct = who["acct"].get(by.lower())
+        grp = {A.EDITOR: "Owner", A.ADMIN_ACCT: "Admin"}.get(acct) or \
+            {A.EDITOR: "Member", A.CLIENT: "Guest"}.get(who["proj"].get((by.lower(), slug)), "")
+        return f"{by} · {grp}" if grp else by
 
     def spend_log(rows: list[dict]) -> None:
         """Mỗi lần chi tiền DataForSEO: lúc nào, website nào, API nào (check rank / volume / backlink / ý định), cho
@@ -429,22 +454,28 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                    [[names.get(p_, p_)] + [round(v.get(k, 0), 4) for k in kinds] + [round(sum(v.values()), 4)]
                     for p_, v in per.items()])
             _sheet(wb, "Từng khoản chi", [("Thời gian (giờ VN)", 17, None), ("Website", 22, None),
-                                          ("Loại API", 16, None), ("Chi tiết", 60, None), ("Số lượng", 10, "#,##0"),
+                                          ("Loại", 16, None), ("API", 46, None), ("Chi tiết", 60, None),
+                                          ("Số lượng", 10, "#,##0"),
                                           ("Người chạy", 22, None), ("Chi phí (USD)", 14, money)],
                    [[_vn_time(x["at"], "%d/%m/%Y %H:%M"), names.get(x["project"], ""), R.SPEND_KINDS[x["kind"]],
-                     x["detail"], x["qty"], x["by"] or "", round(x["cost"], 6)] for x in items])
+                     x.get("api", ""), x["detail"], x["qty"], runner(x["by"], x["project"]).replace("–", ""), round(x["cost"], 6)]
+                    for x in items])
             buf = io.BytesIO()
             wb.save(buf)
             return buf.getvalue()
 
         @ui.refreshable
         def ledger():
-            items = items_for()
+            every = items_for()
+            free = [x for x in every if not x["cost"]]
+            items = every if log_state["free"] else [x for x in every if x["cost"]]  # lần lấy miễn phí: ẩn
             by_kind = {k: [x for x in items if x["kind"] == k] for k in R.SPEND_KINDS}
-            # tổng theo loại API: bấm để lọc bảng
+            # tổng theo loại API: bấm để lọc bảng (loại không có lần nào thì ẩn)
             with ui.element("div").classes("sr-spend-sum"):
                 for k, label in [("all", "Tất cả")] + list(R.SPEND_KINDS.items()):
                     xs = items if k == "all" else by_kind[k]
+                    if k != "all" and not xs and log_state["kind"] != k:
+                        continue
                     chip = ui.element("button").classes(
                         f"sr-spend-chip k-{k}" + (" on" if log_state["kind"] == k else "")).props('type="button"')
                     chip.on("click", lambda _, k=k: (log_state.update(kind=k), ledger.refresh()))
@@ -453,6 +484,13 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         ui.label(f"{_usd(sum(x['cost'] for x in xs))} USD").classes("val num")
                         ui.label(f"{len(xs)} lần").classes("sub")
             shown = items if log_state["kind"] == "all" else by_kind[log_state["kind"]]
+            if free:
+                with ui.row().classes("items-center gap-1 q-mb-xs"):
+                    ui.label((f"Đang hiện {len(free)} lần lấy miễn phí (0 USD)" if log_state["free"] else
+                              f"Đã ẩn {len(free)} lần lấy miễn phí (0 USD)")).classes("text-xs muted")
+                    ui.button("Ẩn" if log_state["free"] else "Hiện", on_click=lambda: (
+                        log_state.update(free=not log_state["free"]), ledger.refresh())).props(
+                        "flat dense no-caps size=sm color=primary")
             if not shown:
                 ui.label("Không có khoản chi nào trong phạm vi đã chọn.").classes("text-sm muted q-py-md")
                 return
@@ -460,25 +498,29 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                      ":sort": "(a, b, rowA, rowB) => rowA.at_iso.localeCompare(rowB.at_iso)",
                      "headerStyle": "width:120px"},
                     {"name": "project", "label": "Website", "field": "project", "align": "left", "sortable": True},
-                    {"name": "kind", "label": "Loại API", "field": "kind_label", "align": "left", "sortable": True},
+                    {"name": "kind", "label": "Loại", "field": "kind_label", "align": "left", "sortable": True},
+                    {"name": "api", "label": "API", "field": "api", "align": "left", "sortable": True},
                     {"name": "detail", "label": "Chi tiết", "field": "detail", "align": "left"},
                     {"name": "by", "label": "Người chạy", "field": "by", "align": "left", "sortable": True},
                     {"name": "cost", "label": "Chi phí (USD)", "field": "cost_txt", "align": "right",
                      "sortable": True, ":sort": "(a, b, rowA, rowB) => rowA.cost - rowB.cost",
                      "headerStyle": "width:110px"}]
             data = [{"id": i, "at": _vn_time(x["at"]), "at_iso": x["at"], "project": names.get(x["project"], ""),
-                     "kind": x["kind"], "kind_label": R.SPEND_KINDS[x["kind"]], "detail": x["detail"],
-                     "by": x["by"] or "–", "cost": x["cost"], "cost_txt": R.usd(x["cost"], 4)}
+                     "kind": x["kind"], "kind_label": R.SPEND_KINDS[x["kind"]], "api": x.get("api", ""),
+                     "detail": x["detail"],
+                     "by": runner(x["by"], x["project"]), "cost": x["cost"], "cost_txt": R.usd(x["cost"], 4)}
                     for i, x in enumerate(shown)]
             tb = ui.table(columns=cols, rows=data, row_key="id", pagination=15).props(
                 "flat dense binary-state-sort").classes("w-full")
             tb.add_slot("body-cell-at", """
                 <q-td :props="props"><span class="num">{{ props.value }}</span></q-td>""")
+            tb.add_slot("body-cell-api", """
+                <q-td :props="props"><span class="sr-spend-api">{{ props.value }}</span></q-td>""")
             tb.add_slot("body-cell-kind", """
                 <q-td :props="props"><span :class="'sr-spend-kind k-' + props.row.kind">{{ props.value }}</span>
                 </q-td>""")
             tb.add_slot("body-cell-cost", """
-                <q-td :props="props" class="text-right"><b class="num">{{ props.value }}</b></q-td>""")
+                <q-td :props="props" class="text-right"><span class="num">{{ props.value }}</span></q-td>""")
 
         months = R.last_months(today, 6)[::-1]
         with T.section(ui, "Nhật ký chi tiền", "receipt_long",

@@ -383,13 +383,13 @@ def alerts(con, site: str, lists: dict) -> list[dict]:
         out.append({"level": "high", "key": f"bl:strong_lost:{stamp}:{len(strong)}",
                     "title": f"Mất {len(strong)} link từ website mạnh",
                     "detail": ", ".join(doms[:3]) + (f" và {len(doms) - 3} website khác" if len(doms) > 3 else ""),
-                    "href": "/backlink?tab=changes"})
+                    "href": "/backlink?tab=domains&xem=mat"})
     spam = [x for x in items if not x.get("lost") and (x.get("spam") or 0) >= SPAM_FLAG]
     if len(spam) >= SPAM_SPIKE:
         out.append({"level": "medium", "key": f"bl:spam:{stamp}:{len(spam)}",
                     "title": f"{len(spam)} link spam mới trong 30 ngày",
                     "detail": "Có thể bị đặt link xấu: xem lại và cân nhắc file disavow",
-                    "href": "/backlink?tab=changes"})
+                    "href": "/backlink?tab=domains&xem=moi"})
     try:
         ensure_tables(con)
         bad = con.execute("SELECT id, url_from, state, checked_at FROM backlink_built WHERE site = ? AND "

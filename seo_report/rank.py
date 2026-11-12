@@ -710,8 +710,26 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
     return out
 
 
+BACKLINK_RUNS = {"history": "Lịch sử backlink theo tháng", "summary": "Tổng quan backlink",
+                 "domains": "Danh sách website trỏ về", "changes": "Link mới / mất 30 ngày",
+                 "anchors": "Anchor text", "pages": "Trang được link nhiều nhất",
+                 "gap": "Backlink GAP: website trỏ về đối thủ mà chưa trỏ về mình"}
+# API thực gọi của từng khoản chi (để biết call từ API nào)
+API_NAMES = {"rank": "DataForSEO SERP · google/organic/task_post",
+             "serp": "DataForSEO SERP · google/organic/live/advanced",
+             "volume": "DataForSEO Keywords Data · google_ads/search_volume",
+             "volume_ads": "Google Ads API · Keyword Planner (miễn phí)",
+             "intent": "DataForSEO Labs · google/search_intent"}
+BACKLINK_ENDPOINTS = {"history": "history", "summary": "summary", "domains": "referring_domains",
+                      "changes": "backlinks", "anchors": "anchors", "pages": "domain_pages",
+                      "gap": "domain_intersection"}
 SPEND_KINDS = {"rank": "Check rank", "volume": "Volume từ khóa", "backlinks": "Backlink", "intent": "Ý định từ khóa",
                "serp": "Xem kết quả Google"}
+
+
+def _runner() -> str:
+    from .spend import current
+    return current()
 
 
 def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
@@ -736,26 +754,27 @@ def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
         deleted = any(x == "" for x in (names or "").split(","))
         where = ", ".join(sets_) + (" + bộ đã xóa" if deleted and sets_ else "bộ đã xóa" if deleted else "")
         tops = "/".join(f"top {d}" for d in sorted({int(x) for x in (depths or "").split(",") if x}))
-        out.append({"at": at, "kind": "rank", "qty": n, "cost": cost or 0.0, "by": by or "",
+        out.append({"at": at, "kind": "rank", "qty": n, "cost": cost or 0.0, "by": by or "", "api": API_NAMES["rank"],
                     "detail": f"{n} từ khóa · {where} · {tops}" if where else f"{n} từ khóa · {tops}"})
-    for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM volume_runs WHERE substr(run_at, 1, 7) = ?",
-                                   (month,)):
-        out.append({"at": at, "kind": "volume", "qty": n, "cost": cost or 0.0, "by": "",
+    for at, n, cost, by, api in con.execute("SELECT run_at, keywords, cost, by_user, api FROM volume_runs "
+                                            "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        api = api or ("google_ads" if not cost else "dataforseo")  # dòng cũ chưa ghi nguồn
+        out.append({"at": at, "kind": "volume", "qty": n, "cost": cost or 0.0, "by": by or "",
+                    "api": API_NAMES["volume_ads" if api == "google_ads" else "volume"],
                     "detail": f"Lượng tìm kiếm của {n} từ khóa"})
-    for at, kind, cost in con.execute("SELECT run_at, kind, cost FROM backlink_runs WHERE substr(run_at, 1, 7) = ?",
-                                      (month,)):
-        out.append({"at": at, "kind": "backlinks", "qty": 1, "cost": cost or 0.0, "by": "",
-                    "detail": {"history": "Lịch sử backlink theo tháng", "summary": "Tổng quan backlink",
-                               "domains": "Danh sách website trỏ về", "changes": "Link mới / mất 30 ngày",
-                               "anchors": "Anchor text", "pages": "Trang được link nhiều nhất"}.get(kind, kind)})
-    for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM intent_runs WHERE substr(run_at, 1, 7) = ?",
-                                   (month,)):
-        out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": "",
-                    "detail": f"Ý định tìm kiếm của {n} từ khóa"})
+    for at, kind, cost, by in con.execute("SELECT run_at, kind, cost, by_user FROM backlink_runs "
+                                          "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        out.append({"at": at, "kind": "backlinks", "qty": 1, "cost": cost or 0.0, "by": by or "",
+                    "api": f"DataForSEO Backlinks · {BACKLINK_ENDPOINTS.get(kind, kind)}",
+                    "detail": BACKLINK_RUNS.get(kind, kind)})
+    for at, n, cost, by in con.execute("SELECT run_at, keywords, cost, by_user FROM intent_runs "
+                                       "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": by or "",
+                    "api": API_NAMES["intent"], "detail": f"Ý định tìm kiếm của {n} từ khóa"})
     con.execute(SERP_LOOKUP_SCHEMA)
     for at, kw, cost, by in con.execute("SELECT run_at, keyword, cost, by_user FROM serp_lookups "
                                         "WHERE substr(run_at, 1, 7) = ?", (month,)):
-        out.append({"at": at, "kind": "serp", "qty": 1, "cost": cost or 0.0, "by": by or "",
+        out.append({"at": at, "kind": "serp", "qty": 1, "cost": cost or 0.0, "by": by or "", "api": API_NAMES["serp"],
                     "detail": f"Trang kết quả Google của “{kw}” (Tổng quan từ khóa)"})
     out.sort(key=lambda r: r["at"], reverse=True)
     return out
@@ -1415,7 +1434,7 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
                     continue
                 con.execute("INSERT INTO rank_tasks (task_id, keyword_id, depth, check_date, posted_at, cost, "
                             "status, by_user) VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)",
-                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0), by))
+                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0), by if by is not None else _runner()))
                 for k in ks[1:]:
                     con.execute("INSERT OR REPLACE INTO rank_task_links VALUES (?, ?, ?, ?, 'posted')",
                                 (t["id"], k["id"], day, _now()))

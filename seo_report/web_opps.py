@@ -11,9 +11,10 @@ from . import seo_value as SVL
 from . import site_audit as SA
 from . import ui_theme as T
 
-TABS = (("audit", "Technical Audit"), ("du-bao", "Dự báo từ khóa"), ("len-top", "Sắp lên Top"),
-        ("giam", "Trang tụt traffic"), ("tranh", "Tranh nhau từ khóa"), ("moi", "Trang mới"),
-        ("thuc-the", "Thực thể thương hiệu"))
+# trang của team: giữ tên thuật ngữ SEO tiếng Anh quen dùng
+TABS = (("audit", "Technical Audit"), ("du-bao", "Keyword Forecast"), ("len-top", "Striking Distance"),
+        ("giam", "Traffic Drops"), ("tranh", "Keyword Cannibalization"), ("moi", "New Pages"),
+        ("thuc-the", "Brand Entity"))
 NUM = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
 POS = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: 1})"
 TAB_ICON = {"audit": "fact_check", "du-bao": "query_stats", "len-top": "trending_up", "giam": "trending_down",

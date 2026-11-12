@@ -99,14 +99,14 @@ def _gateway(key: str, name: str) -> Integration:
     sau có key gw2, gw3…; mỗi cổng một file khóa riêng."""
     return Integration(
         key, name, "hub",
-        "Dùng cổng AI riêng (proxy / router như 9router, Ollama, nhà cung cấp khác) bằng gọi API trực tiếp: nhập Base "
-        "URL, chọn kiểu route mà cổng hỗ trợ, tên model và khóa. Thông tin này có trong trang hướng dẫn của cổng.",
+        "Dùng cổng AI riêng (proxy / router như 9router, Ollama, nhà bán lại…) bằng gọi API trực tiếp: nhập Base URL, "
+        "chọn kiểu route mà cổng hỗ trợ và khóa. Chọn model ở mục Combo AI. Thông tin này có trong trang hướng dẫn của "
+        "cổng.",
         [Field("base_url", "Base URL", placeholder="https://api.example.com/v1",
                hint="Phần đứng trước route, thường kết thúc bằng /v1"),
          Field("api_style", "Kiểu route", options=_AI_STYLES),
-         Field("model", "Model", placeholder="tên model đúng như cổng ghi"),
          Field("api_key", "Khóa API", secret=True, placeholder="sk-…")],
-        default_path=f"secrets/ai_{key}.toml", required=("base_url", "model", "api_key"), group="ai")
+        default_path=f"secrets/ai_{key}.toml", required=("base_url", "api_key"), group="ai")
 
 
 INTEGRATIONS.append(_gateway("gateway", GATEWAY_NAME))
@@ -149,9 +149,11 @@ def configured(cfg, key: str) -> bool:
 
 
 def merge(cfg, key: str, values: dict) -> dict:
-    """Giá trị mới: ô bí mật bỏ trống (hoặc còn dạng che) = giữ mã cũ."""
+    """Giá trị mới: ô bí mật bỏ trống (hoặc còn dạng che) = giữ mã cũ. Giá trị đã lưu không còn ô nhập (ví dụ model
+    cũ của cổng) thì giữ nguyên."""
     it, cur = BY_KEY[key], load(cfg, key)
-    out = {}
+    known = {f.key for f in it.fields}
+    out = {k: v for k, v in cur.items() if k not in known}
     for f in it.fields:
         v = (values.get(f.key) or "").strip()
         if f.secret and (not v or v.startswith("••••")):
@@ -359,21 +361,38 @@ def _gw_file(cfg) -> Path:
     return Path(cfg.client_secret).parent / "ai_gateways.json"
 
 
+def _host(cfg, key: str) -> str:
+    """Tên tự đặt của cổng theo Base URL đã lưu: api.xah.io, localhost:20128…"""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse((load(cfg, key).get("base_url") or "").strip())
+    except (KeyError, ValueError):
+        return ""
+    if not u.hostname:
+        return ""
+    return u.hostname + (f":{u.port}" if u.port else "")
+
+
 def gateways(cfg) -> list[dict]:
-    """[{key, name}] theo thứ tự; cổng "gateway" luôn đứng đầu."""
+    """[{key, name, custom}] theo thứ tự; cổng "gateway" luôn đứng đầu. Chưa đặt tên riêng thì tên = Base URL."""
     try:
         rows = json.loads(_gw_file(cfg).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         rows = []
-    out = [{"key": "gateway", "name": GATEWAY_NAME}]
+    out = [{"key": "gateway", "name": ""}]
     for r in rows if isinstance(rows, list) else []:
         if not isinstance(r, dict) or not is_gateway(r.get("key")):
             continue
         name = " ".join(str(r.get("name") or "").split())[:40]
         if r["key"] == "gateway":
-            out[0]["name"] = name or GATEWAY_NAME
+            out[0]["name"] = "" if name == GATEWAY_NAME else name  # tên mặc định cũ: coi như chưa đặt tên
         elif all(x["key"] != r["key"] for x in out):
-            out.append({"key": r["key"], "name": name or r["key"]})
+            out.append({"key": r["key"], "name": name})
+    for x in out:
+        x["custom"] = bool(x["name"])
+        if not x["name"]:
+            x["name"] = _host(cfg, x["key"]) if x["key"] in BY_KEY else ""
+            x["name"] = x["name"] or ("Cổng API mới" if x["key"] != "gateway" else GATEWAY_NAME)
     return out
 
 
@@ -381,6 +400,7 @@ def _save_gateways(cfg, rows: list[dict]) -> None:
     p = _gw_file(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
+    rows = [{"key": r["key"], "name": r["name"] if r.get("custom", True) else ""} for r in rows]
     tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, p)
     sync_gateways(cfg)
@@ -403,37 +423,36 @@ def sync_gateways(cfg) -> None:
             it = _gateway(key, name)
             INTEGRATIONS.append(it)
             BY_KEY[key] = it
-        it.name = name
+    for r in gateways(cfg):  # tên theo Base URL cần cổng đã đăng ký
+        BY_KEY[r["key"]].name = r["name"]
     AI_PROVIDERS[:] = [x.key for x in INTEGRATIONS if x.group == "ai"]
 
 
-def add_gateway(cfg, name: str) -> str:
+def add_gateway(cfg, name: str = "") -> str:
+    """Thêm một cổng; không đặt tên thì tên tự lấy theo Base URL khi lưu."""
     rows = gateways(cfg)
     if len(rows) >= MAX_GATEWAYS:
         raise ValueError(f"Tối đa {MAX_GATEWAYS} cổng API")
     name = " ".join((name or "").split())[:40]
-    if not name:
-        raise ValueError("Đặt tên cho cổng (ví dụ: 9router, ckey.vn)")
-    if any(r["name"].lower() == name.lower() for r in rows):
+    if name and any(r["custom"] and r["name"].lower() == name.lower() for r in rows):
         raise ValueError("Đã có cổng trùng tên")
     n = 2
     while any(r["key"] == f"gw{n}" for r in rows):
         n += 1
-    rows.append({"key": f"gw{n}", "name": name})
+    rows.append({"key": f"gw{n}", "name": name, "custom": bool(name)})
     _save_gateways(cfg, rows)
     return f"gw{n}"
 
 
 def rename_gateway(cfg, key: str, name: str) -> None:
+    """Đặt tên riêng cho cổng; để trống = tên theo Base URL."""
     rows = gateways(cfg)
     name = " ".join((name or "").split())[:40]
-    if not name:
-        raise ValueError("Tên cổng không được để trống")
-    if any(r["name"].lower() == name.lower() and r["key"] != key for r in rows):
+    if name and any(r["custom"] and r["name"].lower() == name.lower() and r["key"] != key for r in rows):
         raise ValueError("Đã có cổng trùng tên")
     for r in rows:
         if r["key"] == key:
-            r["name"] = name
+            r["name"], r["custom"] = name, bool(name)
     _save_gateways(cfg, rows)
 
 
@@ -453,29 +472,65 @@ _MODELS_CACHE: dict = {}
 
 
 def gateway_models(cfg, key: str, opener=None) -> list[str]:
-    """Tên các model cổng liệt kê (gọi trang danh sách model, miễn phí); nhớ 10 phút."""
+    """Tên các model nhà cung cấp / cổng liệt kê (gọi trang danh sách model, miễn phí); nhớ 10 phút."""
+    return [m["id"] for m in model_catalog(cfg, key, opener)]
+
+
+def _price(m: dict) -> str:
+    """Giá cổng ghi kèm model (nếu có): "455 / 260 VND" (vào / ra)."""
+    p = m.get("pricing")
+    if not isinstance(p, dict):
+        return ""
+
+    def num(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f"{v:,.0f}".replace(",", ".") if v >= 10 or v == int(v) else f"{v:g}".replace(".", ",")
+    a = num(p.get("input", p.get("prompt")))
+    b = num(p.get("output", p.get("completion")))
+    if a is None and b is None:
+        return ""
+    return f"{a or '–'} / {b or '–'} {p.get('unit') or ''}".strip()
+
+
+def model_catalog(cfg, key: str, opener=None) -> list[dict]:
+    """[{id, price}] các model nhà cung cấp / cổng liệt kê, xếp theo tên; nhớ 10 phút."""
     import time
     from urllib.request import Request, urlopen
-    v = load(cfg, key)
-    base = (v.get("base_url") or "").strip().rstrip("/")
-    if not base or not v.get("api_key"):
+
+    from . import ai_http as AH
+    s = AH.settings_for(cfg, key)
+    if not s or not s.get("base"):
         return []
+    base, style, k = s["base"].strip().rstrip("/"), s["style"], s["key"]
     hit = _MODELS_CACHE.get((key, base))
     if hit and time.time() - hit[0] < 600:
         return hit[1]
-    style = v.get("api_style") or "chat"
     root = base[:-3] if base.endswith("/v1") else base
     url = f"{root}/api/tags" if style in ("ollama", "generate") else f"{base}/models"
-    head = {"Authorization": f"Bearer {v['api_key']}", "x-api-key": v["api_key"], "User-Agent": "seo-report"}
+    head = {"Authorization": f"Bearer {k}", "x-api-key": k, "User-Agent": "seo-report"}
+    if style == "gemini":
+        head = {"x-goog-api-key": k, "User-Agent": "seo-report"}
+    elif style == "messages":
+        head = {"x-api-key": k, "anthropic-version": "2023-06-01", "User-Agent": "seo-report"}
     try:
         with (opener or urlopen)(Request(url, headers=head), timeout=20) as r:
             data = json.loads(r.read() or b"{}")
     except Exception:  # noqa: BLE001
         return []
-    ids = sorted({m.get("id") or m.get("name", "").removeprefix("models/")
-                  for m in (data.get("data") or data.get("models") or []) if isinstance(m, dict)} - {""})
-    _MODELS_CACHE[(key, base)] = (time.time(), ids)
-    return ids
+    seen, out = set(), []
+    for m in data.get("data") or data.get("models") or []:
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id") or (m.get("name") or "").removeprefix("models/")
+        if mid and mid not in seen:
+            seen.add(mid)
+            out.append({"id": mid, "price": _price(m)})
+    out.sort(key=lambda x: x["id"].lower())
+    _MODELS_CACHE[(key, base)] = (time.time(), out)
+    return out
 
 
 # ---- Thư mục Google Drive (config.toml [drive] parent_folder) ----

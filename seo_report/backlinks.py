@@ -78,7 +78,14 @@ CREATE TABLE IF NOT EXISTS backlink_runs (
 
 
 def ensure_tables(con: sqlite3.Connection) -> None:
+    from .spend import add_by_column
     con.executescript(SCHEMA)
+    add_by_column(con, "backlink_runs")
+
+
+def _by() -> str:
+    from .spend import current
+    return current()
 
 
 def spent_this_month(con: sqlite3.Connection, today: date) -> float:
@@ -196,7 +203,8 @@ def save_list(con: sqlite3.Connection, site: str, kind: str, res: dict, cost: fl
     with con:
         con.execute("INSERT OR REPLACE INTO backlink_lists VALUES (?, ?, ?, ?, ?)",
                     (site, kind, _now(), res.get("total_count"), json.dumps(items, ensure_ascii=False)))
-        con.execute("INSERT INTO backlink_runs VALUES (?, ?, ?, ?)", (_now(), site, kind, cost))
+        con.execute("INSERT INTO backlink_runs (run_at, site, kind, cost, by_user) VALUES (?, ?, ?, ?, ?)",
+                    (_now(), site, kind, cost, _by()))
     return len(items)
 
 
@@ -275,7 +283,8 @@ def save_summary(con: sqlite3.Connection, site: str, res: dict, day: date, cost:
                     (site, day.isoformat(), res.get("backlinks"), res.get("referring_domains"),
                      res.get("referring_main_domains"), res.get("referring_domains_nofollow"), res.get("rank"),
                      res.get("backlinks_spam_score"), res.get("broken_backlinks"), _now()))
-        con.execute("INSERT INTO backlink_runs VALUES (?, ?, 'summary', ?)", (_now(), site, cost))
+        con.execute("INSERT INTO backlink_runs (run_at, site, kind, cost, by_user) VALUES (?, ?, 'summary', ?, ?)",
+                    (_now(), site, cost, _by()))
 
 
 def save_history(con: sqlite3.Connection, site: str, items: list[dict], cost: float) -> int:
@@ -288,7 +297,8 @@ def save_history(con: sqlite3.Connection, site: str, items: list[dict], cost: fl
                         (site, month, it.get("backlinks"), it.get("referring_domains"), it.get("new_backlinks"),
                          it.get("lost_backlinks"), it.get("new_referring_domains"), it.get("lost_referring_domains"),
                          it.get("rank")))
-        con.execute("INSERT INTO backlink_runs VALUES (?, ?, 'history', ?)", (_now(), site, cost))
+        con.execute("INSERT INTO backlink_runs (run_at, site, kind, cost, by_user) VALUES (?, ?, 'history', ?, ?)",
+                    (_now(), site, cost, _by()))
     return len(items)
 
 

@@ -383,7 +383,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
     def render():
         panels.clear()
         with panels:
-            with ui.tab_panel(t_over):
+            with ui.tab_panel(t_over).classes("sr-panel-card"):
                 if state["loading"] and not state["data"]:
                     for _ in range(3):
                         T.skeleton(ui).classes("w-full").style("height: 90px")
@@ -391,7 +391,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                     error_state()
                 elif state["data"]:
                     safe(overview, state["data"])
-            with ui.tab_panel(t_src):
+            with ui.tab_panel(t_src).classes("sr-panel-card"):
                 if state["loading"] and not state["data"]:
                     T.skeleton(ui).classes("w-full").style("height: 300px")
                 elif state["error"]:
@@ -406,11 +406,11 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                         ui.label(f"Không tải được: {state['geo']['error']}").classes("text-negative")
                     else:
                         safe(geo_tab, state["geo"])
-            with ui.tab_panel(t_gai):
+            with ui.tab_panel(t_gai).classes("sr-panel-card"):
                 safe(lambda _: gai_tab(), None)  # chỉ đọc SQLite, không cần GA4
             for tab, kind, fn in [(t_land, "land", land_tab), (t_opp, "opp", opp_tab),
                                   (t_dq, "dq", dq_tab)]:
-                with ui.tab_panel(tab):
+                with ui.tab_panel(tab).classes("sr-panel-card"):
                     if state["error"]:
                         error_state()
                     elif state[kind] is None or kind in state["lazy_loading"]:

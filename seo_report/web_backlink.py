@@ -7,6 +7,8 @@ import re
 from datetime import date
 from urllib.parse import quote, urlparse
 
+from . import table_kit as TK
+from . import spend as SP
 from . import points as PT
 from . import access as A
 from . import ai_format as F
@@ -37,15 +39,22 @@ def _vn(d: str) -> str:
         return "–"
 
 
-PAGE_TABS = (("overview", "Tổng quan"), ("needs", "Trang cần link"), ("built", "Link đã xây"),
-             ("gap", "Backlink GAP"),
-             ("domains", "Website trỏ về"), ("changes", "Link mới / mất"), ("anchors", "Anchor text"),
-             ("pages", "Trang được link"))
-TEAM_TABS = ("needs", "built", "gap")  # việc của team: khách hàng không thấy
+# "Trang đích" gộp Trang được link + Trang cần link (bộ lọc); "Website trỏ về" gộp Link mới / mất (bộ lọc)
+PAGE_TABS = (("overview", "Tổng quan"), ("pages", "Trang đích"), ("built", "Link đã xây"), ("gap", "Backlink GAP"),
+             ("domains", "Website trỏ về"), ("anchors", "Anchor text"))
+TEAM_TABS = ("built", "gap")  # việc của team: khách hàng không thấy
+# link cũ ?tab=… → (tab, bộ lọc của tab)
+OLD_TABS = {"needs": ("pages", "need"), "changes": ("domains", "moi"), "audit": ("domains", "moi")}
+VIEWS = {"pages": ("all", "need"), "domains": ("all", "moi", "mat")}
 CHECK_TAB = AU.CHECK_TAB  # mục kiểm tra nào nằm ở tab nào
 
 
-def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
+COL_W = {"rank": 90, "backlinks": 100, "dofollow": 130, "first_seen": 120, "spam": 80, "status": 70,
+         "anchor": 180, "target": 200, "follow": 130, "when": 100, "type": 120, "domains": 130, "share": 80}
+KIT_NOUN = {"domains": "website", "changes": "link", "anchors": "anchor", "pages": "trang"}
+
+
+def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "") -> None:
     from nicegui import run
 
     site = cfg.site_url
@@ -88,7 +97,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
         def work():
             with closing(db.connect(cfg.db_path)) as c:
                 logs: list[str] = []
-                BL.refresh(c, site, cfg, force=True, log=logs.append)
+                with SP.runner(str(user)):
+                    BL.refresh(c, site, cfg, force=True, log=logs.append)
                 return logs
         try:
             logs = await run.io_bound(work)
@@ -184,9 +194,20 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
 
     page_tabs = [t for t in PAGE_TABS if not (cl and t[0] in TEAM_TABS)]  # khách hàng: không thấy tab việc của team
     keys = [k for k, _ in page_tabs]
-    start = "changes" if start == "audit" else start  # link cũ ?tab=audit
+    start, view = OLD_TABS.get(start, (start, view))
     state = {"tab": start if start in keys else "overview", "q": {k: "" for k in BL.LIST_KINDS},
-             "f": {k: None for k in BL.LIST_KINDS}}  # f: mục kiểm tra đang dùng làm bộ lọc của từng tab
+             "f": {k: None for k in BL.LIST_KINDS},  # f: mục kiểm tra đang dùng làm bộ lọc của từng tab
+             "view": {t: (view if start == t and view in vs else "all") for t, vs in VIEWS.items()},
+             "redraw": {}}
+    if cl:
+        state["view"]["pages"] = "all"  # Trang cần link: việc của team
+
+    from . import web_backlink_build as WBB
+
+    def set_url(tab: str) -> None:
+        v = state["view"].get(tab, "all")
+        q = "" if tab == "overview" else f"?tab={tab}" + ("" if v == "all" else f"&xem={v}")
+        ui.run_javascript(f"history.replaceState(null, '', '/backlink{q}')")
 
     @ui.refreshable
     def body():
@@ -201,22 +222,55 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                            "credit)." if PT.member(user) else
                            "Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách (khoảng 0,15 USD lần "
                            "đầu).") if ed else "Số backlink sẽ có sau lần lấy đầu tiên.")
-            if not cl:
-                from . import web_backlink_build as WBB  # ghi link đã xây không cần số DataForSEO
+            if not cl:  # ghi link đã xây không cần số DataForSEO
                 WBB.built_panel(ui, cfg, connect, user)
             return
         status_line(bl, st, due)
         checks = AU.audit(ls, brand_terms_of(own)) if ls and not cl else []
         by_tab = {k: [c_ for c_ in checks if CHECK_TAB.get(c_["key"]) == k] for k in BL.LIST_KINDS}
+        badge_of = {"domains": by_tab["domains"] + by_tab["changes"]}
 
         def label(k: str, name: str) -> str:
             d_ = ls.get(k)
             return name + (f" · {F.n(d_['total'] or len(d_['items']))}" if d_ else "")
+
+        def view_toggle(tab: str, options: dict) -> None:
+            def change(e):
+                state["view"][tab] = e.value
+                set_url(tab)
+                state["redraw"][tab].refresh()
+            ui.toggle(options, value=state["view"][tab], on_change=change).props(
+                "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                "sr-seg q-mb-sm")
+
+        @ui.refreshable
+        def pages_tab() -> None:
+            if not cl:
+                view_toggle("pages", {"all": label("pages", "Tất cả trang"), "need": "Cần thêm link"})
+            if state["view"]["pages"] == "need" and not cl:
+                WBB.needs_panel(ui, cfg, connect, ls)
+            else:
+                list_panel("pages", ls, own, by_tab["pages"])
+
+        @ui.refreshable
+        def domains_tab() -> None:
+            ch = (ls.get("changes") or {}).get("items") or []
+            n_new = sum(1 for x in ch if not x["lost"])
+            view_toggle("domains", {"all": label("domains", "Tất cả website"),
+                                    "moi": f"Mới {BL.CHANGE_DAYS} ngày · {F.n(n_new)}",
+                                    "mat": f"Mất {BL.CHANGE_DAYS} ngày · {F.n(len(ch) - n_new)}"})
+            v = state["view"]["domains"]
+            if v == "all":
+                list_panel("domains", ls, own, by_tab["domains"])
+            else:
+                keep = [c_ for c_ in by_tab["changes"] if (c_["key"] == "lost") == (v == "mat")]
+                list_panel("changes", ls, own, keep, only_lost=v == "mat")
+        state["redraw"] = {"pages": pages_tab, "domains": domains_tab}
         with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
             for k, name in page_tabs:
                 with ui.tab(k, label(k, name)):
-                    high = sum(1 for c_ in by_tab.get(k, []) if c_["level"] == "high")
+                    high = sum(1 for c_ in badge_of.get(k, by_tab.get(k, [])) if c_["level"] == "high")
                     if high:  # chấm đỏ: tab có việc cần xử lý
                         T.count_badge(ui, high, f"{high} việc cần xử lý trong tab này").classes("sr-tab-badge")
         state["tabs"] = tabs
@@ -225,21 +279,21 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 kpis(bl, ls)
                 todo(checks)
                 trend(bl)
-            from . import web_backlink_build as WBB
+            with ui.tab_panel("pages").classes("q-px-none"):
+                pages_tab()
             if not cl:
-                with ui.tab_panel("needs").classes("q-px-none"):
-                    WBB.needs_panel(ui, cfg, connect, ls)
                 with ui.tab_panel("built").classes("q-px-none"):
                     WBB.built_panel(ui, cfg, connect, user)
                 with ui.tab_panel("gap").classes("q-px-none"):
                     WBB.gap_panel(ui, cfg, connect, user)
-            for k in BL.LIST_KINDS:
-                with ui.tab_panel(k).classes("q-px-none"):
-                    list_panel(k, ls, own, by_tab[k])
+            with ui.tab_panel("domains").classes("q-px-none"):
+                domains_tab()
+            with ui.tab_panel("anchors").classes("q-px-none"):
+                list_panel("anchors", ls, own, by_tab["anchors"])
 
     def pick(v: str) -> None:
         state["tab"] = v
-        ui.run_javascript(f"history.replaceState(null, '', '/backlink' + ('{v}' === 'overview' ? '' : '?tab={v}'))")
+        set_url(v)
 
     def status_line(bl, st, due) -> None:
         now, prev = (bl or {}).get("now"), (bl or {}).get("prev")
@@ -309,12 +363,23 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
 
     def open_check(tab: str, key: str) -> None:
         """Sang tab chứa mục kiểm tra và bật bộ lọc của mục đó."""
-        go(tab)
+        go(tab, key)
         f = state.get("setf", {}).get(tab)
         if f:
             f(key, toggle=False)
 
-    def go(tab: str) -> None:
+    def go(tab: str, key: str = "") -> None:
+        """Mở tab; danh sách đã gộp vào tab khác (Link mới / mất) thì mở tab đó với bộ lọc tương ứng."""
+        if tab == "changes":
+            tab, v = "domains", ("mat" if key == "lost" else "moi")
+        else:
+            v = "all" if tab in VIEWS else None
+        if v and state["view"].get(tab) != v:
+            state["view"][tab] = v
+            if tab in state["redraw"]:
+                state["redraw"][tab].refresh()
+        state["tab"] = tab
+        set_url(tab)
         tabs_ = state.get("tabs")  # thanh tab của lần vẽ trang gần nhất
         if tabs_ is not None:
             tabs_.set_value(tab)
@@ -382,7 +447,38 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
     LEVELS = {"high": ("Cần xử lý", "red", "error"), "medium": ("Nên xem", "amber", "warning"),
               "info": ("Tham khảo", "blue", "info"), "ok": ("Ổn", "green", "check_circle")}
 
-    def list_panel(kind: str, ls: dict, own: dict | None, checks: list[dict]) -> None:
+    def kit_filters(kind: str) -> list[tuple]:
+        """Bộ lọc của từng bảng (điểm spam: chỉ team thấy)."""
+        spam = [] if cl else [("num", "Điểm spam", "spam")]
+        return {
+            "domains": [("text", "Website", ["domain"]), ("num", "Uy tín", "rank"), ("num", "Backlink", "backlinks"),
+                        ("num", "Trang dofollow", "dofollow_n"), *spam, ("enum", "Loại link", "df"),
+                        ("date", "Thấy lần đầu", "first_iso")],
+            "changes": [("text", "Trang link về / anchor / trang đích", ["source", "title", "anchor", "target"]),
+                        *spam, ("enum", "Loại link", "follow"), ("date", "Ngày", "first_iso")],
+            "anchors": [("text", "Anchor", ["anchor"]), ("num", "Website dùng", "domains"),
+                        ("num", "Backlink", "backlinks"), ("enum", "Loại anchor", "type"),
+                        ("date", "Thấy lần đầu", "first_iso")],
+            "pages": [("text", "Trang / tiêu đề", ["page", "title"]), ("num", "Website trỏ về", "domains"),
+                      ("num", "Backlink", "backlinks"), ("num", "Uy tín", "rank"), ("enum", "Tình trạng trang", "state")],
+        }[kind]
+
+    def kit_copy(kind: str) -> list[tuple[str, str]]:
+        spam = [] if cl else [("Điểm spam", "spam")]
+        return {
+            "domains": [("Website", "domain"), ("Uy tín", "rank"), ("Backlink", "backlinks"),
+                        ("Trang dofollow", "dofollow_n"), ("Số trang", "pages_n"), ("Thấy lần đầu", "first_iso"),
+                        *spam],
+            "changes": [("Trạng thái", "status"), ("Trang link về", "href"), ("Tiêu đề trang link về", "title"),
+                        ("Anchor", "anchor"), ("Trang đích", "to_url"), ("Loại", "follow"), ("Ngày", "first_iso"),
+                        *spam],
+            "anchors": [("Anchor", "anchor"), ("Loại", "type"), ("Website dùng", "domains"), ("Tỷ lệ", "share"),
+                        ("Backlink", "backlinks"), ("Thấy lần đầu", "first_iso")],
+            "pages": [("Trang", "href"), ("Tiêu đề", "title"), ("Website trỏ về", "domains"), ("Backlink", "backlinks"),
+                      ("Uy tín", "rank"), ("Tình trạng", "state")],
+        }[kind]
+
+    def list_panel(kind: str, ls: dict, own: dict | None, checks: list[dict], only_lost: bool | None = None) -> None:
         """Một tab danh sách: khối Kiểm tra (mỗi mục là một bộ lọc, bấm thì bảng bên dưới chỉ còn các dòng của mục
         đó và trang cuộn xuống bảng; bấm lại để bỏ lọc), rồi bảng."""
         brand_terms = brand_terms_of(own)
@@ -465,32 +561,38 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                         "text-sm muted q-py-md")
                     return
                 items = data["items"]
+                if kind == "changes" and only_lost is not None:  # bộ lọc Mới / Mất của tab Website trỏ về
+                    items = [x for x in items if bool(x["lost"]) == only_lost]
                 fkey = state["f"][kind]
                 if fkey:  # lọc theo mục kiểm tra đang chọn
                     items = [x for x in items if AU.matches(fkey, x, brand_terms)]
                 q = _fold(state["q"][kind])
                 shown_n = len(items)
+                cut = kind == "changes" and only_lost is not None  # đang lọc Mới / Mất: không so với tổng
                 note = (f"Lấy lúc {_vn(data['fetched_at'][:10])} · hiện {shown_n}"
-                        + (f" / {F.n(data['total'])}" if data.get("total") and data["total"] > shown_n else "")
-                        + " dòng")
+                        + (f" / {F.n(data['total'])}" if not cut and data.get("total") and data["total"] > shown_n
+                           else "") + " dòng")
                 if kind == "domains":
                     cols = [("domain", "Website", "left"), ("rank", "Uy tín", "right"),
                             ("backlinks", "Backlink", "right"), ("dofollow", "Trang dofollow", "right"),
                             ("first_seen", "Thấy lần đầu", "left")] + ([] if cl else [("spam", "Spam", "right")])
-                    rows = [{"domain": x["domain"], "rank": x["rank"], "backlinks": x["backlinks"],
+                    rows = [{"k": x["domain"], "domain": x["domain"], "rank": x["rank"], "backlinks": x["backlinks"],
                              "dofollow": f"{x['dofollow_pages']}/{x['pages']}", "first_seen": _vn(x["first_seen"]),
-                             "first_iso": x["first_seen"], "spam": x["spam"], "href": f"https://{x['domain']}"}
-                            for x in items]
+                             "first_iso": x["first_seen"], "spam": x["spam"], "href": f"https://{x['domain']}",
+                             "dofollow_n": x["dofollow_pages"], "pages_n": x["pages"],
+                             "df": "Có trang dofollow" if x["dofollow_pages"] else "Chỉ nofollow"} for x in items]
                     note += " · xếp theo uy tín"
                 elif kind == "changes":
                     new_n = sum(1 for x in items if not x["lost"])
                     spam_n = sum(1 for x in items if (x.get("spam") or 0) >= SPAM_FLAG)
-                    note += f" · {new_n} link mới, {len(items) - new_n} link mất trong {BL.CHANGE_DAYS} ngày" + (
+                    note += (f" · link {'mất' if only_lost else 'mới'} trong {BL.CHANGE_DAYS} ngày" if cut else
+                             f" · {new_n} link mới, {len(items) - new_n} link mất trong {BL.CHANGE_DAYS} ngày") + (
                         f" · {spam_n} link có điểm spam ≥ {SPAM_FLAG}" if spam_n and not cl else "")
                     cols = [("status", "", "left"), ("source", "Trang link về", "left"), ("anchor", "Anchor", "left"),
                             ("target", "Trang đích", "left"), ("follow", "Loại", "left"),
                             ("when", "Ngày", "left")]
-                    rows = [{"status": "Mất" if x["lost"] else "Mới", "lost": x["lost"],
+                    rows = [{"k": f"{x['url_from']}|{x['url_to']}|{x['lost']}", "to_url": x["url_to"],
+                             "status": "Mất" if x["lost"] else "Mới", "lost": x["lost"],
                              "source": x["domain_from"], "title": x.get("title") or "", "href": x["url_from"],
                              "anchor": x["anchor"] or ("(ảnh)" if x.get("type") == "image" else "(trống)"),
                              "target": _path(x["url_to"]), "follow": "dofollow" if x["dofollow"] else "nofollow",
@@ -504,7 +606,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                     for x in items:
                         t = anchor_type(x["anchor"], brand_terms)
                         counts[t] = counts.get(t, 0) + (x["domains"] or 0)
-                        rows.append({"anchor": x["anchor"] or "(trống / ảnh)", "type": ANCHOR_TYPES[t][0],
+                        rows.append({"k": x["anchor"] or "", "anchor": x["anchor"] or "(trống / ảnh)",
+                                     "type": ANCHOR_TYPES[t][0],
                                      "tcls": ANCHOR_TYPES[t][1], "domains": x["domains"], "backlinks": x["backlinks"],
                                      "share": f"{(x['domains'] or 0) / tot * 100:.0f}%".replace(".", ","),
                                      "first_seen": _vn(x["first_seen"]), "first_iso": x["first_seen"]})
@@ -520,16 +623,18 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                 else:
                     cols = [("page", "Trang", "left"), ("domains", "Website trỏ về", "right"),
                             ("backlinks", "Backlink", "right"), ("rank", "Uy tín", "right")]
-                    rows = [{"page": _path(x["page"]), "title": x.get("title") or "", "href": x["page"],
-                             "domains": x["domains"], "backlinks": x["backlinks"], "rank": x["rank"],
-                             "gone": (x.get("status") or 200) >= 400} for x in items]
+                    rows = [{"k": x["page"], "page": _path(x["page"]), "title": x.get("title") or "",
+                             "href": x["page"], "domains": x["domains"], "backlinks": x["backlinks"], "rank": x["rank"],
+                             "gone": (x.get("status") or 200) >= 400,
+                             "state": "Trang lỗi" if (x.get("status") or 200) >= 400 else (
+                                 "Chuyển hướng" if 300 <= (x.get("status") or 200) < 400 else "Bình thường")}
+                            for x in items]
                     note += " · xếp theo số website trỏ về"
                 if q:
                     rows = [r for r in rows if q in _fold(" ".join(str(v) for v in r.values()))]
-                for i, r in enumerate(rows):
-                    r["id"] = i
-                columns = [{"name": n, "label": lab, "field": n, "align": al, "sortable": bool(lab)}
-                           for n, lab, al in cols]
+                flex = {"domains": "domain", "changes": "source", "anchors": "anchor", "pages": "page"}[kind]
+                columns = [{"name": n, "label": lab, "field": n, "align": al, "sortable": bool(lab),
+                            "width": None if n == flex else COL_W.get(n, 120)} for n, lab, al in cols]
                 for c_ in columns:
                     if c_["name"] in ("first_seen", "when"):
                         c_[":sort"] = "(a, b, rowA, rowB) => (rowA.first_iso || '').localeCompare(rowB.first_iso || '')"
@@ -539,38 +644,40 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "") -> None:
                         T.filter_chip(ui, f"Đang lọc: {by_key[fkey]['title']} · {len(items)} dòng",
                                       lambda: set_filter(fkey))
                     ui.label(note).classes("text-xs muted")
-                tb = ui.table(columns=columns, rows=rows, row_key="id", pagination=20).props(
-                    "flat dense binary-state-sort").classes("w-full sr-bl-table")
-                tb.add_slot("body-cell-domain", """
+                kit = state.setdefault("kit", {}).setdefault(kind, TK.new_state())
+                TK.table(ui, columns=columns, rows=rows, row_key="k", filters=kit_filters(kind), st=kit,
+                         copy=kit_copy(kind), noun=KIT_NOUN[kind], classes="sr-bl-table", slots={
+                    "body-cell-domain": """
                     <q-td :props="props"><a :href="props.row.href" target="_blank" rel="noopener"
-                       class="sr-bl-link">{{ props.value }}</a></q-td>""")
-                tb.add_slot("body-cell-source", """
+                       class="sr-bl-link">{{ props.value }}</a></q-td>""",
+                    "body-cell-source": """
                     <q-td :props="props"><div class="sr-bl-src">
                       <a :href="props.row.href" target="_blank" rel="noopener" class="sr-bl-link" :title="props.row.href">{{ props.value }}</a>
                       <div v-if="props.row.title" class="sr-bl-sub ellipsis">{{ props.row.title }}</div></div>
-                    </q-td>""")
-                tb.add_slot("body-cell-anchor", """
+                    </q-td>""",
+                    "body-cell-anchor": """
                     <q-td :props="props"><div class="sr-bl-anchor" :title="props.value">{{ props.value }}</div>
-                    </q-td>""")
-                tb.add_slot("body-cell-target", """
+                    </q-td>""",
+                    "body-cell-target": """
                     <q-td :props="props"><div class="sr-bl-anchor" :title="props.value">{{ props.value }}</div>
-                    </q-td>""")
-                tb.add_slot("body-cell-follow", """
+                    </q-td>""",
+                    "body-cell-follow": """
                     <q-td :props="props"><span class="text-xs">{{ props.value }}</span>
                       <span v-if="props.row.spammy" class="sr-bl-type k-lost q-ml-xs">spam {{ props.row.spam }}
-                        <q-tooltip>Điểm spam (0–100): trang nguồn có dấu hiệu bán / spam link</q-tooltip></span></q-td>""")
-                tb.add_slot("body-cell-status", """
+                        <q-tooltip>Điểm spam (0–100): trang nguồn có dấu hiệu bán / spam link</q-tooltip></span></q-td>""",
+                    "body-cell-status": """
                     <q-td :props="props"><span class="sr-bl-type" :class="props.row.lost ? 'k-lost' : 'k-new'">
-                      {{ props.value }}</span></q-td>""")
-                tb.add_slot("body-cell-type", """
+                      {{ props.value }}</span></q-td>""",
+                    "body-cell-type": """
                     <q-td :props="props"><span class="sr-bl-type" :class="props.row.tcls">{{ props.value }}</span>
-                    </q-td>""")
-                tb.add_slot("body-cell-page", """
+                    </q-td>""",
+                    "body-cell-page": """
                     <q-td :props="props"><div class="sr-bl-src">
                       <a :href="props.row.href" target="_blank" rel="noopener" class="sr-bl-link" :title="props.row.href">{{ props.value }}</a>
                       <span v-if="props.row.gone" class="sr-bl-type k-lost q-ml-xs">trang lỗi</span>
                       <div v-if="props.row.title" class="sr-bl-sub ellipsis">{{ props.row.title }}</div></div>
-                    </q-td>""")
+                    </q-td>""",
+                })
             table()
 
     body()

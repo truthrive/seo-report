@@ -281,11 +281,6 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                        "</span>"), split=(rank["up"], rank["down"]),
                            info=("Số từ khóa lên hạng và rớt hạng so với lần check liền trước của chính từ khóa "
                                  "đó.",))
-                if not cl:
-                  W.mini_row(ui, "fact_check", "grey", "Đã check", f"{rank['checked']}/{n}",
-                           sub=(f"{n - rank['checked']} chưa check" if rank["checked"] < n else "đủ cả bộ"),
-                           ratio=rank["checked"] / n,
-                           info=("Từ khóa đã có ít nhất một lần check. Top N tính trên tổng số từ khóa theo dõi.",))
             with W.card(ui, "", extra="sr-db-chartcard"):
                 with ui.row().classes("items-center gap-1 no-wrap"):
                     ui.icon("bar_chart", size="15px").classes("sr-db-card-ico")
@@ -297,8 +292,24 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     W.rank_segment_bar(ui, rank_hist[-1])
                 if thin and len(rank_hist) >= 2 and not cl:
                     ui.label(f"Ẩn {len(thin)} {rank_by} có quá ít từ khóa đã check").classes("sr-db-note")
-                # AI Overview ở lần check mới nhất của từng từ khóa: được trích / có nhưng chưa / không có
-                known = [r for r in aio_rows if r["aio"] is not None]
+                if cfg.rank.paused and not cl:
+                    T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
+            rows_c = comp.get("rows") or []
+            vis_sum = sum(r["vis"] for r in rows_c)
+            with W.card(ui, "Thị phần hiển thị", "pie_chart", extra="sr-db-sharecard"):
+                if not vis_sum or not any(not r["brand"]["own"] for r in rows_c):
+                    ui.label("Thêm đối thủ ở màn Đối thủ để so thị phần hiển thị.").classes("sr-db-note")
+                else:
+                    from .web_rank import share_donut
+                    with (ui.link(target="/doi-thu") if T.link_allowed("/doi-thu") else ui.element("div")).classes(
+                            "sr-db-donutlink no-underline"):
+                        share_donut(ui, rows_c, vis_sum, next((r["brand"]["name"] for r in rows_c
+                                                               if r["brand"]["own"]), "dự án"), size=220)
+                    ui.label(f"Trên {comp['keywords']}/{comp['total']} từ khóa").classes("sr-db-note text-center")
+        # AI Overview (lần check mới nhất của từng từ khóa): dải ngang đủ rộng dưới 3 cột, các số xếp thành cột
+        known = [r for r in aio_rows if r["aio"] is not None]
+        if known:
+            with W.card(ui, "", extra="sr-db-aiostrip"):
                 if known:
                     has = [r for r in known if r["aio"]]
                     cited = sum(1 for r in has if r["cited"])
@@ -326,20 +337,6 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                         if kv_:
                             W.fact(ui, "flag", "green", kv_[0], kv_[1], "/kpi",
                                    re.sub("<[^>]+>", "", kpi_rank_line(kstate["p"])))
-                if cfg.rank.paused and not cl:
-                    T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
-            rows_c = comp.get("rows") or []
-            vis_sum = sum(r["vis"] for r in rows_c)
-            with W.card(ui, "Thị phần hiển thị", "pie_chart", extra="sr-db-sharecard"):
-                if not vis_sum or not any(not r["brand"]["own"] for r in rows_c):
-                    ui.label("Thêm đối thủ ở màn Đối thủ để so thị phần hiển thị.").classes("sr-db-note")
-                else:
-                    from .web_rank import share_donut
-                    with (ui.link(target="/doi-thu") if T.link_allowed("/doi-thu") else ui.element("div")).classes(
-                            "sr-db-donutlink no-underline"):
-                        share_donut(ui, rows_c, vis_sum, next((r["brand"]["name"] for r in rows_c
-                                                               if r["brand"]["own"]), "dự án"), size=220)
-                    ui.label(f"Trên {comp['keywords']}/{comp['total']} từ khóa").classes("sr-db-note text-center")
 
     from . import web_events as EV
     events = {"list": []}

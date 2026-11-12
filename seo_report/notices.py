@@ -131,8 +131,8 @@ def _ai_block(user) -> list[dict]:
         return []
     if not b:
         return []
-    title = (f"Model AI chính bị chặn, đang dùng dự phòng ({b['fallback']})" if b.get("fallback") else
-             "Các tính năng AI đang dừng: model chính bị chặn")
+    title = ("Model AI chính bị chặn, đang chạy bằng model kế tiếp trong combo" if b.get("fallback") else
+             "Các tính năng AI đang dừng: model chính bị chặn")  # tên model: xem ở Quản trị › AI
     return [_n("system", "medium" if b.get("fallback") else "high", f"ai_block:{b['model']}:{b['at'][:10]}", title,
                b.get("error", ""), "/quan-tri-ai", b["at"])]
 

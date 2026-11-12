@@ -8,9 +8,9 @@ from nicegui import ui
 class FloatGroup(ui.element, component="fab.js"):
     def __init__(self, actions: list[dict], *, fab_label: str = "Thao tác nhanh", chat: dict | None = None,
                  on_action: Callable[[str], None] | None = None, on_chat: Callable[[], None] | None = None) -> None:
-        """actions: [{key, icon, label, badge?}] (tối đa 5; rỗng = không có nút +). chat: {label, icon}."""
+        """actions: [{key, icon, label, badge?}] (tối đa 8; rỗng = không có nút +). chat: {label, icon}."""
         super().__init__()
-        self._props["actions"] = actions[:5]
+        self._props["actions"] = actions[:8]
         self._props["fabLabel"] = fab_label
         if chat:
             self._props["chat"] = chat

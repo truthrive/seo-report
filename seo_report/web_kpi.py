@@ -388,7 +388,7 @@ def _goal_card(ui, p: dict, line: dict, cur: dict, has_ga4: bool, any_commit: bo
                 ring = (now / goal, "của mục tiêu")
             elif rank and ch.get("total"):
                 ring = (ch["count"] / ch["total"], "của bộ")
-            with ui.row().classes("w-full items-center no-wrap gap-3 q-mt-sm"):
+            with ui.row().classes("w-full items-center no-wrap gap-3 q-mt-xs sr-kg-vrow"):
                 with ui.row().classes("col items-baseline gap-2").style("min-width:0"):
                     ui.label(value).classes("sr-kg-value num")
                     ui.label(sub).classes("sr-kg-sub")
@@ -750,10 +750,22 @@ def _page_view(ui, p: dict, ed: bool, sel, pick, ai: dict | None = None) -> None
     if cur["rank"]["checked"] < cur["rank"]["total"]:
         sub = (f"{cur['rank']['total'] - cur['rank']['checked']} từ khóa chưa check trong tháng"
                + ("" if running else ": tính là chưa đạt"))
-    with T.section(ui, "Các KPI", "flag", sub):
+    # đầu khối tự vẽ (thay T.section): nút chọn KPI nằm cùng hàng tiêu đề, không chiếm một hàng riêng
+    with ui.element("div").classes("sr-card q-pa-md w-full"):
+        with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-sm sr-sec-head"):
+            with ui.element("div").classes("sr-icon-bubble").style(f"background:{T.TONES['green'][0]}"):
+                ui.icon("flag", size="18px").style(f"color:{T.GREEN}")
+            with ui.column().classes("gap-0"):
+                ui.label("Các KPI").classes("sr-section-title").props('role=heading aria-level=2')
+                if sub:
+                    ui.label(sub).classes("text-xs muted")
+            ui.space()
+            filter_slot = ui.element("div")
+
         @ui.refreshable
         def body() -> None:
-            with ui.row().classes("w-full justify-end q-mb-sm sr-kf"):
+            filter_slot.clear()
+            with filter_slot:
                 n_on = sum(1 for ln in shown if KP.line_id(ln) not in hidden)
                 with ui.button(f"Hiện {n_on}/{len(shown)} KPI", icon="tune").props(
                         "flat no-caps dense size=sm color=grey-8"):

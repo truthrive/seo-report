@@ -2,6 +2,7 @@
 Mỗi popup làm xong tại chỗ, không phải rời trang đang xem."""
 from urllib.parse import quote
 
+from . import spend as SP
 from . import access as A
 from . import aio as AO
 from . import keywords as K
@@ -78,7 +79,8 @@ def add_keywords(ui, P, user) -> None:
                 if r["added"]:
                     def fetch():
                         with P.connect() as c:
-                            return V.refresh(c, P.site, P.cfg, end, log=lambda m: None)
+                            with SP.runner(str(user)):
+                                return V.refresh(c, P.site, P.cfg, end, log=lambda m: None)
                     try:
                         await run.io_bound(fetch)
                     except Exception:  # noqa: BLE001 (từ khóa vẫn được thêm; lượt chạy hằng ngày lấy bù volume)
@@ -150,4 +152,53 @@ def lookup_keyword(ui, P, user) -> None:
             ui.label(f"Từ khóa mới: {PT.cost('overview')} credit. Từ khóa đã tra trong 7 ngày không trừ.").classes(
                 "text-xs muted")
     _actions(ui, dlg, "Tra", ok)
+    dlg.open()
+
+
+PRIO = {"high": ("Cần làm ngay", "risk"), "medium": ("Nên làm", "watch"), "low": ("Có thể làm", "good")}
+
+
+def brief_todo(ui, P, user) -> None:
+    """Xem nhanh việc cần làm từ Bản tin AI ở trang Tổng quan (bản đã lưu, không gọi AI). Bấm một việc để mở trang
+    liên quan."""
+    from datetime import datetime
+
+    from . import ai_brief as B
+    from . import ai_writer as AW
+    with P.connect() as c:
+        d = AW.latest(c, P.cfg.site_url, B.KIND, "overview")
+    at = ""
+    if d and d.get("at"):
+        try:
+            at = f"{datetime.fromisoformat(d['at']).astimezone():%d/%m %H:%M}"
+        except ValueError:
+            pass
+    dlg, body = _frame(ui, "Việc cần làm", "checklist",
+                       ("Từ Bản tin AI ở trang Tổng quan" + (f" · cập nhật {at}" if at else "")) if d else
+                       "Bản tin AI ở trang Tổng quan")
+    with body:
+        items = (d or {}).get("items") or []
+        if not items:
+            ui.label("Chưa có bản tin AI. Mở trang Tổng quan và bấm AI phân tích để có danh sách việc.").classes(
+                "text-sm muted")
+        if d and d.get("headline"):
+            ui.label(d["headline"]).classes("text-sm")
+        with ui.element("div").classes("sr-qk-todo"):
+            for it in items:
+                lab, tone = PRIO.get(it.get("priority"), PRIO["medium"])
+                row = ui.element("div").classes("sr-qk-todo-row" + (" clickable" if it.get("href") else ""))
+                if it.get("href"):
+                    row.on("click", lambda _, h=it["href"]: (dlg.close(), ui.navigate.to(h)))
+                with row:
+                    ui.label(lab).classes(f"sr-rai-lv {tone}")
+                    with ui.column().classes("gap-0 col").style("min-width:0"):
+                        ui.label(it.get("title") or "").classes("text-sm font-medium")
+                        if it.get("action"):
+                            ui.label(it["action"]).classes("text-xs muted")
+                    if it.get("href"):
+                        ui.icon("chevron_right", size="18px").classes("muted")
+    with dlg.foot:
+        ui.button("Mở Tổng quan", icon="space_dashboard", on_click=lambda: (dlg.close(), ui.navigate.to("/"))).props(
+            "flat no-caps color=primary")
+        ui.button("Đóng", on_click=dlg.close).props("unelevated no-caps")
     dlg.open()

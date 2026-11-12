@@ -5,6 +5,7 @@ from urllib.parse import quote, urlparse
 from . import access as A
 from . import ai_format as F
 from . import backlink_build as BB
+from . import table_kit as TK
 from . import ui_theme as T
 
 
@@ -84,7 +85,7 @@ def needs_panel(ui, cfg, connect, lists: dict) -> None:
     with connect() as c:
         groups = dict(U.list_groups(c, cfg.site_url))
         seo = BB.seo_urls(c, cfg.site_url)
-    state = {"g": 0}
+    state = {"g": 0, "kit": TK.new_state()}
 
     @ui.refreshable
     def panel() -> None:
@@ -129,37 +130,44 @@ def _needs(ui, cfg, connect, lists: dict, state: dict, groups: dict, seo: list, 
             b = r["best"]
             dom = r["domains"]
             rows.append({"url": r["url"], "path": _path(r["url"]), "best": b["q"], "pos": b["pos"],
+                         "dom_f": dom if dom is not None else 0,
                          "seo": ", ".join(seo_keys.get(BB.norm(r["url"]), [])),
                          "src": "check rank" if "impr" not in b else "",
                          "n": r["n"] + r["tracked"], "impr": r["impr"], "impr_t": F.n(r["impr"]) if r["impr"] else "–",
                          "dom": dom if dom is not None else 9999,
                          "dom_t": str(dom) if dom is not None else "ít"})
         cols = [{"name": "path", "label": "Trang", "field": "path", "align": "left"},
-                {"name": "best", "label": "Từ khóa sắp lên Top", "field": "best", "align": "left"},
-                {"name": "n", "label": "Số từ khóa 4–20", "field": "n", "align": "right", "sortable": True},
-                {"name": "impr", "label": "Lượt hiển thị", "field": "impr", "align": "right", "sortable": True},
-                {"name": "dom", "label": "Website trỏ về", "field": "dom", "align": "right", "sortable": True},
-                {"name": "act", "label": "", "field": "url", "align": "right"}]
-        tbl = ui.table(columns=cols, rows=rows, row_key="url", pagination=15).classes("w-full sr-kw-tbl").props(
-            "flat dense")
-        tbl.add_slot("body-cell-act", """
+                {"name": "best", "label": "Từ khóa sắp lên Top", "field": "best", "align": "left", "width": 260},
+                {"name": "n", "label": "Số từ khóa 4–20", "field": "n", "align": "right", "width": 120},
+                {"name": "impr", "label": "Lượt hiển thị", "field": "impr", "align": "right", "width": 120},
+                {"name": "dom", "label": "Website trỏ về", "field": "dom", "align": "right", "width": 120},
+                {"name": "act", "label": "", "field": "url", "align": "right", "width": 130}]
+        TK.table(ui, columns=cols, rows=rows, row_key="url", st=state["kit"], noun="trang", classes="sr-kw-tbl",
+                 filters=[("text", "Trang / từ khóa / nhóm URL SEO", ["path", "best", "seo"]),
+                          ("num", "Vị trí từ khóa", "pos"), ("num", "Số từ khóa 4–20", "n"),
+                          ("num", "Lượt hiển thị", "impr"), ("num", "Website trỏ về (“ít” tính là 0)", "dom_f")],
+                 copy=[("Trang", "url"), ("Từ khóa sắp lên Top", "best"), ("Vị trí", "pos"),
+                       ("Số từ khóa 4–20", "n"), ("Lượt hiển thị", "impr"), ("Website trỏ về", "dom_t"),
+                       ("Nhóm URL SEO", "seo")],
+                 events={"internal": lambda e: internal_dialog(ui, cfg, connect, e.args)},
+                 slots={
+                     "body-cell-act": """
             <q-td :props="props"><q-btn flat dense no-caps size="sm" icon="alt_route" label="Link nội bộ"
-              color="grey-8" @click="$parent.$emit('internal', props.row.url)">
-              <q-tooltip>Gợi ý trang của website nên đặt link sang trang này</q-tooltip></q-btn></q-td>""")
-        tbl.on("internal", lambda e: internal_dialog(ui, cfg, connect, e.args))
-        tbl.add_slot("body-cell-path", """
+              color="grey-8" @click.stop="$parent.$emit('internal', props.row.url)">
+              <q-tooltip>Gợi ý trang của website nên đặt link sang trang này</q-tooltip></q-btn></q-td>""",
+                     "body-cell-path": """
             <q-td :props="props"><a :href=" """ + _url_href() + """ " class="sr-bb-link ellipsis"
               :title="'Mở chi tiết URL: ' + props.row.url">{{ props.row.path }}</a>
               <a :href="props.row.url" target="_blank" rel="noopener" class="sr-bb-ext" aria-label="Mở trang trên site">
                 <q-icon name="open_in_new" size="13px" /></a>
-              <div v-if="props.row.seo" class="sr-bb-sub">URL SEO · {{ props.row.seo }}</div></q-td>""")
-        tbl.add_slot("body-cell-best", """
-            <q-td :props="props"><span class="sr-bb-q">{{ props.row.best }}</span>
-              <span class="sr-bb-pos">vị trí {{ props.row.pos }}</span></q-td>""")
-        tbl.add_slot("body-cell-impr", """<q-td :props="props">{{ props.row.impr_t }}</q-td>""")
-        tbl.add_slot("body-cell-dom", """
+              <div v-if="props.row.seo" class="sr-bb-sub ellipsis">URL SEO · {{ props.row.seo }}</div></q-td>""",
+                     "body-cell-best": """
+            <q-td :props="props"><div class="ellipsis" :title="props.row.best"><span class="sr-bb-q">{{
+              props.row.best }}</span> <span class="sr-bb-pos">vị trí {{ props.row.pos }}</span></div></q-td>""",
+                     "body-cell-impr": """<q-td :props="props">{{ props.row.impr_t }}</q-td>""",
+                     "body-cell-dom": """
             <q-td :props="props"><span :class="props.row.dom_t === 'ít' || props.row.dom < 3 ? 'sr-bb-low' : ''">
-              {{ props.row.dom_t }}</span></q-td>""")
+              {{ props.row.dom_t }}</span></q-td>"""})
         if res["total"] > len(rows):
             ui.label(f"Hiện {len(rows)} / {res['total']} trang có cơ hội cao nhất.").classes("text-xs muted q-mt-xs")
 
@@ -216,7 +224,7 @@ def gap_panel(ui, cfg, connect, user) -> None:
     site = cfg.site_url
     ed = A.can_edit(user)
     cl = A.is_client(user)
-    state = {"multi": False, "spam": True, "q": "", "pick": None}
+    state = {"view": "clean", "pick": None, "kit": TK.new_state()}  # view: clean | multi | all
 
     @ui.refreshable
     def body() -> None:
@@ -232,67 +240,111 @@ def gap_panel(ui, cfg, connect, user) -> None:
                 ui.label("Chưa có đối thủ nào có tên miền.").classes("text-sm muted")
                 ui.link("Thêm đối thủ ở trang Đối thủ", "/doi-thu").classes("text-sm")
                 return
-            if ed and not cl:
-                with ui.row().classes("w-full items-center gap-2 q-mb-sm sr-bg-pick"):
-                    ui.label("Đối thủ:").classes("text-xs muted")
-                    for r in rv:
-                        ui.checkbox(r["name"], value=r["id"] in state["pick"],
-                                    on_change=lambda e, i=r["id"]: toggle(i, e.value)).props("dense").tooltip(
-                            r["domain"])
-                    ui.space()
-                    n = len(state["pick"])
-                    price = (f"{PT.cost('backlink_gap', n)} credit" if PT.member(user) else
-                             f"~{BG.estimate(n):.2f} USD".replace(".", ","))
-                    btn = ui.button(f"{'Tìm lại' if gap else 'Tìm backlink GAP'} · {price}", icon="travel_explore",
-                                    on_click=lambda: confirm(btn)).props("unelevated no-caps")
-                    if not n or cfg.rank.paused:
+            with ui.row().classes("w-full items-center gap-2 q-mb-sm no-wrap sr-bg-head"):
+                if gap:
+                    ui.label(f"Cập nhật {_vn(gap['fetched_at'])} · so với {len(gap['rivals'])} đối thủ").classes(
+                        "text-xs muted col").tooltip(", ".join(r["name"] for r in gap["rivals"]))
+                else:
+                    ui.label("Chưa tìm lần nào" + (": chọn đối thủ rồi bấm Tìm (tốn phí, chỉ chạy khi bấm)."
+                                                    if ed else ".")).classes("text-sm muted col")
+                if ed and not cl:
+                    def price_text() -> str:
+                        n_ = len(state["pick"])
+                        price = (f"{PT.cost('backlink_gap', n_)} credit" if PT.member(user) else
+                                 f"≈{BG.estimate(n_):.2f} USD".replace(".", ","))
+                        return f"{'Tìm lại' if gap else 'Tìm backlink GAP'} · {price}"
+
+                    def pick_text() -> str:
+                        return f"Đối thủ: {len(state['pick'])}/{len(rv)}"
+
+                    def picked(i: int, on: bool) -> None:  # không vẽ lại khối: menu chọn vẫn mở
+                        (state["pick"].add if on else state["pick"].discard)(i)
+                        pick_btn.text = pick_text()
+                        btn.text = price_text()
+                        btn.set_enabled(bool(state["pick"]) and not cfg.rank.paused)
+
+                    def all_(on: bool) -> None:
+                        state["pick"] = {r["id"] for r in rv} if on else set()
+                        for cb in boxes:
+                            cb.value = on
+                    pick_btn = ui.button(pick_text(), icon="groups").props(
+                        "outline no-caps dense icon-right=expand_more color=grey-9").classes("sr-bg-pickbtn")
+                    with pick_btn, ui.menu().classes("sr-kr-fmenu"):
+                        with ui.column().classes("q-pa-sm gap-0").style("min-width: 240px"):
+                            boxes = [ui.checkbox(r["name"], value=r["id"] in state["pick"],
+                                                 on_change=lambda e, i=r["id"]: picked(i, e.value)).props(
+                                "dense").tooltip(r["domain"]) for r in rv]
+                            with ui.row().classes("w-full justify-between q-mt-xs"):
+                                ui.button("Bỏ hết", on_click=lambda: all_(False)).props("flat dense no-caps size=sm")
+                                ui.button("Chọn hết", on_click=lambda: all_(True)).props(
+                                    "flat dense no-caps size=sm color=primary")
+                    btn = ui.button(price_text(), icon="travel_explore", on_click=lambda: confirm(btn)).props(
+                        "unelevated no-caps dense").classes("sr-bg-run")
+                    if not state["pick"] or cfg.rank.paused:
                         btn.disable()
             if not gap:
-                ui.label("Chưa tìm lần nào." + (" Chọn đối thủ rồi bấm Tìm backlink GAP (tốn phí dữ liệu, chỉ chạy khi "
-                                                 "bấm)." if ed else "")).classes("text-sm muted")
                 return
-            ui.label(f"Lấy ngày {_vn(gap['fetched_at'])} · {len(gap['rivals'])} đối thủ: "
-                     + ", ".join(r["name"] for r in gap["rivals"])).classes("text-xs muted q-mb-xs")
             items = gap["items"]
-            with ui.row().classes("w-full items-center gap-3 q-mb-sm"):
-                ui.switch("Chỉ website trỏ về từ 2 đối thủ", value=state["multi"],
-                          on_change=lambda e: (state.update(multi=e.value), body.refresh())).props("dense")
-                if not cl:
-                    ui.switch(f"Ẩn website điểm spam ≥ {BG.SPAM_HIDE}", value=state["spam"],
-                              on_change=lambda e: (state.update(spam=e.value), body.refresh())).props("dense")
-                ui.space()
-                ui.input(placeholder="Tìm website", value=state["q"],
-                         on_change=lambda e: (state.update(q=e.value or ""), body.refresh())).props(
-                    "dense outlined clearable debounce=300").classes("sr-kw-q")
-            q = state["q"].strip().lower()
-            shown = [g for g in items if (not state["multi"] or len(g["rivals"]) >= 2)
-                     and (cl or not state["spam"] or (g["spam"] or 0) < BG.SPAM_HIDE) and (not q or q in g["domain"])]
-            n2 = sum(1 for g in items if len(g["rivals"]) >= 2)
-            ui.label(f"{len(shown)} / {len(items)} website · {n2} website trỏ về từ 2 đối thủ trở lên").classes(
-                "text-xs muted q-mb-xs")
-            rows = [{"domain": g["domain"], "rank": g["rank"], "n": len(g["rivals"]), "rivals": ", ".join(g["rivals"]),
-                     "links": F.n(g["backlinks"]), "spam": g["spam"], "first": _vn(g["first_seen"]) if g["first_seen"]
-                     else "–"} for g in shown]
-            cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True},
-                    {"name": "rank", "label": "Uy tín", "field": "rank", "align": "right", "sortable": True},
-                    {"name": "n", "label": "Trỏ về đối thủ", "field": "n", "align": "left", "sortable": True},
-                    {"name": "links", "label": "Link về đối thủ", "field": "links", "align": "right"}]
+            clean = [g for g in items if cl or (g["spam"] or 0) < BG.SPAM_HIDE]
+            multi = [g for g in clean if len(g["rivals"]) >= 2]
+            views = {"clean": (f"Không spam · {len(clean)}" if not cl else f"Tất cả · {len(clean)}"),
+                     "multi": f"Trỏ về từ 2 đối thủ · {len(multi)}"}
             if not cl:
-                cols.append({"name": "spam", "label": "Spam", "field": "spam", "align": "right", "sortable": True})
-            tbl = ui.table(columns=cols, rows=rows, row_key="domain", pagination=25).classes(
-                "w-full sr-kw-tbl").props("flat dense" + (" hide-bottom" if len(rows) <= 25 else ""))
-            tbl.add_slot("body-cell-domain", """
+                views["all"] = f"Cả website spam · {len(items)}"
+            with ui.row().classes("w-full items-center gap-2 q-mb-xs"):
+                ui.toggle(views, value=state["view"] if state["view"] in views else "clean",
+                          on_change=lambda e: (state.update(view=e.value), body.refresh())).props(
+                    "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                    "sr-seg")
+                if not cl:
+                    ui.label(f"Spam = điểm spam từ {BG.SPAM_HIDE}/100: nên bỏ qua khi xin link").classes(
+                        "text-xs muted gt-xs")
+            shown = {"clean": clean, "multi": multi}.get(state["view"], items)
+            rows = [{"domain": g["domain"], "rank": g["rank"], "n": len(g["rivals"]), "rivals": ", ".join(g["rivals"]),
+                     "rivals_l": list(g["rivals"]), "links_n": g["backlinks"], "links": F.n(g["backlinks"]),
+                     "spam": g["spam"], "first_iso": g["first_seen"] or "",
+                     "first": _vn(g["first_seen"]) if g["first_seen"] else "–"} for g in shown]
+            cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True},
+                    {"name": "rank", "label": "Uy tín", "field": "rank", "align": "right", "sortable": True,
+                     "width": 100},
+                    {"name": "n", "label": "Trỏ về đối thủ", "field": "n", "align": "left", "sortable": True,
+                     "width": 340},
+                    {"name": "links", "label": "Link về đối thủ", "field": "links_n", "align": "right",
+                     "sortable": True, "width": 130},
+                    {"name": "first", "label": "Thấy lần đầu", "field": "first_iso", "align": "left",
+                     "sortable": True, "width": 120}]
+            if not cl:
+                cols.append({"name": "spam", "label": "Spam", "field": "spam", "align": "right", "sortable": True,
+                             "width": 80})
+            TK.table(ui, columns=cols, rows=rows, row_key="domain", st=state["kit"], noun="website",
+                     classes="sr-kw-tbl", page_size=25,
+                     filters=[("text", "Website", ["domain"]), ("num", "Uy tín", "rank"),
+                              ("num", "Số đối thủ", "n"), ("num", "Link về đối thủ", "links_n"),
+                              *([] if cl else [("num", "Điểm spam", "spam")]),
+                              ("enum", "Trỏ về đối thủ", "rivals_l"), ("date", "Thấy lần đầu", "first_iso")],
+                     copy=[("Website", "domain"), ("Uy tín", "rank"), ("Số đối thủ", "n"),
+                           ("Trỏ về đối thủ", "rivals"), ("Link về đối thủ", "links_n"),
+                           ("Thấy lần đầu", "first_iso"), *([] if cl else [("Điểm spam", "spam")])],
+                     slots={
+                         "header-cell-rank": """
+                <q-th :props="props">{{ props.col.label }}
+                  <q-icon name="info" size="14px" color="grey-6" class="q-ml-xs"/>
+                  <q-tooltip max-width="300px">Domain Rank của DataForSEO, thang 0–1000: điểm của chính website trỏ
+                    về, tính theo kiểu PageRank trên kho link của DataForSEO (website được nhiều website mạnh link tới
+                    thì điểm cao). Không so trực tiếp với DA của Moz hay DR của Ahrefs.</q-tooltip>
+                </q-th>""",
+                         "body-cell-domain": """
                 <q-td :props="props"><a :href="'https://' + props.row.domain" target="_blank" rel="noopener"
-                  class="sr-bb-link">{{ props.row.domain }}</a></q-td>""")
-            tbl.add_slot("body-cell-n", """
-                <q-td :props="props"><b class="num">{{ props.row.n }}</b>
-                  <span class="sr-bb-sub" style="margin-left:6px">{{ props.row.rivals }}</span></q-td>""")
-            ui.label("Uy tín: 0–1000 theo DataForSEO. Chỉ tính link dofollow; mỗi đối thủ lấy tối đa "
+                  class="sr-bb-link">{{ props.row.domain }}</a></q-td>""",
+                         "body-cell-links": """<q-td :props="props">{{ props.row.links }}</q-td>""",
+                         "body-cell-first": """<q-td :props="props">{{ props.row.first }}</q-td>""",
+                         "body-cell-n": """
+                <q-td :props="props"><div class="ellipsis" :title="props.row.rivals"><span class="num">{{
+                  props.row.n }}</span><span class="sr-bb-sub" style="margin-left:6px">{{ props.row.rivals }}</span>
+                  </div></q-td>"""})
+            ui.label("Uy tín: Domain Rank 0–1000 của DataForSEO (rê chuột vào tiêu đề cột để xem cách tính). Chỉ tính "
+                     "link dofollow; mỗi đối thủ lấy tối đa "
                      f"{BG.LIMIT} website uy tín nhất.").classes("text-xs muted q-mt-xs")
-
-    def toggle(i: int, on: bool) -> None:
-        (state["pick"].add if on else state["pick"].discard)(i)
-        body.refresh()
 
     def confirm(btn) -> None:
         with connect() as c:
@@ -367,6 +419,7 @@ def built_panel(ui, cfg, connect, user) -> None:
     site = cfg.site_url
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: không xem chi phí
+    kit = TK.new_state()
 
     @ui.refreshable
     def body() -> None:
@@ -407,48 +460,64 @@ def built_panel(ui, cfg, connect, user) -> None:
                              "from_path": _path(r["url_from"]), "to": r["url_to"], "to_path": _path(r["url_to"]),
                              "anchor": r["anchor"] or "", "placed": _vn(r["placed_on"]) if r["placed_on"] else "–",
                              "cost": F.n(r["cost"]) if r["cost"] else "–", "state": lab, "tone": tone,
+                             "cost_n": r["cost"], "placed_iso": r["placed_on"] or "",
+                             "checked_iso": (r["checked_at"] or "")[:10],
                              "detail": r["detail"] or "", "checked": _vn(r["checked_at"]) if r["checked_at"] else "chưa",
                              "rank": {"lost": 0, "error": 1, "nofollow": 2, "anchor": 3, "pending": 4, "ok": 5}.get(
                                  r["state"], 9), **_effect_cells(effects.get(r["id"]))})
             data.sort(key=lambda x: x["rank"])
             cols = [{"name": "from", "label": "Trang đặt link", "field": "from_host", "align": "left",
                      "sortable": True},
-                    {"name": "to", "label": "Trang đích · anchor", "field": "to_path", "align": "left"},
-                    {"name": "placed", "label": "Ngày đặt", "field": "placed", "align": "left"}]
+                    {"name": "to", "label": "Trang đích · anchor", "field": "to_path", "align": "left", "width": 260},
+                    {"name": "placed", "label": "Ngày đặt", "field": "placed_iso", "align": "left", "sortable": True,
+                     "width": 110}]
             if not cl:
-                cols.append({"name": "cost", "label": "Chi phí", "field": "cost", "align": "right"})
-            cols += [{"name": "state", "label": "Tình trạng", "field": "rank", "align": "left", "sortable": True},
+                cols.append({"name": "cost", "label": "Chi phí", "field": "cost_n", "align": "right",
+                             "sortable": True, "width": 110})
+            cols += [{"name": "state", "label": "Tình trạng", "field": "rank", "align": "left", "sortable": True,
+                      "width": 150},
                      {"name": "eff", "label": "Trang đích trước → sau", "field": "eff_sort", "align": "left",
-                      "sortable": True}]
+                      "sortable": True, "width": 190}]
             if ed:
-                cols.append({"name": "act", "label": "", "field": "id", "align": "right"})
-            tbl = ui.table(columns=cols, rows=data, row_key="id", pagination=20).classes("w-full sr-kw-tbl").props(
-                "flat dense" + (" hide-bottom" if len(data) <= 20 else ""))
-            tbl.add_slot("body-cell-from", """
+                cols.append({"name": "act", "label": "", "field": "id", "align": "right", "width": 90})
+            slots = {
+                "body-cell-from": """
                 <q-td :props="props"><a :href="props.row.from" target="_blank" rel="noopener" class="sr-bb-link">
                   {{ props.row.from_host }}</a><div class="sr-bb-sub ellipsis" :title="props.row.from">
-                  {{ props.row.from_path }}</div></q-td>""")
-            tbl.add_slot("body-cell-to", """
+                  {{ props.row.from_path }}</div></q-td>""",
+                "body-cell-to": """
                 <q-td :props="props"><a :href="'/url?u=' + encodeURIComponent(props.row.to)" class="sr-bb-link ellipsis"
                   :title="'Mở chi tiết URL: ' + props.row.to">{{ props.row.to_path }}</a>
-                  <div v-if="props.row.anchor" class="sr-bb-sub">“{{ props.row.anchor }}”</div></q-td>""")
-            tbl.add_slot("body-cell-state", """
+                  <div v-if="props.row.anchor" class="sr-bb-sub ellipsis">“{{ props.row.anchor }}”</div></q-td>""",
+                "body-cell-placed": """<q-td :props="props">{{ props.row.placed }}</q-td>""",
+                "body-cell-cost": """<q-td :props="props">{{ props.row.cost }}</q-td>""",
+                "body-cell-state": """
                 <q-td :props="props"><span class="sr-bb-st" :class="props.row.tone">{{ props.row.state }}</span>
                   <div class="sr-bb-sub" :title="props.row.detail">kiểm tra {{ props.row.checked }}</div>
-                  <q-tooltip v-if="props.row.detail">{{ props.row.detail }}</q-tooltip></q-td>""")
-            tbl.add_slot("body-cell-eff", """
+                  <q-tooltip v-if="props.row.detail">{{ props.row.detail }}</q-tooltip></q-td>""",
+                "body-cell-eff": """
                 <q-td :props="props"><span :class="'sr-bb-eff ' + props.row.eff_tone">{{ props.row.eff }}</span>
-                  <div v-if="props.row.eff_sub" class="sr-bb-sub">{{ props.row.eff_sub }}</div></q-td>""")
+                  <div v-if="props.row.eff_sub" class="sr-bb-sub ellipsis">{{ props.row.eff_sub }}</div></q-td>"""}
+            events = {}
             if ed:
-                tbl.add_slot("body-cell-act", """
+                slots["body-cell-act"] = """
                     <q-td :props="props">
                       <q-btn flat round dense size="sm" icon="radar" color="grey-7" aria-label="Kiểm tra lại"
-                        @click="$parent.$emit('check', props.row.id)"><q-tooltip>Kiểm tra lại</q-tooltip></q-btn>
+                        @click.stop="$parent.$emit('check', props.row.id)"><q-tooltip>Kiểm tra lại</q-tooltip></q-btn>
                       <q-btn flat round dense size="sm" icon="delete_outline" color="grey-7" aria-label="Xóa"
-                        @click="$parent.$emit('drop', props.row.id)"><q-tooltip>Xóa</q-tooltip></q-btn>
-                    </q-td>""")
-                tbl.on("check", lambda e: check_one(int(e.args)))
-                tbl.on("drop", lambda e: ask_drop(int(e.args)))
+                        @click.stop="$parent.$emit('drop', props.row.id)"><q-tooltip>Xóa</q-tooltip></q-btn>
+                    </q-td>"""
+                events = {"check": lambda e: check_one(int(e.args)), "drop": lambda e: ask_drop(int(e.args))}
+            TK.table(ui, columns=cols, rows=data, row_key="id", st=kit, noun="link", classes="sr-kw-tbl",
+                     filters=[("text", "Trang đặt link / trang đích / anchor", ["from", "to", "anchor"]),
+                              *([] if cl else [("num", "Chi phí (đ)", "cost_n")]),
+                              ("enum", "Tình trạng", "state"), ("date", "Ngày đặt", "placed_iso"),
+                              ("date", "Lần kiểm tra", "checked_iso")],
+                     copy=[("Trang đặt link", "from"), ("Trang đích", "to"), ("Anchor", "anchor"),
+                           ("Ngày đặt", "placed_iso"), *([] if cl else [("Chi phí (đ)", "cost_n")]),
+                           ("Tình trạng", "state"), ("Chi tiết", "detail"), ("Kiểm tra lúc", "checked_iso"),
+                           ("Trang đích trước → sau", "eff")],
+                     slots=slots, events=events)
             ui.label(f"Trước → sau: vị trí trung bình và click mỗi ngày của trang đích trong {BB.EFFECT_DAYS} ngày "
                      "trước và sau ngày đặt link (Search Console). Là số của cả trang, có thể do nhiều nguyên nhân chứ "
                      "không riêng link này.").classes("text-xs muted q-mt-xs")

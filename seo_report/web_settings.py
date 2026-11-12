@@ -96,15 +96,14 @@ def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
             return (f"key {v['api_key']} · PageSpeed Insights, Chrome UX Report" if v.get("api_key")
                     else "Chưa có: trang Tốc độ & Core Web Vitals chưa lấy được số")
         if I.is_gateway(it.key):
-            from urllib.parse import urlparse
-            return (f"{urlparse(v.get('base_url', '')).hostname or v.get('base_url')} · {v.get('model') or '–'} · "
-                    f"khóa {v['api_key']}" if v.get("api_key") else "Chưa có: dùng khi có cổng AI riêng")
+            return (f"{v.get('base_url') or '–'} · khóa {v['api_key']}" if v.get("api_key")
+                    else "Chưa cấu hình: nhập Base URL và khóa")
         if it.group == "ai":
             model = I.AI_MODELS.get(v.get("model") or "", v.get("model") or "") or "model tool tự chọn"
             return f"{model} · khóa {v['api_key']}" if v.get("api_key") else "Chưa có khóa"
         return ""
 
-    def integration_card(it):
+    def integration_card(it, open_: bool = False):
         ai = it.group == "ai"
         summary, status, actions, editor = setting_row(it.icon, "purple" if ai else "green", it.name)
 
@@ -142,9 +141,8 @@ def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
 
                 def show_curl(_=None):
                     code.content = AH.curl_example(inputs["api_style"].value or "chat",
-                                                   (inputs["base_url"].value or "").strip(),
-                                                   (inputs["model"].value or "").strip())
-                for k_ in ("base_url", "api_style", "model"):
+                                                   (inputs["base_url"].value or "").strip(), "")
+                for k_ in ("base_url", "api_style"):
                     inputs[k_].on_value_change(show_curl)
                 show_curl()
             result = ui.label().classes("text-sm")
@@ -195,80 +193,94 @@ def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
                 ui.button("Hủy", on_click=lambda: toggle(editor, edit_btn)).props("flat no-caps")
                 save_btn = ui.button("Lưu", icon="check", on_click=lambda: check(True)).props(
                     "unelevated no-caps").tooltip("Tool thử kết nối trước; không chạy thì không lưu")
+        if open_:
+            toggle(editor, edit_btn)
 
     return SimpleNamespace(confirm_identity=confirm_identity, log=log, setting_row=setting_row, chip=chip,
                            toggle=toggle, summary_of=summary_of, integration_card=integration_card)
 
 
-def ai_provider_cards(ui, base, app_connect, user, local: bool, on_saved=None) -> None:
-    """Thẻ nhập khóa các nhà cung cấp AI (đặt ở Quản trị › AI), rồi các cổng API (thêm / đổi tên / xóa được)."""
+def ai_provider_cards(ui, base, app_connect, user, local: bool, on_saved=None, open_key: str | None = None) -> None:
+    """Thẻ nhập khóa AI (đặt ở Quản trị › AI): cổng API trước (thêm / xóa được, tên tự theo Base URL), nhà cung cấp
+    đã có khóa, rồi các nhà cung cấp chưa dùng gom trong một dòng mở ra."""
     I.sync_gateways(base)
     k = _kit(ui, base, app_connect, user, local, on_saved)
 
-    def reload_soon(msg: str):
+    def reload_soon(msg: str, url: str = "/quan-tri-ai"):
         ui.notify(msg, type="positive")
-        ui.timer(0.8, ui.navigate.reload, once=True)
+        ui.timer(0.8, lambda: ui.navigate.to(url), once=True)
 
-    def name_dialog(title: str, value: str, done):
+    def rename(it):
+        cur = next((g for g in I.gateways(base) if g["key"] == it.key), {})
         with ui.dialog() as d, ui.card().style("min-width: 360px; border-radius: 14px"):
-            ui.label(title).classes("text-lg font-semibold")
-            inp = ui.input("Tên cổng", value=value, placeholder="ví dụ: 9router, ckey.vn").props(
-                "outlined dense autofocus").classes("w-full")
+            ui.label("Đặt tên cổng").classes("text-lg font-semibold")
+            inp = ui.input("Tên cổng", value=cur.get("name") if cur.get("custom") else "",
+                           placeholder="để trống: theo Base URL").props("outlined dense autofocus").classes("w-full")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
             def ok():
                 try:
-                    done(inp.value)
+                    I.rename_gateway(base, it.key, inp.value or "")
                 except ValueError as e:
                     err.text = str(e)
                     return
                 d.close()
+                reload_soon("Đã đổi tên cổng")
             inp.on("keydown.enter", ok)
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Hủy", on_click=d.close).props("flat no-caps")
                 ui.button("Lưu", on_click=ok).props("unelevated no-caps")
         d.open()
 
-    def ask_remove(key: str, name: str):
+    def ask_remove(it):
         with ui.dialog() as d, ui.card().style("max-width: 420px; border-radius: 14px"):
-            ui.label(f"Xóa cổng {name}?").classes("text-lg font-semibold")
-            ui.label("Xóa luôn khóa đã lưu của cổng này. Tác vụ hoặc model dự phòng đang dùng cổng này sẽ không gọi "
-                     "được nữa.").classes("text-sm")
+            ui.label(f"Xóa cổng {it.name}?").classes("text-lg font-semibold")
+            ui.label("Xóa luôn khóa đã lưu của cổng này. Model của cổng này trong các combo sẽ bị bỏ qua.").classes(
+                "text-sm")
 
             def go():
-                I.remove_gateway(base, key)
-                k.log(f"Xóa cổng API {name}")
+                I.remove_gateway(base, it.key)
+                k.log(f"Xóa cổng API {it.name}")
                 d.close()
-                reload_soon(f"Đã xóa cổng {name}")
+                reload_soon(f"Đã xóa cổng {it.name}")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Hủy", on_click=d.close).props("flat no-caps")
                 ui.button("Xóa", icon="delete", on_click=go).props("unelevated no-caps color=negative")
         d.open()
 
-    for it in [x for x in I.INTEGRATIONS if x.group == "ai" and not I.is_gateway(x.key)]:
-        k.integration_card(it)
-    ui.label("Cổng API").classes("sr-nav-group q-mt-md")
-    ui.label("Mỗi cổng (router như 9router, nhà bán lại, Ollama…) có Base URL, model và khóa riêng; dùng được làm "
-             "model chính của tác vụ hoặc model dự phòng.").classes("text-xs muted")
+    ui.label("Cổng API").classes("sr-nav-group")
     for it in [x for x in I.INTEGRATIONS if I.is_gateway(x.key)]:
-        k.integration_card(it)
+        k.integration_card(it, open_=it.key == open_key or not I.configured(base, it.key) and it.key != "gateway")
         with ui.row().classes("w-full justify-end gap-1").style("margin-top:-6px"):
-            ui.button("Đổi tên", icon="drive_file_rename_outline", on_click=lambda _, it=it: name_dialog(
-                "Đổi tên cổng", it.name,
-                lambda v, it=it: (I.rename_gateway(base, it.key, v), reload_soon("Đã đổi tên cổng")))).props(
+            ui.button("Đặt tên", icon="drive_file_rename_outline", on_click=lambda _, it=it: rename(it)).props(
                 "flat dense no-caps size=sm color=grey-8")
             if it.key != "gateway":
-                ui.button("Xóa cổng", icon="delete_outline",
-                          on_click=lambda _, it=it: ask_remove(it.key, it.name)).props(
+                ui.button("Xóa cổng", icon="delete_outline", on_click=lambda _, it=it: ask_remove(it)).props(
                     "flat dense no-caps size=sm color=grey-8")
 
-    def add(v):
-        key = I.add_gateway(base, v)
-        k.log(f"Thêm cổng API {v}", key)
-        reload_soon(f"Đã thêm cổng {v}: bấm Sửa ở cổng mới để nhập Base URL, model và khóa")
-    ui.button("Thêm cổng API", icon="add", on_click=lambda: name_dialog("Thêm cổng API", "", add)).props(
-        "outline dense no-caps").classes("q-mt-xs").props(
+    def add():
+        try:
+            key = I.add_gateway(base)
+        except ValueError as e:
+            ui.notify(str(e), type="warning")
+            return
+        k.log("Thêm cổng API", key)
+        reload_soon("Đã thêm cổng: nhập Base URL và khóa", f"/quan-tri-ai?gw={key}")
+    ui.button("Thêm cổng API", icon="add", on_click=add).props("outline dense no-caps").props(
         "disable" if len(I.gateways(base)) >= I.MAX_GATEWAYS else "")
+
+    others = [x for x in I.INTEGRATIONS if x.group == "ai" and not I.is_gateway(x.key)]
+    used = [x for x in others if I.configured(base, x.key)]
+    idle = [x for x in others if not I.configured(base, x.key)]
+    if used:
+        ui.label("Nhà cung cấp chính chủ").classes("sr-nav-group q-mt-md")
+        for it in used:
+            k.integration_card(it, open_=it.key == open_key)
+    if idle:
+        with ui.expansion(f"Nhà cung cấp khác ({len(idle)})", icon="add_circle_outline",
+                          caption=", ".join(x.name for x in idle)).classes("w-full sr-aia-more q-mt-sm"):
+            for it in idle:
+                k.integration_card(it, open_=it.key == open_key)
     ui.label("Mã được lưu an toàn trên máy chạy tool, trang chỉ hiện 4 ký tự cuối.").classes("text-xs muted q-mt-xs")
 
 

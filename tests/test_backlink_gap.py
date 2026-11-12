@@ -67,3 +67,28 @@ class GapTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ByRivalTest(unittest.TestCase):
+    def test_gap_per_rival_from_last_run(self):
+        import json
+        import sqlite3
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from seo_report import backlink_gap as BG
+        con = sqlite3.connect(":memory:")
+        cfg = SimpleNamespace(site_url="https://me.vn/")
+        self.assertIsNone(BG.by_rival(con, cfg))
+        con.execute("INSERT INTO backlink_gap VALUES (?, '2026-11-11T02:00:00+00:00', 'a', ?, ?, 0.2)",
+                    (cfg.site_url, json.dumps([{"name": "A", "domain": "a.vn", "total": 10},
+                                               {"name": "B", "domain": "www.b.vn", "total": 30}]),
+                     json.dumps([{"domain": "x.com", "rivals": ["A", "B"], "spam": 0},
+                                 {"domain": "y.com", "rivals": ["A", "B"], "spam": 80},
+                                 {"domain": "z.com", "rivals": ["A"], "spam": 0}])))
+        rv = [{"id": 1, "name": "A", "domain": "a.vn"}, {"id": 2, "name": "B", "domain": "b.vn"},
+              {"id": 3, "name": "C", "domain": "c.vn"}]
+        with mock.patch.object(BG, "rivals", return_value=rv):
+            g = BG.by_rival(con, cfg)
+        self.assertEqual([(r["name"], r["total"]) for r in g["rows"]], [("B", 30), ("A", 10)])
+        self.assertEqual((g["missing"], g["shared"]), (["C"], 1))  # y.com là spam: không tính

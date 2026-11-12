@@ -325,3 +325,56 @@ class RobustAskTest(FallbackTest):
 
 def reply(text, finish="stop"):
     return io.BytesIO(json.dumps({"choices": [{"message": {"content": text}, "finish_reason": finish}]}).encode())
+
+
+class ComboTest(FallbackTest):
+    def test_migrate_and_task_combo(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from seo_report import ai_writer as AW
+        d = Path(tempfile.mkdtemp())
+        cfg = SimpleNamespace(client_secret=str(d / "client_secret.json"))
+        I.save(cfg, "gateway", {"base_url": "https://gw.example/v1", "api_style": "chat", "model": "main-m",
+                                "api_key": "k"})
+        with self.AIS._connect() as c:
+            self.AIS.set_fallbacks(c, [{"provider": "gateway", "model": "fb-m"}])
+            AW.migrate_combos(c, cfg)
+            cs = self.AIS.combos(c)
+            self.assertEqual([s["model"] for s in cs[0]["steps"]], ["main-m", "fb-m"])
+            AW.migrate_combos(c, cfg)  # chạy lại không đổi gì
+            self.assertEqual(len(self.AIS.combos(c)), 1)
+            cid = self.AIS.new_combo_id(c)
+            self.AIS.save_combos(c, cs + [{"id": cid, "name": " Rẻ ", "steps": [{"provider": "gateway",
+                                                                                "model": "cheap"}]}])
+            self.AIS.save_task(c, "brief", {"combo": cid})
+            self.assertEqual(self.AIS.task_combo(c, "brief")["name"], "Rẻ")
+            self.assertEqual(self.AIS.task_combo(c, "kw_brief")["id"], "default")
+            self.AIS.save_combos(c, cs)  # xóa combo Rẻ: tác vụ về Mặc định
+            self.assertEqual(self.AIS.task_combo(c, "brief")["id"], "default")
+        prov = AW.combo_provider(cfg, cs[0])
+        self.assertEqual((prov["model"], [f["model"] for f in prov["fallbacks"]]), ("main-m", ["fb-m"]))
+        with self.assertRaises(AW.NoProvider):
+            AW.combo_provider(cfg, {"name": "Trống", "steps": []})
+
+    def test_gateway_named_by_base_url(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        d = Path(tempfile.mkdtemp())
+        cfg = SimpleNamespace(client_secret=str(d / "client_secret.json"))
+        try:
+            k = I.add_gateway(cfg)
+            self.assertEqual(I.BY_KEY[k].name, "Cổng API mới")
+            I.save(cfg, k, {"base_url": "http://localhost:20128/v1", "api_style": "chat", "api_key": "x"})
+            I.sync_gateways(cfg)
+            self.assertEqual(I.BY_KEY[k].name, "localhost:20128")
+            self.assertTrue(I.configured(cfg, k))  # cổng không còn bắt buộc model
+            I.rename_gateway(cfg, k, "9router")
+            self.assertEqual(I.BY_KEY[k].name, "9router")
+            I.rename_gateway(cfg, k, "")
+            self.assertEqual(I.BY_KEY[k].name, "localhost:20128")
+        finally:
+            I._save_gateways(cfg, [])
+            I.sync_gateways(SimpleNamespace(client_secret=str(d / "none" / "x.json")))

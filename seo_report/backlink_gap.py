@@ -108,7 +108,9 @@ def fetch(con, cfg, chosen: list[dict], user: str = "", client=None, log=print) 
         done.append({"name": rv["name"], "domain": rv["domain"], "total": res.get("total_count")})
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with con:
-        con.execute("INSERT INTO backlink_runs VALUES (?, ?, 'gap', ?)", (now, cfg.site_url, total_cost))
+        BL.ensure_tables(con)
+        con.execute("INSERT INTO backlink_runs (run_at, site, kind, cost, by_user) VALUES (?, ?, 'gap', ?, ?)",
+                    (now, cfg.site_url, total_cost, user or ""))
         if per:
             con.execute("INSERT OR REPLACE INTO backlink_gap VALUES (?, ?, ?, ?, ?, ?)",
                         (cfg.site_url, now, user, json.dumps(done, ensure_ascii=False),
@@ -116,6 +118,26 @@ def fetch(con, cfg, chosen: list[dict], user: str = "", client=None, log=print) 
     if not per:
         raise RuntimeError("Không lấy được dữ liệu đối thủ nào")
     return {"rivals": len(per), "cost": total_cost}
+
+
+def by_rival(con, cfg) -> dict:
+    """Khoảng trống backlink theo từng đối thủ đang theo dõi (từ lần chạy GAP gần nhất, không gọi API):
+    {"fetched_at", "rows": [{"name", "domain", "total"}] (nhiều trước), "missing": [tên đối thủ chưa có số],
+    "shared": số website uy tín (không spam) trỏ về từ 2 đối thủ trở lên}; chưa chạy lần nào: None."""
+    last = latest(con, cfg.site_url)
+    if not last:
+        return None
+    got = {domain(r.get("domain") or ""): r for r in last["rivals"]}
+    rows, missing = [], []
+    for rv in rivals(con, cfg):
+        r = got.get(rv["domain"])
+        if r is None:
+            missing.append(rv["name"])
+        else:
+            rows.append({"name": rv["name"], "domain": rv["domain"], "total": int(r.get("total") or 0)})
+    rows.sort(key=lambda r: -r["total"])
+    shared = sum(1 for it in last["items"] if len(it.get("rivals") or []) >= 2 and (it.get("spam") or 0) < SPAM_HIDE)
+    return {"fetched_at": last["fetched_at"], "rows": rows, "missing": missing, "shared": shared}
 
 
 def latest(con, site: str) -> dict | None:

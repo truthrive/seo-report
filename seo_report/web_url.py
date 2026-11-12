@@ -1,6 +1,7 @@
 """Màn URL 3 cột: danh sách URL của nhóm ở giữa, chi tiết keyword của URL đang chọn bên phải."""
 from urllib.parse import quote
 
+from . import spend as SP
 from . import indexing as IX
 from . import keywords as K
 from . import rank as R
@@ -476,7 +477,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 try:
                     def work():
                         with connect() as c:
-                            return V.refresh(c, site, cfg, end, log=lambda m: None)
+                            with SP.runner(str(user)):
+                                return V.refresh(c, site, cfg, end, log=lambda m: None)
                     await nrun.io_bound(work)
                 except Exception as e:  # noqa: BLE001  (thêm keyword vẫn thành công; lượt chạy hằng ngày lấy bù)
                     ui.notify(f"Đã thêm keyword nhưng chưa lấy được volume: {e}", type="warning", multi_line=True)
@@ -532,7 +534,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
 
                         def work():
                             with connect() as c:
-                                return V.refresh(c, site, cfg, end, log=lambda m: None)
+                                with SP.runner(str(user)):
+                                    return V.refresh(c, site, cfg, end, log=lambda m: None)
                         try:
                             await nrun.io_bound(work)
                         except Exception:  # noqa: BLE001  (lượt chạy hằng ngày lấy bù)
@@ -546,44 +549,46 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 kw_table.on("star", on_star)
             ui.label("Từ khóa phụ: các truy vấn trang này mạnh nhất (không tính thương hiệu).").classes("text-xs muted")
 
-        if a.cannibal:
-            with ui.expansion(f"Cannibalization: {len(a.cannibal)} query có URL khác cùng nhận",
-                              icon="call_split").classes("w-full").props("dense"):
+        # biểu đồ 12 tuần + từ khóa trùng / bị loại: một card (không nằm trần trên nền trang)
+        with ui.element("div").classes("sr-card q-pa-md w-full column gap-2"):
+            if a.cannibal:
+                with ui.expansion(f"Cannibalization: {len(a.cannibal)} query có URL khác cùng nhận",
+                                  icon="call_split").classes("w-full").props("dense"):
+                    ui.table(columns=[
+                        {"name": "query", "label": "Query", "field": "query", "align": "left"},
+                        {"name": "clicks", "label": "Click 28 ngày (URL này)", "field": "clicks", "align": "right"},
+                        {"name": "other", "label": "URL đang mạnh hơn", "field": "other", "align": "left"},
+                    ], rows=[{"id": k.query_id, "query": k.query, "clicks": _n(k.clicks),
+                              "other": _short(k.stronger_url, site)} for k in sorted(a.cannibal, key=lambda k: -k.impressions)],
+                        row_key="id").classes("w-full").props("flat dense")
+
+            with ui.expansion(f"Keyword bị loại: {len(a.excluded)}", icon="filter_alt").classes("w-full").props("dense"):
                 ui.table(columns=[
-                    {"name": "query", "label": "Query", "field": "query", "align": "left"},
-                    {"name": "clicks", "label": "Click 28 ngày (URL này)", "field": "clicks", "align": "right"},
-                    {"name": "other", "label": "URL đang mạnh hơn", "field": "other", "align": "left"},
-                ], rows=[{"id": k.query_id, "query": k.query, "clicks": _n(k.clicks),
-                          "other": _short(k.stronger_url, site)} for k in sorted(a.cannibal, key=lambda k: -k.impressions)],
-                    row_key="id").classes("w-full").props("flat dense")
+                    {"name": "query", "label": "Query", "field": "query", "align": "left", "sortable": True},
+                    {"name": "reason", "label": "Lý do", "field": "reason", "align": "left", "sortable": True},
+                    {"name": "clicks", "label": "Click 28 ngày", "field": "clicks", "align": "right", "sortable": True},
+                    {"name": "impr", "label": "Impr 28 ngày", "field": "impr", "align": "right", "sortable": True},
+                    {"name": "pos", "label": "Pos", "field": "pos", "align": "right", "sortable": True},
+                ], rows=[{"id": k.query_id, "query": k.query, "reason": k.reason, "clicks": k.clicks,
+                          "impr": k.impressions, "pos": round(k.position, 1)} for k in a.excluded],
+                    row_key="id", pagination=20).classes("w-full").props("flat dense")
 
-        with ui.expansion(f"Keyword bị loại: {len(a.excluded)}", icon="filter_alt").classes("w-full").props("dense"):
-            ui.table(columns=[
-                {"name": "query", "label": "Query", "field": "query", "align": "left", "sortable": True},
-                {"name": "reason", "label": "Lý do", "field": "reason", "align": "left", "sortable": True},
-                {"name": "clicks", "label": "Click 28 ngày", "field": "clicks", "align": "right", "sortable": True},
-                {"name": "impr", "label": "Impr 28 ngày", "field": "impr", "align": "right", "sortable": True},
-                {"name": "pos", "label": "Pos", "field": "pos", "align": "right", "sortable": True},
-            ], rows=[{"id": k.query_id, "query": k.query, "reason": k.reason, "clicks": k.clicks,
-                      "impr": k.impressions, "pos": round(k.position, 1)} for k in a.excluded],
-                row_key="id", pagination=20).classes("w-full").props("flat dense")
-
-        ui.echart({
-            "tooltip": {"trigger": "axis"},
-            "legend": {"data": ["Click", "Impression"], "bottom": 0},
-            "grid": {"left": 48, "right": 48, "top": 24, "bottom": 48},
-            "xAxis": {"type": "category", "data": [p["week"] for p in series]},
-            "yAxis": [{"type": "value", "name": "Click"},
-                      {"type": "value", "name": "Impression", "splitLine": {"show": False}}],
-            "series": [
-                {"name": "Click", "type": "bar", "data": [p["clicks"] for p in series],
-                 "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}, **ev_marks},
-                {"name": "Impression", "type": "line", "yAxisIndex": 1, "data": [p["impressions"] for p in series],
-                 "itemStyle": {"color": "#2563EB"}, "smooth": True, "symbol": "circle", "symbolSize": 5},
-            ],
-        }).classes("w-full").style("height: 260px")
-        ui.label("12 tuần gần nhất (GSC)." + (" Vạch tím: mốc sự kiện của website (thêm ở Tổng quan → Click theo "
-                 "ngày → Mốc sự kiện)." if ev_marks else "")).classes("text-xs muted")
+            ui.echart({
+                "tooltip": {"trigger": "axis"},
+                "legend": {"data": ["Click", "Impression"], "bottom": 0},
+                "grid": {"left": 48, "right": 48, "top": 24, "bottom": 48},
+                "xAxis": {"type": "category", "data": [p["week"] for p in series]},
+                "yAxis": [{"type": "value", "name": "Click"},
+                          {"type": "value", "name": "Impression", "splitLine": {"show": False}}],
+                "series": [
+                    {"name": "Click", "type": "bar", "data": [p["clicks"] for p in series],
+                     "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}, **ev_marks},
+                    {"name": "Impression", "type": "line", "yAxisIndex": 1, "data": [p["impressions"] for p in series],
+                     "itemStyle": {"color": "#2563EB"}, "smooth": True, "symbol": "circle", "symbolSize": 5},
+                ],
+            }).classes("w-full").style("height: 260px")
+            ui.label("12 tuần gần nhất (GSC)." + (" Vạch tím: mốc sự kiện của website (thêm ở Tổng quan → Click theo "
+                     "ngày → Mốc sự kiện)." if ev_marks else "")).classes("text-xs muted")
 
     with detail:
         render_detail()

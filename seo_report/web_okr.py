@@ -369,7 +369,7 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
         sel = view["obj"] if view["obj"] in {o["uid"] for o in ov["objectives"]} else None
         with T.section(ui, "Theo mục tiêu", "flag", "Bấm một mục tiêu để xem lịch riêng của nó"):
             with ui.element("div").classes("w-full").style(
-                    "display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px"):
+                    "display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px"):
                 for o in ov["objectives"]:
                     pct = o["pct"] or 0
 

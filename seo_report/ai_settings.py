@@ -26,23 +26,34 @@ TASKS = {
                    None),
     "kpi_insight": ("Nhận định KPI", "AI nhận định tiến độ từng KPI, dự đoán tháng cam kết kế tiếp và việc nên làm.",
                     None),
+    "rank_insight": ("Nhận định thứ hạng", "AI tóm tắt biến động của một bộ từ khóa và việc nên làm (trang Thứ hạng).",
+                     None),
+    "rank_diag": ("Chẩn đoán từ khóa", "AI đọc trang kết quả Google lần trước / lần này để tìm vì sao từ khóa đổi hạng.",
+                  None),
+    "rank_target": ("Gợi ý URL mục tiêu", "AI chọn trang đích cho từ khóa chưa có URL mục tiêu.", None),
+    "rank_actions": ("Việc cần làm theo từ khóa", "AI lập việc cụ thể để đưa các từ khóa đã chọn lên hạng.", None),
 }
 DAYS = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
 DEFAULTS = {
-    "brief": {"enabled": True, "provider": "auto", "model": "", "auto": True, "days": [0, 1, 2, 3, 4, 5], "time": "07:00"},
-    "report_week": {"enabled": True, "provider": "auto", "model": "", "auto": True, "days": [0], "time": "08:00"},
-    "report_month": {"enabled": True, "provider": "auto", "model": "", "auto": True, "day": 1, "time": "08:00"},
-    "aio_answer": {"enabled": True, "provider": "auto", "model": "", "auto": True, "days": [0, 1, 2, 3, 4, 5],
+    "brief": {"enabled": True, "provider": "auto", "model": "", "combo": "default", "auto": True, "days": [0, 1, 2, 3, 4, 5], "time": "07:00"},
+    "report_week": {"enabled": True, "provider": "auto", "model": "", "combo": "default", "auto": True, "days": [0], "time": "08:00"},
+    "report_month": {"enabled": True, "provider": "auto", "model": "", "combo": "default", "auto": True, "day": 1, "time": "08:00"},
+    "aio_answer": {"enabled": True, "provider": "auto", "model": "", "combo": "default", "auto": True, "days": [0, 1, 2, 3, 4, 5],
                    "time": "09:00", "limit": 5},
-    "kw_strategy": {"enabled": True, "provider": "auto", "model": ""},
-    "kw_brief": {"enabled": True, "provider": "auto", "model": ""},
-    "kpi_import": {"enabled": True, "provider": "auto", "model": ""},
-    "kpi_insight": {"enabled": True, "provider": "auto", "model": ""},
+    "kw_strategy": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "kw_brief": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "kpi_import": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "kpi_insight": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "rank_insight": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "rank_diag": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "rank_target": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "rank_actions": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
 }
 CAP_DEFAULT = 300
 ACTION_TASK = {"ai_aio": "aio_answer", "ai_report": "report_week", "ai_brief": "brief", "ai_plan": "kw_strategy",
                "ai_kwbrief": "kw_brief", "ai_kpi": "kpi_import",
-               "ai_kpi_insight": "kpi_insight"}  # mã credit -> tác vụ
+               "ai_kpi_insight": "kpi_insight", "ai_rank_insight": "rank_insight", "ai_rank_diag": "rank_diag",
+               "ai_rank_target": "rank_target", "ai_rank_actions": "rank_actions"}  # mã credit -> tác vụ
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_settings (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
@@ -208,6 +219,81 @@ def clear_block(prov: dict) -> None:
                 _put(con, "", "ai_block", None)
     except Exception:  # noqa: BLE001
         pass
+
+
+# ---------------------------------------------------------------- combo (router)
+# Một combo = danh sách model (nhà cung cấp / cổng + tên model) thử lần lượt: model 1 lỗi thì sang model 2… Mỗi tác
+# vụ chọn một combo; combo "default" (Mặc định) luôn có và không xóa được.
+DEFAULT_COMBO = "default"
+MAX_STEPS = 8
+
+
+def has_combos(con) -> bool:
+    ensure(con)
+    return _get(con, "", "combos") is not None
+
+
+def combos(con) -> list[dict]:
+    """[{id, name, steps: [{provider, model}]}]; combo Mặc định đứng đầu."""
+    ensure(con)
+    v = _get(con, "", "combos")
+    out = [c for c in v if isinstance(c, dict) and c.get("id")] if isinstance(v, list) else []
+    if not any(c["id"] == DEFAULT_COMBO for c in out):
+        out.insert(0, {"id": DEFAULT_COMBO, "name": "Mặc định", "steps": []})
+    out.sort(key=lambda c: c["id"] != DEFAULT_COMBO)
+    return out
+
+
+def _clean_steps(steps) -> list[dict]:
+    out, seen = [], set()
+    for x in steps or []:
+        if not isinstance(x, dict):
+            continue
+        pv, m = (x.get("provider") or "").strip(), (x.get("model") or "").strip()
+        if not pv or (pv, m) in seen:
+            continue
+        seen.add((pv, m))
+        out.append({"provider": pv, "model": m})
+    return out[:MAX_STEPS]
+
+
+def save_combos(con, items: list[dict]) -> list[dict]:
+    ensure(con)
+    out, ids = [], set()
+    for c in items or []:
+        cid = str(c.get("id") or "").strip()
+        if not cid or cid in ids:
+            continue
+        ids.add(cid)
+        name = " ".join(str(c.get("name") or "").split())[:40] or ("Mặc định" if cid == DEFAULT_COMBO else "Combo")
+        out.append({"id": cid, "name": name, "steps": _clean_steps(c.get("steps"))})
+    _put(con, "", "combos", out)
+    return combos(con)
+
+
+def new_combo_id(con) -> str:
+    have = {c["id"] for c in combos(con)}
+    n = 2
+    while f"c{n}" in have:
+        n += 1
+    return f"c{n}"
+
+
+def task_combo(con, task: str | None) -> dict:
+    """Combo tác vụ đang dùng (combo đã xóa / chưa chọn → Mặc định)."""
+    cs = combos(con)
+    cid = task_settings(con, task).get("combo") if task in DEFAULTS else DEFAULT_COMBO
+    return next((c for c in cs if c["id"] == cid), cs[0])
+
+
+def combo_users(con) -> dict[str, list[str]]:
+    """combo id -> tên các tác vụ đang dùng."""
+    ids = {c["id"] for c in combos(con)}
+    out: dict[str, list[str]] = {}
+    for t in TASKS:
+        cid = task_settings(con, t).get("combo") or DEFAULT_COMBO
+        out.setdefault(cid if cid in ids else DEFAULT_COMBO, []).append(TASKS[t][0])
+    return out
 
 
 def choose_provider(cfg, task: str | None) -> dict | None:

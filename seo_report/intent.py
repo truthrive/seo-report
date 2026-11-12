@@ -140,7 +140,9 @@ CREATE TABLE IF NOT EXISTS intent_runs (
 
 
 def ensure_tables(con) -> None:
+    from .spend import add_by_column
     con.executescript(SCHEMA)
+    add_by_column(con, "intent_runs")
 
 
 def _key(kw: str) -> str:
@@ -197,7 +199,9 @@ def fetch_missing(con, cfg, creds, log=print, post=None) -> int:
             log(f"DataForSEO không trả ý định tìm kiếm: {task.get('status_message')}")
             break
         with con:
-            con.execute("INSERT INTO intent_runs VALUES (?, ?, ?)", (now, len(chunk), task.get("cost") or 0))
+            from .spend import current
+            con.execute("INSERT INTO intent_runs (run_at, keywords, cost, by_user) VALUES (?, ?, ?, ?)",
+                        (now, len(chunk), task.get("cost") or 0, current()))
             for it in (task.get("result") or [{}])[0].get("items") or []:
                 main = it.get("keyword_intent") or {}
                 code = CODES.get(main.get("label"))
