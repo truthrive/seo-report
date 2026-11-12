@@ -503,6 +503,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                             "label": {"show": True, "position": "right", "color": "#4A4A40", "fontSize": 12,
                                       ":formatter": "p => p.value.toLocaleString('vi-VN')"}}],
             }).classes("w-full").style(f"height:{40 + 30 * len(rows)}px")
+            label_split()
             notes = []
             if g["shared"]:
                 notes.append(f"{g['shared']:,} website uy tín trỏ về từ 2 đối thủ trở lên (không tính website spam): dễ "
@@ -511,6 +512,40 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 notes.append("Chưa có số: " + ", ".join(g["missing"]) + " (thêm sau lần chạy gần nhất)")
             for n_ in notes:
                 ui.label(n_).classes("text-xs muted")
+
+    def label_split() -> None:
+        """Website trỏ về từng đối thủ theo nhãn đã gắn (Textlink, Báo PR…): đối thủ đang dựa vào loại link nào."""
+        from . import backlink_gap as BG
+        from . import site_labels as SL
+        try:
+            with SL.connect() as c:
+                table, defs = SL.all_labels(c), SL.defs(c)
+        except Exception:  # noqa: BLE001
+            return
+        with connect() as c:
+            pr = BG.pairs(c, cfg.site_url)
+        split = SL.by_rival(pr, table)
+        if not split:
+            return
+        used = [d for d in defs if any(d["name"] in v for v in split.values())]
+        rows = []
+        for rv in sorted(split, key=lambda r: -sum(x[0] for x in split[r].values())):
+            row = {"rival": rv, "total": len(pr.get(rv) or {})}
+            for d in used:
+                w_, l_ = split[rv].get(d["name"], [0, 0])
+                row[d["name"]] = ("–" if not w_ else f"{w_} website" + (f" · {l_:,} link".replace(",", ".")
+                                                                        if l_ else ""))
+                row["_" + d["name"]] = w_
+            rows.append(row)
+        ui.label("Theo nhãn website").classes("sr-rai-h q-mt-md")
+        ui.label("Số website đã gắn nhãn (ở bảng Backlink) trong các website trỏ về từng đối thủ mà chưa trỏ về mình. "
+                 "Một website nhiều nhãn được tính ở mỗi nhãn.").classes("text-xs muted")
+        cols = [{"name": "rival", "label": "Đối thủ", "field": "rival", "align": "left"},
+                {"name": "total", "label": "Website GAP", "field": "total", "align": "right", "sortable": True}]
+        cols += [{"name": d["name"], "label": d["name"], "field": d["name"], "align": "right", "sortable": True,
+                  ":sort": f"(a, b, ra, rb) => (ra['_{d['name']}'] || 0) - (rb['_{d['name']}'] || 0)"} for d in used]
+        with ui.element("div").classes("w-full").style("overflow-x:auto"):
+            ui.table(columns=cols, rows=rows, row_key="rival").props("flat dense").classes("w-full sr-bl-table")
 
     overview()
     backlink_card()

@@ -8,6 +8,7 @@ from datetime import date
 from urllib.parse import quote, urlparse
 
 from . import table_kit as TK
+from . import web_labels as WL
 from . import spend as SP
 from . import points as PT
 from . import access as A
@@ -630,11 +631,16 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                                  "Chuyển hướng" if 300 <= (x.get("status") or 200) < 400 else "Bình thường")}
                             for x in items]
                     note += " · xếp theo số website trỏ về"
+                if kind in ("domains", "changes"):  # nhãn website (dùng chung mọi dự án)
+                    WL.enrich(rows, "domain" if kind == "domains" else "source")
+                    cols.insert(1, ("labels", "Nhãn", "left"))
                 if q:
                     rows = [r for r in rows if q in _fold(" ".join(str(v) for v in r.values()))]
                 flex = {"domains": "domain", "changes": "source", "anchors": "anchor", "pages": "page"}[kind]
-                columns = [{"name": n, "label": lab, "field": n, "align": al, "sortable": bool(lab),
-                            "width": None if n == flex else COL_W.get(n, 120)} for n, lab, al in cols]
+                columns = [{"name": n, "label": lab, "field": "labels_t" if n == "labels" else n, "align": al,
+                            "sortable": bool(lab), "width": None if n == flex else (150 if n == "labels" else
+                                                                                   COL_W.get(n, 120))}
+                           for n, lab, al in cols]
                 for c_ in columns:
                     if c_["name"] in ("first_seen", "when"):
                         c_[":sort"] = "(a, b, rowA, rowB) => (rowA.first_iso || '').localeCompare(rowB.first_iso || '')"
@@ -645,8 +651,14 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                                       lambda: set_filter(fkey))
                     ui.label(note).classes("text-xs muted")
                 kit = state.setdefault("kit", {}).setdefault(kind, TK.new_state())
-                TK.table(ui, columns=columns, rows=rows, row_key="k", filters=kit_filters(kind), st=kit,
-                         copy=kit_copy(kind), noun=KIT_NOUN[kind], classes="sr-bl-table", slots={
+                lab_kind = kind in ("domains", "changes")
+                TK.table(ui, columns=columns, rows=rows, row_key="k", st=kit,
+                         filters=kit_filters(kind) + ([WL.FILTER] if lab_kind else []),
+                         copy=kit_copy(kind)[:1] + ([WL.COPY] if lab_kind else []) + kit_copy(kind)[1:],
+                         actions=WL.action(ui, user, "domain" if kind == "domains" else "source", table.refresh)
+                         if lab_kind else None,
+                         noun=KIT_NOUN[kind], classes="sr-bl-table", slots={
+                    "body-cell-labels": WL.SLOT,
                     "body-cell-domain": """
                     <q-td :props="props"><a :href="props.row.href" target="_blank" rel="noopener"
                        class="sr-bl-link">{{ props.value }}</a></q-td>""",

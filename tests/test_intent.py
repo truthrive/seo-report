@@ -53,6 +53,13 @@ class FetchTest(unittest.TestCase):
         self.assertEqual(I.excel_cells(v), ["Commercial", "Transactional"])
         self.assertIn("có thể là: Transactional (Mua / giao dịch) 30%", I.tip(v))
 
+        # từ khóa mới thêm sau: gom lại, chưa đủ một ngày từ lần gọi trước thì chưa gọi
+        from datetime import datetime, timedelta, timezone
+        R.add_keywords(con, SITE, s, END, [("kính râm", None)], "t")
+        self.assertEqual(I.fetch_missing(con, cfg, ("u", "p"), post=post), 0)
+        later = datetime.now(timezone.utc) + timedelta(hours=I.GAP_HOURS + 1)
+        self.assertEqual(I.fetch_missing(con, cfg, ("u", "p"), post=post, now=later), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

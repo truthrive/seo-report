@@ -122,9 +122,10 @@ def provider(cfg, task: str | None = None) -> dict:
         raise
     except Exception:  # noqa: BLE001
         combo = None
-    if combo is not None:
-        return combo_provider(cfg, combo)
-    return _provider_old(cfg, task)
+    prov = combo_provider(cfg, combo) if combo is not None else _provider_old(cfg, task)
+    prov.setdefault("task", task or "")  # cho nhật ký chi phí AI (ai_usage)
+    prov.setdefault("site", getattr(cfg, "site_url", "") or "")
+    return prov
 
 
 def _provider_old(cfg, task: str | None = None) -> dict:

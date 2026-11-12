@@ -42,6 +42,8 @@ COSTS = {
     "ai_rank_target": ("AI gợi ý URL mục tiêu", 5),
     "ai_rank_actions": ("AI việc cần làm theo từ khóa", 5),
     "backlink_gap": ("Backlink GAP đối thủ", 30),
+    "backlink_gap_links": ("Xem link cụ thể trong Backlink GAP", 25),
+    "backlink_gap_multi": ("Backlink GAP nhanh (website trỏ về từ 2 đối thủ)", 30),
 }
 
 SCHEMA = """

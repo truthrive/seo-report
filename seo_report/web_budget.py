@@ -177,6 +177,69 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                 {"name": "detail", "label": "Theo tác vụ", "field": "detail", "align": "left"},
             ], rows=data, row_key="id").props("flat dense").classes("w-full sr-bl-table")
 
+    def ai_cost() -> None:
+        """Token AI tháng này theo tác vụ + tiền ước tính theo bảng giá cổng (không hiện tên model: chỉ ở Quản trị › AI)."""
+        from nicegui import run
+
+        from . import ai_settings as AIS
+        from . import ai_usage as AU
+        from . import integrations as I
+        month = date.today().strftime("%Y-%m")
+        with app_connect() as c:
+            rows = AU.by_task(c, month)
+        with T.section(ui, "Chi phí AI tháng này", "auto_awesome",
+                       "Số token mỗi tác vụ AI dùng (tính cả lần gọi lại và model dự phòng). Tiền là ước tính theo bảng "
+                       "giá cổng ghi kèm model, coi như giá cho 1 triệu token: đối chiếu với trang hóa đơn của cổng."):
+            if not rows:
+                ui.label("Tháng này chưa có lần gọi AI nào được ghi (bắt đầu ghi từ 12/11/2026).").classes(
+                    "text-sm muted")
+                return
+            box = ui.column().classes("w-full gap-1")
+
+            async def fill():
+                keys = {k for r in rows for k, _ in r["models"]}
+
+                def prices():
+                    out = {}
+                    for k in keys:
+                        for m in I.model_catalog(base, k):
+                            if m.get("pricing"):
+                                out[(k, m["id"])] = m["pricing"]
+                    return out
+                try:
+                    pr = await run.io_bound(prices)
+                except Exception:  # noqa: BLE001
+                    pr = {}
+                names = {k: v[0] for k, v in AIS.TASKS.items()}
+                data, total, unit = [], 0.0, ""
+                for i, r in enumerate(rows):
+                    money, u = AU.estimate(r["models"], pr)
+                    unit = unit or u
+                    total += money or 0
+                    data.append({"id": i, "task": names.get(r["task"], r["task"] or "Khác"), "uses": r["uses"],
+                                 "calls": r["calls"], "in": r["in_tok"], "out": r["out_tok"],
+                                 "money": None if money is None else round(money)})
+                num = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
+                box.clear()
+                with box:
+                    ui.label(f"Tổng ước tính: {round(total):,} {unit}".replace(",", ".").strip() if pr else
+                             "Chưa lấy được bảng giá của cổng: chỉ hiện số token.").classes("text-sm")
+                    ui.table(columns=[
+                        {"name": "task", "label": "Tác vụ", "field": "task", "align": "left"},
+                        {"name": "uses", "label": "Lần dùng", "field": "uses", "align": "right", ":format": num,
+                         "sortable": True},
+                        {"name": "calls", "label": "Lượt gọi", "field": "calls", "align": "right", ":format": num},
+                        {"name": "in", "label": "Token vào", "field": "in", "align": "right", ":format": num,
+                         "sortable": True},
+                        {"name": "out", "label": "Token ra", "field": "out", "align": "right", ":format": num,
+                         "sortable": True},
+                        {"name": "money", "label": f"Ước tính ({unit})" if unit else "Ước tính", "field": "money",
+                         "align": "right", ":format": num, "sortable": True},
+                    ], rows=data, row_key="id").props("flat dense").classes("w-full sr-bl-table")
+            with box:
+                ui.label("Đang tính…").classes("text-sm muted")
+            ui.timer(0.1, fill, once=True)
+
     def ads_quota() -> None:
         """Hạn mức Google Ads API: lượt đã dùng hôm nay / mức trần tool tự dừng / hạn mức Basic; 14 ngày theo loại."""
         from . import google_ads as GA
@@ -348,6 +411,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
         cost_advice(projects)
         ads_quota()
         points_usage()
+        ai_cost()
 
         # ---- Chi phí 6 tháng ----
         labels = [f"{m[5:]}/{m[2:4]}" for m in months]

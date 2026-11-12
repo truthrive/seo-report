@@ -10,6 +10,8 @@ Backlink.
 - Sao chép: các cột `copy` [(tiêu đề, trường)], cách nhau bằng Tab, có dòng tiêu đề: dán vào Google Sheets / Excel là
   ra đúng cột. Chưa chọn dòng nào thì chép mọi dòng đang lọc.
 - Trạng thái lọc / chọn lưu trong `st` (dict của người gọi) để vẽ lại bảng không mất bộ lọc.
+- `actions`: nút thêm khi đã chọn dòng [{"label": hàm(số dòng) hoặc chữ, "icon", "on": hàm(các dòng đã chọn)}].
+- `export`: tên file (không đuôi) → nút "Xuất Excel" (các cột `copy`; đã chọn dòng thì chỉ xuất dòng đã chọn).
 """
 import unicodedata
 
@@ -93,6 +95,26 @@ def tsv(rows: list[dict], copy: list[tuple[str, str]]) -> str:
                      [[h for h, _ in copy]] + [[_cell(r.get(f)) for _, f in copy] for r in rows])
 
 
+def xlsx(rows: list[dict], copy: list[tuple[str, str]], title: str = "Dữ liệu") -> bytes:
+    """File Excel một sheet: các cột `copy`, có tiêu đề, bộ lọc, cố định dòng đầu."""
+    import io
+
+    from openpyxl import Workbook
+
+    from .export import _sheet
+    wb = Workbook()
+    wb.remove(wb.active)
+    widths = [min(60, max(10, len(h) + 2, *(len(str(r.get(f) or "")) for r in rows[:200]))) for h, f in copy]
+
+    def val(v):
+        return ", ".join(str(x) for x in v) if isinstance(v, list) else v
+    _sheet(wb, title[:31] or "Dữ liệu", [(h, w, None) for (h, _), w in zip(copy, widths)],
+           [[val(r.get(f)) for _, f in copy] for r in rows])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def fixed_columns(columns: list[dict]) -> list[dict]:
     """Độ rộng cột cố định (bảng không co giãn theo nội dung khi đổi bộ lọc / trang)."""
     out = []
@@ -142,7 +164,8 @@ def _drop(st: dict, part: dict) -> None:
 
 def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: list[tuple], st: dict,
           copy: list[tuple[str, str]], slots: dict | None = None, events: dict | None = None, noun: str = "dòng",
-          page_size: int = 20, classes: str = "", selectable: bool = True) -> None:
+          page_size: int = 20, classes: str = "", selectable: bool = True, actions: list[dict] | None = None,
+          export: str | None = None) -> None:
     """Vẽ thanh lọc + dòng trạng thái (đếm / đã chọn / sao chép) + bảng. Tự vẽ lại khi đổi lọc / chọn."""
 
     @ui.refreshable
@@ -285,8 +308,15 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                     view.refresh()
                 ui.button("Bỏ chọn", on_click=clear).props("flat dense no-caps color=primary")
                 ui.space()
+                for a in actions or []:
+                    lab = a["label"](sel) if callable(a["label"]) else a["label"]
+                    ui.button(lab, icon=a.get("icon"), on_click=lambda _, a=a, sel=sel: a["on"](sel)).props(
+                        "unelevated dense no-caps")
                 ui.button("Sao chép", icon="content_copy", on_click=lambda: do_copy(sel)).props(
                     "flat dense no-caps color=primary").tooltip("Chép đủ thông tin, dán vào Google Sheets / Excel")
+                if export:
+                    ui.button("Xuất Excel", icon="download", on_click=lambda: do_export(sel)).props(
+                        "flat dense no-caps color=primary").tooltip("Tải file Excel các dòng đã chọn")
             else:
                 ui.label(f"{len(shown):,} / {len(rows):,} {noun}".replace(",", ".") if len(shown) != len(rows)
                          else f"{len(rows):,} {noun}".replace(",", ".")).classes("text-sm col")
@@ -295,6 +325,15 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                 ui.button(f"Sao chép {len(shown):,} {noun}".replace(",", "."), icon="content_copy",
                           on_click=lambda: do_copy(shown)).props("flat dense no-caps color=primary").tooltip(
                     "Chép mọi dòng đang lọc, dán vào Google Sheets / Excel")
+                if export:
+                    ui.button("Xuất Excel", icon="download", on_click=lambda: do_export(shown)).props(
+                        "flat dense no-caps color=primary").tooltip("Tải file Excel mọi dòng đang lọc")
+
+    def do_export(rs: list[dict]) -> None:
+        if not rs:
+            return
+        from datetime import date
+        ui.download.content(xlsx(rs, copy, noun.capitalize()), f"{export}-{date.today():%Y%m%d}.xlsx")
 
     def do_copy(rs: list[dict]) -> None:
         if not rs:

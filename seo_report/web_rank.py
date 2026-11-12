@@ -2444,7 +2444,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                     "unelevated no-caps color=negative")
         d.open()
 
-    async def check_now(only: list[int] | None = None, confirmed: bool = False, points_ok: bool = False):
+    async def check_now(only: list[int] | None = None, confirmed: bool = False, points_ok: bool = False,
+                        big_ok: bool = False, depth: int | None = None):
         if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
             return
         from nicegui import background_tasks
@@ -2497,6 +2498,36 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         # credit theo độ sâu thật của từng từ khóa (1 credit mỗi 10 kết quả)
         with connect() as c:
             depth_of = {k["id"]: k["depth"] for k in R.keywords(c, site, end, sid)}
+        if len(ids) >= BIG_CHECK and not big_ok:  # check nhiều từ khóa một lúc: báo giá, cho chọn top 10 cho lần này
+            def cost_of(cap: int | None) -> str:
+                ds = [min(depth_of.get(i, 20), cap) if cap else depth_of.get(i, 20) for i in ids]
+                if PT.member(user):
+                    return f"{PT.rank_points(ds):,} credit".replace(",", ".")
+                return f"≈{sum(R._pages(d) for d in ds) * cfg.rank.price_per_page:.2f} USD".replace(".", ",")
+            deep = max(depth_of.get(i, 20) for i in ids)
+            with ui.dialog() as d, ui.card().style("max-width: 480px; border-radius: 14px"):
+                ui.label(f"Check {len(ids):,} từ khóa?".replace(",", ".")).classes("text-lg font-semibold")
+                ui.label("Check nhiều từ khóa một lúc tốn đáng kể. Lần đầu cần biết từ khóa có trong top 10 hay không "
+                         "thì check top 10 trước, rẻ hơn; các lần check theo lịch sau vẫn theo độ sâu của bộ.").classes(
+                    "text-sm")
+                with ui.column().classes("w-full gap-1 q-mt-sm sr-kr-paid"):
+                    ui.label(f"Theo độ sâu của bộ (tới top {deep}): {cost_of(None)}").classes("text-sm")
+                    if deep > 10:
+                        ui.label(f"Chỉ top 10 cho lần này: {cost_of(10)}").classes("text-sm")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                    async def go(cap):
+                        d.close()
+                        await check_now(ids, confirmed=True, points_ok=points_ok, big_ok=True, depth=cap)
+                    if deep > 10:
+                        ui.button("Chỉ top 10", on_click=lambda: go(10)).props("outline no-caps")
+                    ui.button(f"Check top {deep}", icon="play_arrow", on_click=lambda: go(None)).props(
+                        "unelevated no-caps")
+            d.open()
+            return
+        if depth:
+            depth_of = {i: min(v, depth) for i, v in depth_of.items()}
         pts = PT.rank_points([depth_of.get(i, 20) for i in ids])
         if PT.member(user) and not points_ok:
             bal = PT.my_balance(user) or {"left": 0, "limit": 0}
@@ -2514,7 +2545,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
 
                     async def ok():
                         d.close()
-                        await check_now(ids, confirmed=True, points_ok=True)
+                        await check_now(ids, confirmed=True, points_ok=True, big_ok=True, depth=depth)
                     b_ok = ui.button("Check", icon="play_arrow", on_click=ok).props("unelevated no-caps")
                     if pts > bal["left"]:
                         b_ok.disable()
@@ -2530,7 +2561,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         status_running()
         ui.notify(f"Bắt đầu check {len(ids)} từ khóa", caption="Có thể sang trang khác, xong tool sẽ báo",
                   type="info", position="bottom-right", classes="sr-toast", timeout=4000)
-        background_tasks.create(_check_job(cfg, connect, site, end, ids, creds, str(user), sid))
+        background_tasks.create(_check_job(cfg, connect, site, end, ids, creds, str(user), sid, depth))
 
     def stop_check():
         st = _PROGRESS.get(site)
@@ -3073,8 +3104,11 @@ async def schedule_loop(base) -> None:
         await asyncio.sleep(15 * 60)
 
 
+BIG_CHECK = 100  # bấm check từ chừng này từ khóa trở lên: báo giá trước, cho chọn chỉ check top 10
+
+
 async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: str | None,
-                     set_id: int | None = None) -> None:
+                     set_id: int | None = None, depth: int | None = None) -> None:
     """Check rank chạy nền: không phụ thuộc trang đã bấm (trang có thể đã đóng). Gửi DataForSEO từng nhóm
     CHECK_CHUNK từ khóa, ghi tiến độ vào _PROGRESS (đã gửi / đã có kết quả); khi bấm Tạm dừng thì không gửi nhóm tiếp
     theo, thôi chờ kết quả (task đã gửi vẫn được lấy ở lần chạy sau) và lưu từ khóa chưa gửi cho nút Tiếp tục."""
@@ -3121,8 +3155,13 @@ async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: 
                     break
                 chunk_logs: list[str] = []
                 chunk = todo[i:i + CHECK_CHUNK]
+                if depth:  # bấm check nhiều từ khóa và chọn "top 10 cho lần này"
+                    chunk = [dict(k, depth=min(k["depth"], depth)) for k in chunk]
+                elif user is None:  # lượt theo lịch: từ khóa vững top 5 chỉ check top 10
+                    chunk = R.economize(c, chunk)
+                # AI Overview hiện chậm chỉ tải ở lượt theo lịch (user None); bấm check tay không tải để đỡ tiền
                 n = R.post(c, site, cfg.rank, client, chunk, _date.today(), chunk_logs.append,
-                           by=user or "Lịch")
+                           by=user or "Lịch", aio=user is None)
                 logs.extend(m for m in chunk_logs if not m.startswith("Đã gửi"))
                 st["posted"] += n
                 if any(m.startswith("Dừng") for m in chunk_logs):  # vượt ngân sách: chưa gửi, giữ lại để Tiếp tục

@@ -2322,6 +2322,13 @@ HEAD = """
     font-weight: 600; padding: 5px 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(31, 34, 30, .18);
     opacity: 0; pointer-events: none; transition: opacity .12s; top: 50%; transform: translateY(-50%); }
   .sr-rad-label.left { right: calc(100% + 8px); }
+  /* nhãn website (web_labels.py) */
+  .sr-lbl-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+  .sr-lbl { display: inline-block; font-size: 11.5px; line-height: 18px; padding: 0 7px; border-radius: 999px;
+    border: 1px solid; white-space: nowrap; }
+  .sr-lbl-sw { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; cursor: pointer; padding: 0;
+    box-shadow: 0 0 0 1px #D8D6CC; }
+  .sr-lbl-sw.on { box-shadow: 0 0 0 2px #1F221E; }
   .sr-qc-row { padding: 4px 6px; border-radius: 8px; background: #F6F6F1; }
   .sr-rad-label.right { left: calc(100% + 8px); }
   .sr-rad-label.top { bottom: calc(100% + 8px); top: auto; left: 50%; transform: translateX(-50%); }

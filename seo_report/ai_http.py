@@ -183,6 +183,8 @@ def complete(style: str, base: str, key: str, model: str, prompt: str, system: s
         raise UpstreamError(f"Model AI không trả lời sau {timeout} giây (hết giờ chờ)") from e
     except (OSError, ValueError) as e:  # mất kết nối giữa chừng / trả về không phải JSON
         raise UpstreamError(f"Nhà cung cấp trả lời hỏng giữa chừng: {type(e).__name__}") from e
+    from . import ai_usage as AU
+    AU.note(model, style, data)  # đếm token (nhật ký chi phí AI)
     out = parse(style, data)
     if not allow_cut and cut_off(style, data):
         raise TruncatedError(f"Câu trả lời của AI bị cắt cụt (hết {max_tokens} chữ)")
@@ -236,6 +238,15 @@ def ask(prov: dict, prompt: str, expect_json: bool = False, **kw) -> str:
       (prov["fallbacks"]). Không có dự phòng mà sai định dạng thì gọi lại model chính một lần.
     - Model chính bị chặn / sập thì DOWN_MINUTES phút sau gọi thẳng model dự phòng (không chờ model hỏng mỗi lần).
     - prov được đổi theo model thực dùng (để nhật ký / bản lưu ghi đúng). Lần bị chặn được báo lên chuông."""
+    from . import ai_usage as AU
+    AU.start()
+    try:
+        return _ask(prov, prompt, expect_json, **kw)
+    finally:
+        AU.finish(prov)  # ghi token của mọi lần gọi thật (kể cả gọi lại / dự phòng); lỗi ghi không ảnh hưởng
+
+
+def _ask(prov: dict, prompt: str, expect_json: bool = False, **kw) -> str:
     from . import ai_settings as AIS
     chain = prov.get("fallbacks") or ([prov["fallback"]] if prov.get("fallback") else [])
     main = {k: prov.get(k) for k in ("name", "key_name", "style", "base", "key", "model")}

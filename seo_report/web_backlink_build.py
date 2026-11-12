@@ -1,9 +1,10 @@
 """Hai tab xây link trên trang Backlink: "Trang cần link" và "Link đã xây" (backlink_build.py). Không tốn phí."""
-from datetime import date
+from datetime import date, datetime, timezone
 from urllib.parse import quote, urlparse
 
 from . import access as A
 from . import ai_format as F
+from . import web_labels as WL
 from . import backlink_build as BB
 from . import table_kit as TK
 from . import ui_theme as T
@@ -215,6 +216,69 @@ def url_block(ui, cfg, connect, user, url: str) -> None:
                 ui.link("Thêm link đã xây cho trang này", "/backlink?tab=built").classes("text-xs")
 
 
+def _links_table(ui, links: list[dict], kit: dict, with_site: bool = True, export: str = "backlink-gap-links",
+                 user=None, on_label=None) -> None:
+    """Bảng link cụ thể (đã lấy) của Backlink GAP: lọc, sao chép, xuất Excel."""
+    from . import backlink_gap as BG
+    rows = [{"i": i, "site": x.get("site") or "", "from": x["url_from"], "from_path": _path(x["url_from"]),
+             "title": x["title"], "rival": x["rival"], "rival_l": [x["rival"]], "to": x["url_to"],
+             "to_path": _path(x["url_to"]), "anchor": x["anchor"] or "", "first_iso": x["first_seen"] or "",
+             "first": _vn(x["first_seen"]) if x["first_seen"] else "–", "got_iso": (x.get("fetched_at") or "")[:10],
+             "got": _vn(x.get("fetched_at")) if x.get("fetched_at") else "–",
+             # link lấy trước 13/11/2026 chỉ có dofollow (lúc đó lọc dofollow) nên thiếu trường này
+             "follow": "dofollow" if x.get("dofollow", True) else "nofollow",
+             "attrs": ", ".join(a for a in x.get("attrs") or [] if a != "nofollow")} for i, x in enumerate(links)]
+    if with_site:
+        WL.enrich(rows, "site")
+    cols = ([{"name": "site", "label": "Website", "field": "site", "align": "left", "sortable": True, "width": 170},
+             WL.COLUMN] if with_site else [])
+    cols += [{"name": "from", "label": "Trang đặt link", "field": "from_path", "align": "left", "sortable": True},
+             {"name": "rival", "label": "Đối thủ", "field": "rival", "align": "left", "sortable": True, "width": 150},
+             {"name": "to", "label": "Trang đích của đối thủ", "field": "to_path", "align": "left", "width": 220},
+             {"name": "anchor", "label": "Anchor", "field": "anchor", "align": "left", "sortable": True, "width": 170},
+             {"name": "follow", "label": "Loại", "field": "follow", "align": "left", "sortable": True, "width": 105},
+             {"name": "first", "label": "Thấy lần đầu", "field": "first_iso", "align": "left", "sortable": True,
+              "width": 115}]
+    if with_site:
+        cols.append({"name": "got", "label": "Ngày lấy", "field": "got_iso", "align": "left", "sortable": True,
+                     "width": 105})
+    TK.table(ui, columns=cols, rows=rows, row_key="i", st=kit, noun="link", classes="sr-kw-tbl", page_size=25,
+             filters=[("text", "Website / trang đặt link", ["site", "from", "title"]), ("enum", "Đối thủ", "rival_l"),
+                      ("enum", "Loại link", "follow"),
+                      *([WL.FILTER] if with_site else []), ("date", "Thấy lần đầu", "first_iso")],
+             actions=WL.action(ui, user, "site", on_label) if with_site and user is not None else None,
+             copy=[*([("Website", "site"), WL.COPY] if with_site else []), ("Trang đặt link", "from"), ("Tiêu đề", "title"),
+                   ("Đối thủ", "rival"), ("Trang đích", "to"), ("Anchor", "anchor"), ("Loại", "follow"),
+                   ("Thuộc tính", "attrs"), ("Thấy lần đầu", "first_iso"),
+                   ("Ngày lấy", "got_iso")],
+             export=export,
+             slots={
+                 "body-cell-site": """
+                <q-td :props="props"><a :href="'https://' + props.row.site" target="_blank" rel="noopener"
+                  class="sr-bb-link ellipsis" style="max-width:100%">{{ props.row.site }}</a></q-td>""",
+                 "body-cell-from": """
+                <q-td :props="props"><div class="ellipsis" style="max-width:100%">
+                  <a :href="props.row.from" target="_blank" rel="noopener" class="sr-bb-link ellipsis"
+                     style="max-width:100%" :title="props.row.from">{{ props.row.title || props.row.from_path }}</a>
+                  <div class="sr-bb-sub ellipsis" style="max-width:100%">{{ props.row.from_path }}</div></div></q-td>""",
+                 "body-cell-to": """
+                <q-td :props="props"><a :href="props.row.to" target="_blank" rel="noopener" class="sr-bb-link ellipsis"
+                  style="max-width:100%" :title="props.row.to">{{ props.row.to_path }}</a></q-td>""",
+                 "body-cell-anchor": """
+                <q-td :props="props"><div class="ellipsis" :title="props.row.anchor">{{ props.row.anchor || '–' }}
+                  </div></q-td>""",
+                 "body-cell-first": """<q-td :props="props">{{ props.row.first }}</q-td>""",
+                 "body-cell-got": """<q-td :props="props">{{ props.row.got }}</q-td>""",
+                 "body-cell-follow": """
+                <q-td :props="props"><span class="sr-bl-type" :class="props.row.follow === 'dofollow' ? 'k-new' : ''">
+                  {{ props.row.follow }}</span>
+                  <div v-if="props.row.attrs" class="sr-bb-sub">{{ props.row.attrs }}</div></q-td>""",
+                 "body-cell-labels": WL.SLOT})
+    ui.label(f"Link đang còn (dofollow và nofollow; link lấy trước 13/11/2026 chỉ có dofollow); mỗi đối thủ lấy tối "
+             f"đa {BG.LINK_LIMIT} link của một website, trang uy tín "
+             "cao trước.").classes("text-xs muted q-mt-xs")
+
+
 def gap_panel(ui, cfg, connect, user) -> None:
     """Website link về đối thủ nhưng chưa link về mình (DataForSEO, tốn phí: chỉ lấy khi bấm, hiện giá trước)."""
     from nicegui import run
@@ -224,65 +288,49 @@ def gap_panel(ui, cfg, connect, user) -> None:
     site = cfg.site_url
     ed = A.can_edit(user)
     cl = A.is_client(user)
-    state = {"view": "clean", "pick": None, "kit": TK.new_state()}  # view: clean | multi | all
+    state = {"view": "clean", "kit": TK.new_state(), "tab": "sites", "lkit": TK.new_state()}  # view: clean|multi|all
 
     @ui.refreshable
     def body() -> None:
         with connect() as c:
-            rv = BG.rivals(c, cfg)
+            rv = BG.all_rivals(c, cfg)
             gap = BG.latest(c, site)
-        if state["pick"] is None:
-            state["pick"] = {r["id"] for r in rv}
+            saved = BG.saved_links(c, site)
         with T.section(ui, "Backlink GAP", "group_add",
                        "Website đang đặt link (dofollow) về đối thủ nhưng chưa link về mình: danh sách nên đi xin link. "
                        "Website link về càng nhiều đối thủ càng dễ xin"):
-            if not rv:
+            if not rv and not ed:
                 ui.label("Chưa có đối thủ nào có tên miền.").classes("text-sm muted")
-                ui.link("Thêm đối thủ ở trang Đối thủ", "/doi-thu").classes("text-sm")
                 return
             with ui.row().classes("w-full items-center gap-2 q-mb-sm no-wrap sr-bg-head"):
                 if gap:
-                    ui.label(f"Cập nhật {_vn(gap['fetched_at'])} · so với {len(gap['rivals'])} đối thủ").classes(
-                        "text-xs muted col").tooltip(", ".join(r["name"] for r in gap["rivals"]))
+                    ui.label(f"Cập nhật gần nhất {_vn(gap['fetched_at'])} · so với {len(gap['rivals'])} đối thủ").classes(
+                        "text-xs muted col").tooltip(", ".join(
+                        r["name"] + (f" ({_vn(r['fetched_at'])})" if r.get("fetched_at") else "")
+                        for r in gap["rivals"]))
                 else:
-                    ui.label("Chưa tìm lần nào" + (": chọn đối thủ rồi bấm Tìm (tốn phí, chỉ chạy khi bấm)."
+                    ui.label("Chưa tìm lần nào" + (": bấm Tìm rồi chọn / nhập đối thủ (tốn phí, chỉ chạy khi bấm)."
                                                     if ed else ".")).classes("text-sm muted col")
                 if ed and not cl:
-                    def price_text() -> str:
-                        n_ = len(state["pick"])
-                        price = (f"{PT.cost('backlink_gap', n_)} credit" if PT.member(user) else
-                                 f"≈{BG.estimate(n_):.2f} USD".replace(".", ","))
-                        return f"{'Tìm lại' if gap else 'Tìm backlink GAP'} · {price}"
-
-                    def pick_text() -> str:
-                        return f"Đối thủ: {len(state['pick'])}/{len(rv)}"
-
-                    def picked(i: int, on: bool) -> None:  # không vẽ lại khối: menu chọn vẫn mở
-                        (state["pick"].add if on else state["pick"].discard)(i)
-                        pick_btn.text = pick_text()
-                        btn.text = price_text()
-                        btn.set_enabled(bool(state["pick"]) and not cfg.rank.paused)
-
-                    def all_(on: bool) -> None:
-                        state["pick"] = {r["id"] for r in rv} if on else set()
-                        for cb in boxes:
-                            cb.value = on
-                    pick_btn = ui.button(pick_text(), icon="groups").props(
-                        "outline no-caps dense icon-right=expand_more color=grey-9").classes("sr-bg-pickbtn")
-                    with pick_btn, ui.menu().classes("sr-kr-fmenu"):
-                        with ui.column().classes("q-pa-sm gap-0").style("min-width: 240px"):
-                            boxes = [ui.checkbox(r["name"], value=r["id"] in state["pick"],
-                                                 on_change=lambda e, i=r["id"]: picked(i, e.value)).props(
-                                "dense").tooltip(r["domain"]) for r in rv]
-                            with ui.row().classes("w-full justify-between q-mt-xs"):
-                                ui.button("Bỏ hết", on_click=lambda: all_(False)).props("flat dense no-caps size=sm")
-                                ui.button("Chọn hết", on_click=lambda: all_(True)).props(
-                                    "flat dense no-caps size=sm color=primary")
-                    btn = ui.button(price_text(), icon="travel_explore", on_click=lambda: confirm(btn)).props(
-                        "unelevated no-caps dense").classes("sr-bg-run")
-                    if not state["pick"] or cfg.rank.paused:
+                    btn = ui.button("Tìm lại" if gap else "Tìm backlink GAP", icon="travel_explore",
+                                    on_click=lambda: confirm(btn)).props("unelevated no-caps dense").classes(
+                        "sr-bg-run")
+                    if cfg.rank.paused:
                         btn.disable()
             if not gap:
+                return
+            n_links = sum(len(v["links"]) for v in saved.values())
+            ui.toggle({"sites": "Danh sách website", "links": f"Link đã lấy · {F.n(n_links)}"}, value=state["tab"],
+                      on_change=lambda e: (state.update(tab=e.value), body.refresh())).props(
+                "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                "sr-seg q-mb-sm")
+            if state["tab"] == "links":
+                if not n_links:
+                    ui.label("Chưa lấy link nào. Ở Danh sách website, tick các website cần xem rồi bấm “Lấy link”, "
+                             "hoặc bấm “Lấy link” ở từng dòng.").classes("text-sm muted")
+                    return
+                _links_table(ui, [dict(x, site=dom, fetched_at=v["fetched_at"]) for dom, v in sorted(saved.items())
+                                  for x in v["links"]], state["lkit"], user=user, on_label=body.refresh)
                 return
             items = gap["items"]
             clean = [g for g in items if cl or (g["spam"] or 0) < BG.SPAM_HIDE]
@@ -301,8 +349,10 @@ def gap_panel(ui, cfg, connect, user) -> None:
                         "text-xs muted gt-xs")
             shown = {"clean": clean, "multi": multi}.get(state["view"], items)
             rows = [{"domain": g["domain"], "rank": g["rank"], "n": len(g["rivals"]), "rivals": ", ".join(g["rivals"]),
-                     "rivals_l": list(g["rivals"]), "links_n": g["backlinks"], "links": F.n(g["backlinks"]),
+                     "rivals_l": list(g["rivals"]), "links_n": g["backlinks"],
+                     "links": ("≥" if g.get("partial") else "") + F.n(g["backlinks"]),
                      "spam": g["spam"], "first_iso": g["first_seen"] or "",
+                     "saved": len(saved[g["domain"]]["links"]) if g["domain"] in saved else -1,
                      "first": _vn(g["first_seen"]) if g["first_seen"] else "–"} for g in shown]
             cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True},
                     {"name": "rank", "label": "Uy tín", "field": "rank", "align": "right", "sortable": True,
@@ -316,13 +366,26 @@ def gap_panel(ui, cfg, connect, user) -> None:
             if not cl:
                 cols.append({"name": "spam", "label": "Spam", "field": "spam", "align": "right", "sortable": True,
                              "width": 80})
+            fetch_btn = ('<q-btn v-else flat dense no-caps size="sm" color="grey-8" icon="travel_explore" '
+                         'label="Lấy link" @click.stop="$parent.$emit(&quot;links&quot;, props.row.domain)"/>'
+                         ) if ed else ""
+            WL.enrich(rows, "domain")
+            cols.insert(1, WL.COLUMN)
+            if ed or saved:
+                cols.append({"name": "act", "label": "Link cụ thể", "field": "saved", "align": "left",
+                             "sortable": True, "width": 130})
             TK.table(ui, columns=cols, rows=rows, row_key="domain", st=state["kit"], noun="website",
                      classes="sr-kw-tbl", page_size=25,
                      filters=[("text", "Website", ["domain"]), ("num", "Uy tín", "rank"),
                               ("num", "Số đối thủ", "n"), ("num", "Link về đối thủ", "links_n"),
                               *([] if cl else [("num", "Điểm spam", "spam")]),
-                              ("enum", "Trỏ về đối thủ", "rivals_l"), ("date", "Thấy lần đầu", "first_iso")],
-                     copy=[("Website", "domain"), ("Uy tín", "rank"), ("Số đối thủ", "n"),
+                              ("enum", "Trỏ về đối thủ", "rivals_l"), WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
+                     events={"links": lambda e: links_dialog(e.args)},
+                     export="backlink-gap-website",
+                     actions=([{"label": lambda sel: f"Lấy link · {len(sel)} website", "icon": "travel_explore",
+                                "on": lambda sel: bulk_dialog([r["domain"] for r in sel])}]
+                              if ed and not cfg.rank.paused else []) + WL.action(ui, user, "domain", body.refresh),
+                     copy=[("Website", "domain"), WL.COPY, ("Uy tín", "rank"), ("Số đối thủ", "n"),
                            ("Trỏ về đối thủ", "rivals"), ("Link về đối thủ", "links_n"),
                            ("Thấy lần đầu", "first_iso"), *([] if cl else [("Điểm spam", "spam")])],
                      slots={
@@ -337,6 +400,13 @@ def gap_panel(ui, cfg, connect, user) -> None:
                 <q-td :props="props"><a :href="'https://' + props.row.domain" target="_blank" rel="noopener"
                   class="sr-bb-link">{{ props.row.domain }}</a></q-td>""",
                          "body-cell-links": """<q-td :props="props">{{ props.row.links }}</q-td>""",
+                         "body-cell-labels": WL.SLOT,
+                         "body-cell-act": """
+                <q-td :props="props">
+                  <q-btn v-if="props.row.saved >= 0" flat dense no-caps size="sm" color="primary" icon="list"
+                    :label="'Xem · ' + props.row.saved" @click.stop="$parent.$emit('links', props.row.domain)"/>
+                  """ + fetch_btn + """
+                </q-td>""",
                          "body-cell-first": """<q-td :props="props">{{ props.row.first }}</q-td>""",
                          "body-cell-n": """
                 <q-td :props="props"><div class="ellipsis" :title="props.row.rivals"><span class="num">{{
@@ -346,26 +416,302 @@ def gap_panel(ui, cfg, connect, user) -> None:
                      "link dofollow; mỗi đối thủ lấy tối đa "
                      f"{BG.LIMIT} website uy tín nhất.").classes("text-xs muted q-mt-xs")
 
-    def confirm(btn) -> None:
+    def bulk_dialog(doms: list[str]) -> None:
+        """Lấy link cụ thể của nhiều website một lần: báo giá trước, mặc định bỏ qua website đã lấy."""
         with connect() as c:
-            chosen = [r for r in BG.rivals(c, cfg) if r["id"] in state["pick"]]
-        n = len(chosen)
-        with ui.dialog() as d, ui.card().style("width:440px; max-width:94vw; border-radius:14px"):
-            ui.label("Tìm backlink GAP?").classes("text-lg font-semibold")
-            with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
-                ui.icon("toll", size="18px")
-                ui.label((f"Trừ {PT.cost('backlink_gap', n)} credit" if PT.member(user) else
-                          f"Tốn khoảng {BG.estimate(n):.2f} USD dữ liệu".replace(".", ","))
-                         + f" ({n} đối thủ × {BG.LIMIT} website).").classes("text-sm")
-            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
-                ui.button("Hủy", on_click=d.close).props("flat no-caps")
+            have = BG.saved_links(c, site)
+            info = {d_: (len(BG.link_targets(c, cfg, d_)), BG.links_estimate(c, cfg, d_)) for d_ in doms}
+        opt = {"skip": True}
+        with ui.dialog() as d, ui.card().style("width:460px; max-width:94vw; border-radius:14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label(f"Lấy link của {len(doms)} website").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
+            ui.label("Lấy các link đang còn (dofollow và nofollow) từ từng website tới các đối thủ nó trỏ về. Kết quả được lưu, "
+                     "xem ở tab “Link đã lấy” và xuất Excel được.").classes("text-xs muted")
+            n_have = sum(1 for d_ in doms if d_ in have)
+            if n_have:
+                ui.checkbox(f"Bỏ qua {n_have} website đã lấy link", value=True,
+                            on_change=lambda e: (opt.update(skip=e.value), quote.refresh())).props("dense").classes(
+                    "q-mt-sm")
 
-                async def go():
-                    d.close()
-                    await run_gap(btn, chosen)
-                ui.button("Tìm", icon="travel_explore", on_click=go).props("unelevated no-caps")
+            def todo() -> list[str]:
+                return [d_ for d_ in doms if info[d_][0] and not (opt["skip"] and d_ in have)]
+
+            @ui.refreshable
+            def quote() -> None:
+                t = todo()
+                calls = sum(info[d_][0] for d_ in t)
+                usd = sum(info[d_][1] for d_ in t)
+                with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid q-mt-sm"):
+                    ui.icon("toll", size="18px")
+                    ui.label("Không còn website nào cần lấy." if not t else
+                             (f"Trừ {PT.cost('backlink_gap_links', calls)} credit" if PT.member(user) else
+                              f"Tốn khoảng {usd:.2f} USD dữ liệu".replace(".", ","))
+                             + f" ({len(t)} website · {calls} lượt gọi, mỗi đối thủ một lượt).").classes("text-sm")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                    b = ui.button(f"Lấy link · {len(t)} website", icon="travel_explore", on_click=go).props(
+                        "unelevated no-caps")
+                    if not t:
+                        b.disable()
+
+            async def go() -> None:
+                from nicegui import run
+                t = todo()
+                d.close()
+                note = ui.notification(f"Đang lấy link 0/{len(t)} website…", spinner=True, timeout=None,
+                                       position="bottom-right")
+                ok, n_links, errs = 0, 0, []
+                for i, d_ in enumerate(t, 1):
+                    entry = PT.take(ui, user, cfg, "backlink_gap_links", n=info[d_][0], detail=d_)
+                    if entry is False:
+                        break
+
+                    def work(d_=d_):
+                        with connect() as c:
+                            return BG.fetch_links(c, cfg, d_, str(user))
+                    try:
+                        res = await run.io_bound(work)
+                        ok += 1
+                        n_links += len(res["links"])
+                    except Exception as e:  # noqa: BLE001
+                        PT.give_back(entry)
+                        errs.append(f"{d_}: {str(e)[:120]}")
+                        if "ngân sách" in str(e) or "tạm ngưng" in str(e):
+                            break
+                    note.message = f"Đang lấy link {i}/{len(t)} website…"
+                note.dismiss()
+                ui.notify(f"Đã lấy {n_links} link của {ok} website" + (f" · {len(errs)} website lỗi" if errs else ""),
+                          caption=" · ".join(errs)[:300] or None, type="warning" if errs else "positive",
+                          position="bottom-right", multi_line=True)
+                state["kit"]["sel"] = set()
+                state["tab"] = "links"
+                body.refresh()
+            quote()
         d.on("hide", d.delete)
         d.open()
+
+    def links_dialog(dom: str) -> None:
+        """Link cụ thể từ một website tới các đối thủ: xem bản đã lưu, hoặc lấy (tốn phí, báo giá trước)."""
+        kit = TK.new_state()
+        with connect() as c:
+            targets = BG.link_targets(c, cfg, dom)
+            est = BG.links_estimate(c, cfg, dom)
+        n = len(targets)
+        price = (f"{PT.cost('backlink_gap_links', n)} credit" if PT.member(user) else
+                 f"≈{est:.2f} USD".replace(".", ","))
+        with ui.dialog() as d, ui.card().style("width:1080px; max-width:96vw; border-radius:14px"):
+            @ui.refreshable
+            def inner() -> None:
+                with connect() as c:
+                    got = BG.saved_links(c, site).get(dom)
+                with ui.row().classes("w-full items-center no-wrap gap-2"):
+                    with ui.column().classes("gap-0 col").style("min-width:0"):
+                        ui.label(f"Link từ {dom}").classes("text-lg font-semibold ellipsis")
+                        ui.label("Trỏ về " + ", ".join(t["name"] for t in targets) +
+                                 (f" · lấy lúc {_vn(got['fetched_at'])}" if got else "")).classes(
+                            "text-xs muted ellipsis")
+                    if ed and got and not cfg.rank.paused:
+                        ui.button(f"Lấy lại · {price}", icon="refresh", on_click=lambda: go()).props(
+                            "flat no-caps dense color=grey-8")
+                    ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
+                if not got:
+                    with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid q-mt-sm"):
+                        ui.icon("toll", size="18px")
+                        ui.label(f"Lấy các link đang còn (dofollow và nofollow) từ {dom} tới {n} đối thủ "
+                                 f"({'trừ ' + price if PT.member(user) else 'tốn ' + price + ' dữ liệu'}). "
+                                 "Kết quả được lưu, xem lại lần sau không tốn thêm.").classes("text-sm")
+                    with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                        ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                        if ed and not cfg.rank.paused:
+                            ui.button("Lấy link", icon="travel_explore", on_click=lambda: go()).props(
+                                "unelevated no-caps")
+                    return
+                links = got["links"]
+                if not links:
+                    ui.label("DataForSEO không còn thấy link nào từ website này tới các đối thủ "
+                             "(link có thể đã bị gỡ).").classes("text-sm muted q-mt-sm")
+                    return
+                _links_table(ui, [dict(x, site=dom, fetched_at=got["fetched_at"]) for x in links], kit,
+                             with_site=False, export=f"backlink-gap-{dom}")
+
+            async def go() -> None:
+                from nicegui import run
+                entry = PT.take(ui, user, cfg, "backlink_gap_links", n=n, detail=dom)
+                if entry is False:
+                    return
+                note = ui.notification(f"Đang lấy link từ {dom}…", spinner=True, timeout=None,
+                                       position="bottom-right")
+
+                def work():
+                    with connect() as c:
+                        return BG.fetch_links(c, cfg, dom, str(user))
+                try:
+                    res = await run.io_bound(work)
+                    note.dismiss()
+                    ui.notify(f"Đã lấy {len(res['links'])} link từ {dom}" +
+                              (f" ({len(res['errors'])} đối thủ lỗi)" if res["errors"] else ""),
+                              type="warning" if res["errors"] else "positive", position="bottom-right")
+                except Exception as e:  # noqa: BLE001
+                    note.dismiss()
+                    PT.give_back(entry)
+                    ui.notify(f"Chưa lấy được: {str(e)[:200]}", type="negative", position="bottom-right",
+                              multi_line=True)
+                    return
+                inner.refresh()
+                body.refresh()
+            inner()
+        d.on("hide", d.delete)
+        d.open()
+
+    def confirm(btn) -> None:
+        """Hộp tìm GAP: bắt buộc chọn đối thủ (không chọn sẵn) hoặc nhập tên miền; giá cập nhật theo số đã chọn."""
+        pick: set = set()
+        with connect() as c:
+            got = BG.fetched(c, site)
+        today = datetime.now(timezone.utc).date()
+
+        def age(d: str) -> int | None:
+            return (today - date.fromisoformat(got[d][:10])).days if d in got else None
+        with ui.dialog() as d, ui.card().style("width:480px; max-width:94vw; border-radius:14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label("Tìm backlink GAP").classes("text-lg font-semibold col")
+                ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
+            mode = {"m": "full"}
+            ui.toggle({"full": "Đầy đủ", "multi": "Nhanh · trỏ về từ 2 đối thủ"}, value="full",
+                      on_change=lambda e: (mode.update(m=e.value), price.refresh())).props(
+                "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                "sr-seg q-mt-xs")
+
+            @ui.refreshable
+            def mode_help() -> None:
+                ui.label("Đầy đủ: mỗi đối thủ một lượt gọi, lấy 100 website uy tín nhất của từng đối thủ. Chỉ đối thủ "
+                         "được chọn được cập nhật, đối thủ khác giữ kết quả cũ." if mode["m"] == "full" else
+                         "Nhanh: một lượt gọi cho mọi đối thủ đã chọn, chỉ lấy website trỏ về từ 2 đối thủ trở lên "
+                         "(nhóm dễ xin link nhất), lấy đủ cả nhóm này. Rẻ hơn nhiều khi chọn nhiều đối thủ.").classes(
+                    "text-xs muted")
+            mode_help()
+
+            @ui.refreshable
+            def picker() -> None:
+                with connect() as c:
+                    rv = BG.all_rivals(c, cfg)
+                pick.intersection_update({r["id"] for r in rv})
+                with ui.column().classes("w-full gap-0 q-mt-sm"):
+                    for r in rv:
+                        with ui.row().classes("w-full items-center no-wrap gap-1"):
+                            ui.checkbox(r["name"], value=r["id"] in pick,
+                                        on_change=lambda e, i=r["id"]: (pick.add(i) if e.value else pick.discard(i),
+                                                                        price.refresh())).props("dense").classes("col")
+                            a_ = age(r["domain"])
+                            ui.label(r["domain"] + ("" if a_ is None else " · hôm nay" if a_ == 0 else
+                                                    f" · {a_} ngày trước")).classes(
+                                "text-xs ellipsis " + ("text-warning" if a_ is not None and a_ < BG.FRESH_DAYS
+                                                       else "muted")).style("max-width:220px").tooltip(
+                                "Chưa lấy lần nào" if a_ is None else f"Lấy ngày {_vn(got[r['domain']])}")
+                            if r.get("extra"):
+                                ui.button(icon="close", on_click=lambda _, r=r: drop_extra(r)).props(
+                                    "flat round dense size=xs color=grey-7").tooltip("Bỏ tên miền nhập tay")
+                    if not rv:
+                        ui.label("Trang Đối thủ chưa có đối thủ: nhập tên miền bên dưới.").classes("text-sm muted")
+                with ui.row().classes("w-full items-center no-wrap gap-1 q-mt-sm"):
+                    new_dom = ui.input(placeholder="Nhập tên miền đối thủ khác, vd. kinhabc.vn").props(
+                        "dense outlined").classes("col").on("keydown.enter", lambda: add_extra(new_dom))
+                    ui.button("Thêm", icon="add", on_click=lambda: add_extra(new_dom)).props(
+                        "flat dense no-caps color=primary")
+                ui.label("Tên miền nhập tay chỉ dùng cho Backlink GAP, không thêm vào trang Đối thủ.").classes(
+                    "text-xs muted")
+
+            def add_extra(inp) -> None:
+                try:
+                    with connect() as c:
+                        x = BG.add_extra(c, cfg, inp.value or "", str(user))
+                except RuntimeError as e:
+                    ui.notify(str(e), type="warning", position="bottom-right")
+                    return
+                pick.add(x["id"])
+                picker.refresh()
+                price.refresh()
+
+            def drop_extra(r: dict) -> None:
+                with connect() as c:
+                    BG.remove_extra(c, site, r["domain"])
+                pick.discard(r["id"])
+                picker.refresh()
+                price.refresh()
+
+            @ui.refreshable
+            def price() -> None:
+                mode_help.refresh()
+                n = len(pick)
+                multi = mode["m"] == "multi"
+                ok = (2 <= n <= BG.MULTI_MAX_RIVALS) if multi else n >= 1
+                with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid q-mt-sm"):
+                    ui.icon("toll", size="18px")
+                    with connect() as c:
+                        doms = {r["id"]: r["domain"] for r in BG.all_rivals(c, cfg)}
+                    fresh = [] if multi else [i for i in pick if (age(doms.get(i, "")) is not None and
+                                                                  age(doms.get(i, "")) < BG.FRESH_DAYS)]
+                    if multi:
+                        txt = ("Chế độ nhanh cần chọn ít nhất 2 đối thủ." if n < 2 else
+                               f"Chọn tối đa {BG.MULTI_MAX_RIVALS} đối thủ." if not ok else
+                               (f"Trừ {PT.cost('backlink_gap_multi', 1)} credit" if PT.member(user) else
+                                f"Tốn khoảng {BG.estimate_multi():.2f} USD dữ liệu".replace(".", ","))
+                               + f" (1 lượt gọi cho {n} đối thủ; so với khoảng "
+                               + (f"{PT.cost('backlink_gap', n)} credit" if PT.member(user) else
+                                  f"{BG.estimate(n):.2f} USD".replace(".", ",")) + " ở chế độ đầy đủ).")
+                    else:
+                        txt = ("Chưa chọn đối thủ nào." if not n else
+                               (f"Trừ {PT.cost('backlink_gap', n)} credit" if PT.member(user) else
+                                f"Tốn khoảng {BG.estimate(n):.2f} USD dữ liệu".replace(".", ","))
+                               + f" ({n} đối thủ × {BG.LIMIT} website).")
+                    ui.label(txt).classes("text-sm")
+                if fresh:
+                    ui.label(f"{len(fresh)} đối thủ đã chọn mới lấy dưới {BG.FRESH_DAYS} ngày: backlink thay đổi chậm, "
+                             "bỏ chọn để tiết kiệm nếu không cần số mới.").classes("text-xs text-warning q-mt-xs")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                    go_btn = ui.button(f"Tìm · {n} đối thủ" if n else "Tìm", icon="travel_explore",
+                                       on_click=go).props("unelevated no-caps")
+                    if not ok:
+                        go_btn.disable()
+
+            async def go():
+                with connect() as c:
+                    chosen = [r for r in BG.all_rivals(c, cfg) if r["id"] in pick]
+                if not chosen:
+                    return
+                d.close()
+                if mode["m"] == "multi":
+                    await run_multi(btn, chosen)
+                else:
+                    await run_gap(btn, chosen)
+            picker()
+            price()
+        d.on("hide", d.delete)
+        d.open()
+
+    async def run_multi(btn, chosen: list[dict]) -> None:
+        if not ed:
+            return
+        entry = PT.take(ui, user, cfg, "backlink_gap_multi", detail=f"{len(chosen)} đối thủ")
+        if entry is False:
+            return
+        btn.props("loading")
+
+        def work():
+            with connect() as c:
+                return BG.fetch_multi(c, cfg, chosen, str(user))
+        try:
+            res = await run.io_bound(work)
+            state["view"] = "multi"
+            ui.notify(f"Đã tìm {res['sites']} website trỏ về từ 2 đối thủ trở lên", type="positive",
+                      position="bottom-right")
+        except Exception as e:  # noqa: BLE001
+            PT.give_back(entry)
+            ui.notify(f"Chưa tìm được: {str(e)[:200]}", type="negative", position="bottom-right", multi_line=True)
+        btn.props(remove="loading")
+        body.refresh()
 
     async def run_gap(btn, chosen: list[dict]) -> None:
         if not ed:
@@ -466,8 +812,9 @@ def built_panel(ui, cfg, connect, user) -> None:
                              "rank": {"lost": 0, "error": 1, "nofollow": 2, "anchor": 3, "pending": 4, "ok": 5}.get(
                                  r["state"], 9), **_effect_cells(effects.get(r["id"]))})
             data.sort(key=lambda x: x["rank"])
+            WL.enrich(data, "from_host")
             cols = [{"name": "from", "label": "Trang đặt link", "field": "from_host", "align": "left",
-                     "sortable": True},
+                     "sortable": True}, WL.COLUMN,
                     {"name": "to", "label": "Trang đích · anchor", "field": "to_path", "align": "left", "width": 260},
                     {"name": "placed", "label": "Ngày đặt", "field": "placed_iso", "align": "left", "sortable": True,
                      "width": 110}]
@@ -490,6 +837,7 @@ def built_panel(ui, cfg, connect, user) -> None:
                   :title="'Mở chi tiết URL: ' + props.row.to">{{ props.row.to_path }}</a>
                   <div v-if="props.row.anchor" class="sr-bb-sub ellipsis">“{{ props.row.anchor }}”</div></q-td>""",
                 "body-cell-placed": """<q-td :props="props">{{ props.row.placed }}</q-td>""",
+                "body-cell-labels": WL.SLOT,
                 "body-cell-cost": """<q-td :props="props">{{ props.row.cost }}</q-td>""",
                 "body-cell-state": """
                 <q-td :props="props"><span class="sr-bb-st" :class="props.row.tone">{{ props.row.state }}</span>
@@ -511,9 +859,10 @@ def built_panel(ui, cfg, connect, user) -> None:
             TK.table(ui, columns=cols, rows=data, row_key="id", st=kit, noun="link", classes="sr-kw-tbl",
                      filters=[("text", "Trang đặt link / trang đích / anchor", ["from", "to", "anchor"]),
                               *([] if cl else [("num", "Chi phí (đ)", "cost_n")]),
-                              ("enum", "Tình trạng", "state"), ("date", "Ngày đặt", "placed_iso"),
+                              ("enum", "Tình trạng", "state"), WL.FILTER, ("date", "Ngày đặt", "placed_iso"),
                               ("date", "Lần kiểm tra", "checked_iso")],
-                     copy=[("Trang đặt link", "from"), ("Trang đích", "to"), ("Anchor", "anchor"),
+                     actions=WL.action(ui, user, "from_host", body.refresh),
+                     copy=[("Trang đặt link", "from"), WL.COPY, ("Trang đích", "to"), ("Anchor", "anchor"),
                            ("Ngày đặt", "placed_iso"), *([] if cl else [("Chi phí (đ)", "cost_n")]),
                            ("Tình trạng", "state"), ("Chi tiết", "detail"), ("Kiểm tra lúc", "checked_iso"),
                            ("Trang đích trước → sau", "eff")],

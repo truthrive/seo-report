@@ -31,7 +31,9 @@ NOTE = {"rank": "Bấm Check ngay. Check theo lịch của bộ không trừ cre
         "ai_rank_diag": "Bấm AI chẩn đoán trong chi tiết một từ khóa (trang Thứ hạng).",
         "ai_rank_target": "Bấm AI gợi ý URL mục tiêu ở bảng từ khóa (tối đa 60 từ khóa một lần).",
         "ai_rank_actions": "Tick từ khóa rồi bấm AI việc cần làm (tối đa 15 từ khóa một lần).",
-        "backlink_gap": "Mỗi đối thủ một lần khi bấm Tìm backlink GAP ở trang Backlink. Xem lại kết quả không tính."}
+        "backlink_gap": "Mỗi đối thủ một lần khi bấm Tìm backlink GAP ở trang Backlink. Xem lại kết quả không tính.",
+        "backlink_gap_multi": "Một lần cho cả nhóm đối thủ khi tìm Backlink GAP ở chế độ Nhanh.",
+        "backlink_gap_links": "Mỗi đối thủ một lần khi bấm Lấy link của một website trong Backlink GAP. Xem lại không tính."}
 
 
 def _n(v) -> str:

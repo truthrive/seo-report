@@ -527,7 +527,10 @@ def model_catalog(cfg, key: str, opener=None) -> list[dict]:
         mid = m.get("id") or (m.get("name") or "").removeprefix("models/")
         if mid and mid not in seen:
             seen.add(mid)
-            out.append({"id": mid, "price": _price(m)})
+            p = m.get("pricing") if isinstance(m.get("pricing"), dict) else None
+            out.append({"id": mid, "price": _price(m), "pricing": {
+                "input": p.get("input", p.get("prompt")), "output": p.get("output", p.get("completion")),
+                "unit": p.get("unit") or ""} if p else None})
     out.sort(key=lambda x: x["id"].lower())
     _MODELS_CACHE[(key, base)] = (time.time(), out)
     return out

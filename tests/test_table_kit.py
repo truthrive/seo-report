@@ -65,3 +65,16 @@ class MinMoveTest(unittest.TestCase):
         self.assertEqual(WR._min_move({"rank": 14, "prev": None, "prev_depth": 20, "last_depth": 20}, 100), 7)
         self.assertEqual(WR._min_move({"rank": None, "prev": 7, "prev_depth": 20, "last_depth": 20}, -100), 14)
         self.assertIsNone(WR._min_move({"rank": 3, "prev": 5, "prev_depth": 20, "last_depth": 20}, 2))
+
+
+class XlsxTest(unittest.TestCase):
+    def test_xlsx_columns_and_lists(self):
+        import io
+
+        from openpyxl import load_workbook
+        data = TK.xlsx([{"a": "x.vn", "b": ["A", "B"], "c": 3}], [("Website", "a"), ("Đối thủ", "b"), ("Số", "c")],
+                       "Link")
+        ws = load_workbook(io.BytesIO(data)).active
+        self.assertEqual(ws.title, "Link")
+        self.assertEqual([c.value for c in ws[1]], ["Website", "Đối thủ", "Số"])
+        self.assertEqual([c.value for c in ws[2]], ["x.vn", "A, B", 3])
