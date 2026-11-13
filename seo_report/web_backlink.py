@@ -805,7 +805,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                             for x in items]
                     note += " · xếp theo số website trỏ về"
                 if kind in ("domains", "changes"):  # nhãn website (dùng chung mọi dự án)
-                    WL.enrich(rows, "domain" if kind == "domains" else "source")
+                    WL.enrich(rows, "domain" if kind == "domains" else "source", user)
                     cols.insert(1, ("labels", "Nhãn", "left"))
                 if q:
                     rows = [r for r in rows if q in _fold(" ".join(str(v) for v in r.values()))]
@@ -848,7 +848,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                          actions=WL.action(ui, user, "domain" if kind == "domains" else "source", table.refresh)
                          if lab_kind else None,
                          noun=KIT_NOUN[kind], classes="sr-bl-table",
-                         events={"drill": open_links} if drill else None, slots={
+                         events={**({"drill": open_links} if drill else {}),
+                                 **WL.events(ui, user, table.refresh)}, slots={
                     "body-cell-labels": WL.SLOT,
                     "body-cell-drill": """
                     <q-td :props="props" style="overflow:visible"><q-btn flat dense no-caps size="sm" color="primary"

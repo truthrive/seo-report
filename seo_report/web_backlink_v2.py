@@ -110,7 +110,7 @@ def domains_panel(ui, user, items: list[dict], kit: dict, on_label, open_links) 
                      "targets": g["targets"], "first_iso": g["first"] or "", "first": _vn(g["first"]),
                      "src": _src_text(g["src"]), "src_l": [AG.SRC[s_] for s_ in g["src"]],
                      "df": "Có dofollow" if g["dofollow"] else "Chỉ nofollow", "danger": g["threat"]})
-    WL.enrich(rows, "domain")
+    WL.enrich(rows, "domain", user)
     cl = A.is_client(user)
     cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True}, WL.COLUMN,
             {"name": "links", "label": "Số link", "field": "links", "align": "right", "sortable": True,
@@ -133,7 +133,7 @@ def domains_panel(ui, user, items: list[dict], kit: dict, on_label, open_links) 
                       ("enum", "Nguồn dữ liệu", "src_l"), ("enum", "Loại link", "df"), ("enum", "Quốc gia", "country"),
                       WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
              actions=WL.action(ui, user, "domain", on_label), export="backlink-website",
-             events={"drill": lambda e: open_links("domain", e.args)},
+             events={"drill": lambda e: open_links("domain", e.args), **WL.events(ui, user, on_label)},
              copy=[("Website", "domain"), WL.COPY, ("Nguồn", "src"), ("Số link", "links"), ("Link DataForSEO", "dfs"),
                    ("Link Semrush", "semrush"), ("Dofollow", "dofollow"), ("Uy tín (DFS)", "rank"), ("Ascore", "ascore"),
                    *([] if cl else [("Điểm spam", "spam")]), ("Trang đích", "targets"), ("Quốc gia", "country"),

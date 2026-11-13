@@ -234,7 +234,7 @@ def _links_table(ui, links: list[dict], kit: dict, with_site: bool = True, expor
              "follow": "dofollow" if x.get("dofollow", True) else "nofollow",
              "attrs": ", ".join(a for a in x.get("attrs") or [] if a != "nofollow")} for i, x in enumerate(links)]
     if with_site:
-        WL.enrich(rows, "site")
+        WL.enrich(rows, "site", user)
     cols = ([{"name": "site", "label": "Website", "field": "site", "align": "left", "sortable": True, "width": 170},
              WL.COLUMN] if with_site else [])
     cols += [{"name": "from", "label": "Trang đặt link", "field": "from_path", "align": "left", "sortable": True},
@@ -252,6 +252,7 @@ def _links_table(ui, links: list[dict], kit: dict, with_site: bool = True, expor
                       ("enum", "Loại link", "follow"),
                       *([WL.FILTER] if with_site else []), ("date", "Thấy lần đầu", "first_iso")],
              actions=WL.action(ui, user, "site", on_label) if with_site and user is not None else None,
+             events=WL.events(ui, user, on_label) if with_site else None,
              copy=[*([("Website", "site"), WL.COPY] if with_site else []), ("Trang đặt link", "from"), ("Tiêu đề", "title"),
                    ("Đối thủ", "rival"), ("Trang đích", "to"), ("Anchor", "anchor"), ("Loại", "follow"),
                    ("Thuộc tính", "attrs"), ("Thấy lần đầu", "first_iso"),
@@ -401,7 +402,7 @@ def gap_panel(ui, cfg, connect, user) -> None:
             fetch_btn = ('<q-btn v-else flat dense no-caps size="sm" color="grey-8" icon="travel_explore" '
                          'label="Lấy link" @click.stop="$parent.$emit(&quot;links&quot;, props.row.domain)"/>'
                          ) if ed else ""
-            WL.enrich(rows, "domain")
+            WL.enrich(rows, "domain", user)
             cols.insert(1, WL.COLUMN)
             if ed or saved:
                 cols.append({"name": "act", "label": "Link cụ thể", "field": "saved", "align": "left",
@@ -413,7 +414,7 @@ def gap_panel(ui, cfg, connect, user) -> None:
                               ("num", "Số đối thủ", "n"), ("num", "Link về đối thủ", "links_n"),
                               *([] if cl else [("num", "Điểm spam", "spam")]),
                               ("enum", "Trỏ về đối thủ", "rivals_l"), WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
-                     events={"links": lambda e: links_dialog(e.args)},
+                     events={"links": lambda e: links_dialog(e.args), **WL.events(ui, user, body.refresh)},
                      export="backlink-gap-website",
                      actions=([{"label": lambda sel: f"Lấy link · {len(sel)} website", "icon": "travel_explore",
                                 "on": lambda sel: bulk_dialog([r["domain"] for r in sel])}]
@@ -923,7 +924,7 @@ def built_panel(ui, cfg, connect, user) -> None:
                              "rank": {"lost": 0, "error": 1, "nofollow": 2, "anchor": 3, "pending": 4, "ok": 5}.get(
                                  r["state"], 9), **_effect_cells(effects.get(r["id"])), **_dfs_cells(dfs[r["id"]])})
             data.sort(key=lambda x: x["rank"])
-            WL.enrich(data, "from_host")
+            WL.enrich(data, "from_host", user)
             cols = [{"name": "from", "label": "Trang đặt link", "field": "from_host", "align": "left",
                      "sortable": True}, WL.COLUMN,
                     {"name": "to", "label": "Trang đích · anchor", "field": "to_path", "align": "left", "width": 260},
@@ -985,7 +986,7 @@ def built_panel(ui, cfg, connect, user) -> None:
                            ("Tình trạng", "state"), ("Chi tiết", "detail"), ("Kiểm tra lúc", "checked_iso"),
                            ("Dữ liệu backlink", "dfs"), ("Ghi nhận từ", "dfs_first"),
                            ("Trang đích trước → sau", "eff")],
-                     slots=slots, events=events)
+                     slots=slots, events={**events, **WL.events(ui, user, body.refresh)})
             ui.label(f"Trước → sau: vị trí trung bình và click mỗi ngày của trang đích trong {BB.EFFECT_DAYS} ngày "
                      "trước và sau ngày đặt link (Search Console). Là số của cả trang, có thể do nhiều nguyên nhân chứ "
                      "không riêng link này.").classes("text-xs muted q-mt-xs")

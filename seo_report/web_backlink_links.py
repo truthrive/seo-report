@@ -35,7 +35,56 @@ def _path(url: str) -> str:
     return (p.path or "/") + (f"?{p.query}" if p.query else "")
 
 
-def rows_of(items: list[dict], client: bool = False, brand_terms: list[str] | None = None) -> list[dict]:
+def pbn_table(ui, user, check: dict, kit: dict, on_label) -> None:
+    """Mục “Nghi ngờ mạng PBN”: bảng website, mỗi dòng một website kèm IP / dải IP đang dùng chung và số website khác
+    cùng IP đó. Lọc, tick chọn để gắn nhãn và xuất Excel như các bảng khác."""
+    rows, seen = [], set()
+    for g in check.get("groups") or []:
+        n = len(g["domains"])
+        for d in g["domains"]:
+            if d in seen:  # website nằm ở cả nhóm IP lẻ và nhóm dải IP: chỉ lấy một dòng (khớp số của mục)
+                continue
+            seen.add(d)
+            mine = [x for x in check["rows"] if x["d_from"] == d]
+            rows.append({"k": d, "domain": d, "where": g["where"], "n_sites": n,
+                         "links": len(mine), "rank": max((x.get("d_rank") or 0 for x in mine), default=0),
+                         "spam": max((x.get("spam") or 0 for x in mine), default=0),
+                         "country": next((x.get("country") or "" for x in mine if x.get("country")), "").upper()})
+    if not rows:
+        return
+    rows.sort(key=lambda r: (-r["n_sites"], r["where"], r["domain"]))
+    WL.enrich(rows, "domain", user)
+    cl = A.is_client(user)
+    cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True}, WL.COLUMN,
+            {"name": "where", "label": "Dùng chung", "field": "where", "align": "left", "sortable": True,
+             "width": 190},
+            {"name": "n_sites", "label": "Website chung IP", "field": "n_sites", "align": "right", "sortable": True,
+             "width": 140},
+            {"name": "links", "label": "Link về mình", "field": "links", "align": "right", "sortable": True,
+             "width": 120},
+            {"name": "rank", "label": "Uy tín", "field": "rank", "align": "right", "sortable": True, "width": 85},
+            {"name": "country", "label": "Quốc gia", "field": "country", "align": "left", "sortable": True,
+             "width": 95}]
+    if not cl:
+        cols.insert(-1, {"name": "spam", "label": "Spam", "field": "spam", "align": "right", "sortable": True,
+                         "width": 75})
+    TK.table(ui, columns=cols, rows=rows, row_key="k", st=kit, noun="website", classes="sr-kw-tbl", page_size=25,
+             filters=[("text", "Website", ["domain"]), ("enum", "IP / dải IP", "where"),
+                      ("num", "Website chung IP", "n_sites"), ("num", "Link về mình", "links"),
+                      ("num", "Uy tín", "rank"), *([] if cl else [("num", "Điểm spam", "spam")]), WL.FILTER],
+             actions=WL.action(ui, user, "domain", on_label), export="backlink-pbn",
+             events=WL.events(ui, user, on_label),
+             copy=[("Website", "domain"), WL.COPY, ("Dùng chung", "where"), ("Website chung IP", "n_sites"),
+                   ("Link về mình", "links"), ("Uy tín", "rank"), *([] if cl else [("Điểm spam", "spam")]),
+                   ("Quốc gia", "country")],
+             slots={"body-cell-domain": """
+                <q-td :props="props"><a :href="'https://' + props.row.domain" target="_blank" rel="noopener"
+                  class="sr-bb-link">{{ props.row.domain }}</a></q-td>""",
+                    "body-cell-labels": WL.SLOT})
+
+
+def rows_of(items: list[dict], client: bool = False, brand_terms: list[str] | None = None,
+            user=None) -> list[dict]:
     from .backlink_audit import anchor_type
     rows = []
     for i, x in enumerate(items):
@@ -67,14 +116,14 @@ def rows_of(items: list[dict], client: bool = False, brand_terms: list[str] | No
             "danger": BLL_SB.get(x.get("threat") or "", "") if x.get("threat") else "",
             "a_type": {"url": "URL", "brand": "Thương hiệu", "keyword": "Từ khóa", "empty": "Trống / ảnh"}.get(
                 anchor_type(x.get("anchor") or "", brand_terms or []), "")})
-    WL.enrich(rows, "d_from")
+    WL.enrich(rows, "d_from", user)
     return rows
 
 
 def table(ui, user, items: list[dict], kit: dict, on_label=None, export: str = "backlink", noun: str = "link") -> None:
     """Bảng link: lọc, chọn, gắn nhãn website, sao chép, xuất Excel."""
     cl = A.is_client(user)
-    rows = rows_of(items, cl)
+    rows = rows_of(items, cl, user=user)
     cols = [{"name": "from", "label": "Trang đặt link", "field": "d_from", "align": "left", "sortable": True},
             WL.COLUMN,
             {"name": "anchor", "label": "Anchor", "field": "anchor", "align": "left", "sortable": True, "width": 180},
@@ -95,6 +144,7 @@ def table(ui, user, items: list[dict], kit: dict, on_label=None, export: str = "
                       ("enum", "Nguồn dữ liệu", "src_l"),
                       WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
              actions=WL.action(ui, user, "d_from", on_label) if on_label else None, export=export,
+             events=WL.events(ui, user, on_label),
              copy=[("Website", "d_from"), WL.COPY, ("Nguồn", "src"), ("Page ascore (Semrush)", "ascore"), ("Trang đặt link", "from"), ("Tiêu đề trang", "title"),
                    ("Anchor", "anchor"), ("Loại anchor", "a_type"), ("Chữ trước anchor", "pre"),
                    ("Chữ sau anchor", "post"), ("Dạng link", "type"), ("Alt ảnh", "alt"), ("Trang đích", "to"),
@@ -344,9 +394,12 @@ def panel(ui, cfg, user, data: dict | None, checks: list[dict], state: dict, ref
                     ui.label("Bấm một mục ở trên để xem danh sách link của mục đó.").classes("text-sm muted")
                     return
                 T.filter_chip(ui, f"{c['title']} · {F.n(len(c['rows']))} link", lambda: set_filter(c["key"]))
-                if c["key"] == "L_pbn":
-                    for g in c.get("groups") or []:
-                        ui.label(f"{g['where']}: " + ", ".join(g["domains"])).classes("text-xs q-mt-xs")
+                if c["key"] == "L_pbn" and c.get("groups"):
+                    pbn_table(ui, user, c, st.setdefault("pbn", TK.new_state()), refresh)
+                    with ui.expansion(f"Xem {F.n(len(c['rows']))} link cụ thể").props("dense").classes(
+                            "w-full sr-au-fold"):
+                        table(ui, user, c["rows"], st["kit"], on_label=refresh, export="backlink-audit-l_pbn")
+                    return
                 table(ui, user, c["rows"], st["kit"], on_label=refresh, export=f"backlink-audit-{c['key'].lower()}")
             tbl()
         return
@@ -381,9 +434,12 @@ def panel(ui, cfg, user, data: dict | None, checks: list[dict], state: dict, ref
             if c:
                 T.filter_chip(ui, f"Đang lọc: {c['title']} · {F.n(len(shown))} {'link' if c['unit'] != 'website' else 'link'}",
                               lambda: set_filter(c["key"]))
-                if c["key"] == "L_pbn":
-                    for g in c.get("groups") or []:
-                        ui.label(f"{g['where']}: " + ", ".join(g["domains"])).classes("text-xs q-mt-xs")
+                if c["key"] == "L_pbn" and c.get("groups"):
+                    pbn_table(ui, user, c, st.setdefault("pbn", TK.new_state()), refresh)
+                    with ui.expansion(f"Xem {F.n(len(shown))} link cụ thể").props("dense").classes(
+                            "w-full sr-au-fold"):
+                        table(ui, user, shown, st["kit"], on_label=refresh, export="backlink-tat-ca")
+                    return
             table(ui, user, shown, st["kit"], on_label=refresh, export="backlink-tat-ca")
         tbl()
 

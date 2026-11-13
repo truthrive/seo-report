@@ -2331,6 +2331,10 @@ HEAD = """
     font-weight: 600; padding: 5px 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(31, 34, 30, .18);
     opacity: 0; pointer-events: none; transition: opacity .12s; top: 50%; transform: translateY(-50%); }
   .sr-rad-label.left { right: calc(100% + 8px); }
+  .sr-lbl-x { all: unset; cursor: pointer; margin-left: 4px; opacity: .55; font-size: 11px; line-height: 1;
+    padding: 0 1px; border-radius: 4px; }
+  .sr-lbl-x:hover { opacity: 1; background: rgba(0,0,0,.08); }
+  .sr-lbl-x:focus-visible { outline: 2px solid #2a78d6; outline-offset: 1px; opacity: 1; }
   /* nhãn website (web_labels.py) */
   .sr-lbl-cell { display: flex; flex-wrap: wrap; gap: 4px; }
   .sr-lbl { display: inline-block; font-size: 11.5px; line-height: 18px; padding: 0 7px; border-radius: 999px;

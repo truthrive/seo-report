@@ -8,13 +8,18 @@ COPY = ("Nhãn", "labels_t")
 SLOT = """
 <q-td :props="props"><div class="sr-lbl-cell">
   <span v-for="l in props.row.labels_c" :key="l.n" class="sr-lbl"
-        :style="{color: l.c, background: l.c + '14', borderColor: l.c + '40'}">{{ l.n }}</span>
+        :style="{color: l.c, background: l.c + '14', borderColor: l.c + '40'}">{{ l.n }}
+    <button v-if="props.row.lbl_edit" type="button" class="sr-lbl-x" :aria-label="'Gỡ nhãn ' + l.n"
+            @click.stop="$parent.$emit('unlabel', {d: props.row.lbl_key, l: l.n})">
+      <q-tooltip>Gỡ nhãn {{ l.n }} khỏi {{ props.row.lbl_key }}</q-tooltip>✕</button>
+  </span>
   <span v-if="!props.row.labels_c || !props.row.labels_c.length" class="muted">–</span>
 </div></q-td>"""
 
 
-def enrich(rows: list[dict], key: str) -> None:
-    """Thêm vào từng dòng: labels (lọc), labels_c (vẽ chip), labels_t (sắp xếp / sao chép) theo website ở `key`."""
+def enrich(rows: list[dict], key: str, user=None) -> None:
+    """Thêm vào từng dòng: labels (lọc), labels_c (vẽ chip), labels_t (sắp xếp / sao chép) theo website ở `key`;
+    lbl_key / lbl_edit để chip có dấu ✕ gỡ nhãn ngay trên bảng (chỉ người được sửa)."""
     try:
         with SL.connect() as c:
             table, colors = SL.all_labels(c), {d["name"]: d["color"] for d in SL.defs(c)}
@@ -25,6 +30,8 @@ def enrich(rows: list[dict], key: str) -> None:
         r["labels"] = labs or ["(chưa gắn)"]
         r["labels_c"] = [{"n": n, "c": colors.get(n, "#4B5563")} for n in labs]
         r["labels_t"] = ", ".join(labs)
+        r["lbl_key"] = SL.norm(r.get(key) or "")
+        r["lbl_edit"] = bool(labs) and A.can_edit(user)
 
 
 def action(ui, user, key: str, on_done) -> list[dict]:
@@ -33,6 +40,23 @@ def action(ui, user, key: str, on_done) -> list[dict]:
         return []
     return [{"label": lambda sel: f"Gắn nhãn · {len({SL.norm(r.get(key)) for r in sel})} website", "icon": "sell",
              "on": lambda sel: dialog(ui, user, [r.get(key) or "" for r in sel], on_done)}]
+
+
+def events(ui, user, on_done=None) -> dict:
+    """Sự kiện cho table_kit: bấm ✕ trên một chip thì gỡ ngay nhãn đó khỏi website của dòng."""
+    if not A.can_edit(user):
+        return {}
+
+    def un(e) -> None:
+        d, lab = (e.args or {}).get("d") or "", (e.args or {}).get("l") or ""
+        if not d or not lab:
+            return
+        with SL.connect() as c:
+            SL.apply(c, [d], remove=[lab], user=str(user))
+        ui.notify(f"Đã gỡ nhãn {lab} khỏi {d}", type="positive", position="bottom-right")
+        if on_done:
+            on_done()
+    return {"unlabel": un}
 
 
 def dialog(ui, user, domains: list[str], on_done=None) -> None:
@@ -52,8 +76,9 @@ def dialog(ui, user, domains: list[str], on_done=None) -> None:
             ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
         ui.label(", ".join(doms[:6]) + (f" và {len(doms) - 6} website khác" if len(doms) > 6 else "")).classes(
             "text-xs muted ellipsis-2-lines")
-        ui.label("Nhãn dùng chung cho mọi dự án và mọi bảng phần Backlink. Ô gạch ngang: chỉ một số website đang có "
-                 "nhãn, để nguyên thì không đổi.").classes("text-xs muted q-mt-xs")
+        ui.label("Nhãn dùng chung cho mọi dự án và mọi bảng phần Backlink. Tick để gắn, bỏ tick để gỡ nhãn đang "
+                 "có, rồi bấm Lưu. Ô gạch ngang: chỉ một số website đang có nhãn, để nguyên thì không đổi.").classes(
+            "text-xs muted q-mt-xs")
 
         @ui.refreshable
         def boxes() -> None:
@@ -111,7 +136,22 @@ def dialog(ui, user, domains: list[str], on_done=None) -> None:
             ui.notify(f"Đã cập nhật nhãn cho {len(doms)} website", type="positive", position="bottom-right")
             if on_done:
                 on_done()
-        with ui.row().classes("w-full justify-end gap-2 q-mt-md"):
+        def drop_all() -> None:
+            now = sorted({n for x in doms for n in have[x]})
+            if not now:
+                ui.notify("Các website đang chọn chưa có nhãn nào", type="info", position="bottom-right")
+                return
+            with SL.connect() as c:
+                SL.apply(c, doms, remove=now, user=str(user))
+            d.close()
+            ui.notify(f"Đã gỡ {len(now)} nhãn khỏi {len(doms)} website", type="positive", position="bottom-right")
+            if on_done:
+                on_done()
+        with ui.row().classes("w-full items-center gap-2 q-mt-md"):
+            ui.button("Gỡ hết nhãn", icon="label_off", on_click=drop_all).props(
+                "flat no-caps dense color=negative").tooltip(
+                f"Gỡ mọi nhãn đang có khỏi {len(doms)} website đã chọn")
+            ui.space()
             ui.button("Hủy", on_click=d.close).props("flat no-caps")
             ui.button("Lưu", icon="check", on_click=save).props("unelevated no-caps")
     d.on("hide", d.delete)
