@@ -173,15 +173,18 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
         shown = apply(rows, filters, st)
         keys = {r[row_key] for r in shown}
         st["sel"] &= {r[row_key] for r in rows}  # bỏ dòng không còn trong bảng
-        bar(shown)
-        status(shown, keys)
         minw = sum(c.get("width") or 200 for c in columns) + (44 if selectable else 0)  # cột co giãn: tối thiểu 200
-        tb = ui.table(columns=fixed_columns(columns), rows=shown, row_key=row_key,
-                      pagination={"rowsPerPage": page_size}, selection="multiple" if selectable else None).props(
-            f'flat dense binary-state-sort :rows-per-page-options="{PAGE_SIZES}" rows-per-page-label="Dòng mỗi '
-            f'trang" no-data-label="Không có {noun} nào khớp bộ lọc"').classes(
-            "w-full sr-fx " + classes).style(f"--tk-minw:{minw}px")  # bề rộng tối thiểu đặt cho bảng bên trong
-        # (table-style của Quasar đặt lên khung cuộn: bảng rộng hơn màn hình bị cắt, không cuộn ngang được)
+        box = ui.element("div").classes("sr-tk-box")  # bộ lọc + thanh đếm + bảng nằm chung một khung
+        with box:
+            with ui.element("div").classes("sr-tk-tools"):  # lọc + đếm + sao chép / xuất Excel
+                bar(shown)
+                status(shown, keys)
+            tb = ui.table(columns=fixed_columns(columns), rows=shown, row_key=row_key,
+                          pagination={"rowsPerPage": page_size}, selection="multiple" if selectable else None).props(
+                f'flat dense binary-state-sort :rows-per-page-options="{PAGE_SIZES}" rows-per-page-label="Dòng mỗi '
+                f'trang" no-data-label="Không có {noun} nào khớp bộ lọc"').classes(
+                "w-full sr-fx " + classes).style(f"--tk-minw:{minw}px")  # bề rộng tối thiểu đặt cho bảng bên trong
+            # (table-style của Quasar đặt lên khung cuộn: bảng rộng hơn màn hình bị cắt, không cuộn ngang được)
         if selectable:
             tb.selected = [r for r in shown if r[row_key] in st["sel"]]
 
@@ -203,7 +206,7 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
 
     def bar(shown: list[dict]) -> None:
         kinds = {k for k, *_ in filters}
-        with ui.row().classes("w-full items-center gap-1 sr-tk-bar"):
+        with ui.row().classes("items-center gap-1 sr-tk-bar"):
             if "text" in kinds:
                 text_label = next(l for k, l, _ in filters if k == "text")
                 for key, name in (("inc", "Bao gồm"), ("exc", "Loại trừ")):
@@ -300,7 +303,7 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
     @ui.refreshable
     def status(shown: list[dict], keys: set) -> None:
         sel = [r for r in rows if r[row_key] in st["sel"]]
-        with ui.row().classes("w-full items-center gap-2 sr-kr-status" + (" on" if sel else "")):
+        with ui.row().classes("items-center gap-2 sr-kr-status" + (" on" if sel else "")):
             if sel:
                 ui.label(f"Đã chọn {len(sel):,} {noun}".replace(",", ".")).classes("text-sm font-semibold")
 

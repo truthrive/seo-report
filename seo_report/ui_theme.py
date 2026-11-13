@@ -927,10 +927,10 @@ HEAD = """
   .sr-kg-ring svg { width: 48px; height: 48px; }
   .sr-kg-lead { margin-top: 6px; font-size: 13px; color: #6B6A5E; }
   /* bảng các tháng: mỗi cam kết một dòng, ô = thực tế / cam kết */
-  .sr-kt3-wrap { overflow-x: auto; border: 1px solid #ECEAE1; border-radius: 12px; }
+  .sr-kt3-wrap { overflow-x: auto; border: 1px solid #E4E2D8; border-radius: 12px; }
   .sr-kt3 { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
-  .sr-kt3 th { background: #F6F5EF; color: #4A4A40; font-weight: 600; padding: 8px 6px; text-align: center;
-    white-space: nowrap; border-bottom: 1px solid #ECEAE1; }
+  .sr-kt3 th { background: #F3F3ED; color: #4A4A40; font-weight: 600; padding: 8px 6px; text-align: center;
+    white-space: nowrap; border-bottom: 1px solid #E4E2D8; }
   .sr-kt3 th .d { font-weight: 400; font-size: 10.5px; color: #8C8A7E; }
   .sr-kt3 th.cur { color: #1F221E; box-shadow: inset 0 -2px #1F221E; }
   .sr-kt3 td { padding: 9px 6px; text-align: center; white-space: nowrap; border-bottom: 1px solid #F0EEE6;
@@ -1086,9 +1086,8 @@ HEAD = """
   /* bảng Từ khóa cam kết */
   .sr-kw-q { width: 220px; flex-shrink: 0; }
   @media (max-width: 600px) { .sr-kw-bar { flex-wrap: wrap; } .sr-kw-q { width: 100%; } }
-  .sr-kw-tbl { border: 1px solid #ECEAE1; border-radius: 12px; overflow: hidden; }
-  .sr-kw-tbl thead th { background: #F6F5EF; color: #4A4A40; font-weight: 600; font-size: 12px; }
-  .sr-kw-tbl tbody td { padding-top: 9px; padding-bottom: 9px; vertical-align: middle; }
+  /* .sr-kw-tbl: không còn kiểu riêng, dùng chuẩn bảng chung ở mục "bảng" bên dưới */
+  .sr-kw-tbl tbody td { vertical-align: middle; }
   .sr-kw-k { font-size: 13.5px; color: #1F221E; }
   .sr-kw-u { font-size: 11.5px; color: #8C8A7E; max-width: 420px; }
   .sr-kw-top { display: inline-block; font-size: 12px; color: #2F4A12; background: #EEF5E0; border-radius: 999px;
@@ -1636,6 +1635,19 @@ HEAD = """
     min-width: 44px; max-width: 44px; }
   .sr-fx .q-table td > div, .sr-fx .q-table td > a { max-width: 100%; }
   .sr-tk-bar { margin-bottom: 4px; }
+  /* bảng (table_kit): bộ lọc, số dòng, nút sao chép / xuất Excel và bảng nằm chung một khung */
+  .sr-tk-box { width: 100%; border: 1px solid #E4E2D8; border-radius: 12px; overflow: hidden; background: #fff; }
+  .sr-tk-box > .q-table__container { border: 0 !important; border-radius: 0 !important; }
+  .sr-tk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; width: 100%;
+    border-bottom: 1px solid #E4E2D8; padding: 5px 10px; background: #FAFAF6; }
+  .sr-tk-tools > .sr-tk-bar { flex: 1 1 300px; min-width: 0; margin: 0; }
+  .sr-tk-tools > .sr-kr-status { flex: 1 1 240px; min-width: 0; min-height: 34px; margin: 0; padding: 0;
+    justify-content: flex-end; border-radius: 8px; }
+  .sr-tk-tools > .sr-kr-status.on { background: transparent; }
+  .sr-tk-tools:has(.sr-kr-status.on) { background: #EEF3FB; border-bottom-color: #C9D8F2; }
+  @media (max-width: 700px) {
+    .sr-tk-tools > .sr-kr-status { justify-content: flex-start; }
+  }
   /* chip lọc bảng từ khóa (theo nhóm, có số) */
   /* mỗi nhóm một hàng, nhãn nhóm cùng độ rộng để các chip thẳng cột */
   .sr-kchips { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; padding: 8px 12px;
@@ -1920,6 +1932,8 @@ HEAD = """
     font-size: 12px; color: #6B6A5E; }
   .q-table__bottom--nodata { background: #fff; }
   .q-table tbody td { font-size: 13px; font-variant-numeric: tabular-nums; }
+  /* chiều cao dòng giống nhau ở mọi bảng (đè mức dày đặc của Quasar) */
+  .q-table--dense .q-table tbody td { padding-top: 9px; padding-bottom: 9px; }
   .q-table tbody tr:nth-child(even) td { background: #FAFAF6; }
   .q-table tbody tr:hover td { background: #F0F2E8; }
   .q-table th.sortable .q-table__sort-icon { font-size: 14px; }
