@@ -179,8 +179,9 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
         tb = ui.table(columns=fixed_columns(columns), rows=shown, row_key=row_key,
                       pagination={"rowsPerPage": page_size}, selection="multiple" if selectable else None).props(
             f'flat dense binary-state-sort :rows-per-page-options="{PAGE_SIZES}" rows-per-page-label="Dòng mỗi '
-            f'trang" no-data-label="Không có {noun} nào khớp bộ lọc" table-style="min-width:{minw}px"').classes(
-            "w-full sr-fx " + classes)
+            f'trang" no-data-label="Không có {noun} nào khớp bộ lọc"').classes(
+            "w-full sr-fx " + classes).style(f"--tk-minw:{minw}px")  # bề rộng tối thiểu đặt cho bảng bên trong
+        # (table-style của Quasar đặt lên khung cuộn: bảng rộng hơn màn hình bị cắt, không cuộn ngang được)
         if selectable:
             tb.selected = [r for r in shown if r[row_key] in st["sel"]]
 
@@ -221,8 +222,8 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                                     "unelevated dense no-caps")
             nums = [(l, f) for k, l, f in filters if k == "num"]
             if nums:
-                n_on = sum(1 for f in st["num"] if any(v is not None for v in st["num"][f]))
-                b = drop_btn("Khoảng số", f"{n_on} điều kiện" if n_on else "")
+                on_ = [l for l, f in nums if any(v is not None for v in st["num"].get(f, (None, None)))]
+                b = drop_btn("Khoảng số", ", ".join(on_))
                 with b, ui.menu().classes("sr-kr-fmenu") as m:
                     boxes = {}
                     with ui.column().classes("q-pa-sm gap-1"):
@@ -245,8 +246,8 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                             ui.button("Áp dụng", on_click=lambda m=m, f_=apply_nums: f_(m)).props("unelevated dense no-caps")
             enums = [(l, f) for k, l, f in filters if k == "enum"]
             if enums:
-                n_on = sum(1 for f in st["enum"] if st["enum"][f])
-                b = drop_btn("Loại & trạng thái", f"{n_on} điều kiện" if n_on else "")
+                on_ = [l for l, f in enums if st["enum"].get(f)]
+                b = drop_btn("Loại & trạng thái", ", ".join(on_))
                 with b, ui.menu().classes("sr-kr-fmenu") as m:
                     sels = {}
                     with ui.column().classes("q-pa-sm gap-1").style("width: 300px"):
@@ -267,8 +268,8 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                             ui.button("Áp dụng", on_click=lambda m=m, f_=apply_enums: f_(m)).props("unelevated dense no-caps")
             dates = [(l, f) for k, l, f in filters if k == "date"]
             if dates:
-                n_on = sum(1 for f in st["date"] if any(st["date"][f]))
-                b = drop_btn("Khoảng ngày", f"{n_on} điều kiện" if n_on else "")
+                on_ = [l for l, f in dates if any(st["date"].get(f, ("", "")))]
+                b = drop_btn("Khoảng ngày", ", ".join(on_))
                 with b, ui.menu().classes("sr-kr-fmenu") as m:
                     boxes_d = {}
                     with ui.column().classes("q-pa-sm gap-1"):
@@ -291,8 +292,8 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
             act = _active(filters, st)
             for text, part in act:
                 T.filter_chip(ui, text, lambda part=part: (_drop(st, part), changed()))
-            if len(act) > 1:
-                ui.button("Xóa tất cả", on_click=lambda: (st.update(inc=[], exc=[], num={}, enum={}, date={}),
+            if act:
+                ui.button("Xóa lọc", on_click=lambda: (st.update(inc=[], exc=[], num={}, enum={}, date={}),
                                                           changed())).props(
                     "flat dense no-caps size=sm color=negative")
 

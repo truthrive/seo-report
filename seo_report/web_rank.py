@@ -3068,6 +3068,33 @@ async def fetch_intents(base) -> None:
             traceback.print_exc()
 
 
+async def gsc_hourly(base) -> None:
+    """Search Console số theo giờ (miễn phí): mỗi dự án khoảng 3 giờ một lần, để thấy sớm khi traffic tụt."""
+    from contextlib import closing
+
+    from nicegui import run
+
+    from . import auth, db
+    from . import gsc_types as GT
+    from . import projects as PJ
+
+    with closing(db.connect(base.db_path)) as c:
+        projects = PJ.list_projects(c)
+    for p in projects:
+        cfg = PJ.config_for(base, p)
+
+        def work(cfg=cfg):
+            with closing(db.connect(cfg.db_path)) as c:
+                if not GT.hourly_due(c, cfg.site_url):
+                    return 0
+                svc = auth.build_service(auth.get_credentials(cfg))
+                return GT.refresh_hourly(c, cfg.site_url, svc)
+        try:
+            await run.io_bound(work)
+        except (Exception, SystemExit):  # noqa: BLE001  (chưa kết nối Google / mất quyền: lượt sau thử lại)
+            pass
+
+
 async def check_built_links(base) -> None:
     """Kiểm tra link đã xây (tải trang đặt link, miễn phí) cho từng dự án: mỗi link một lần mỗi tuần."""
     from contextlib import closing
@@ -3099,6 +3126,7 @@ async def schedule_loop(base) -> None:
     while True:
         await scheduled_checks(base)
         await fetch_intents(base)
+        await gsc_hourly(base)
         await publish_sheets(base)
         await check_built_links(base)
         await asyncio.sleep(15 * 60)

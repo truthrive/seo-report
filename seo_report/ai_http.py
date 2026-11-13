@@ -275,7 +275,7 @@ def _ask(prov: dict, prompt: str, expect_json: bool = False, **kw) -> str:
                 AIS.note_block(main, str(main_err), None)
             raise main_err
     blocked = skip_main or isinstance(main_err, (QuotaError, UpstreamError))
-    reason = str(main_err) if main_err else f"Model “{main['model']}” vừa lỗi, tạm dùng model dự phòng"
+    reason = str(main_err) if main_err else "Model chính vừa lỗi, tạm dùng model dự phòng"  # không ghi tên model
     ups = [fb for fb in chain if not is_down(fb)] + [fb for fb in chain if is_down(fb)]
     for fb in ups:
         try:

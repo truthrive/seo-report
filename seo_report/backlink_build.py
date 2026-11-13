@@ -559,3 +559,91 @@ def effects_by_source(con, site: str, rows: list[dict], end: date) -> list[dict]
             g["pos"] /= g["measured"]
             g["cost_per_click"] = (g["cost"] / g["clicks"]) if g["cost"] and g["clicks"] > 0 else None
     return sorted(out.values(), key=lambda g: -g["links"])
+
+
+# ---------------------------------------------------------------- đối chiếu với danh sách toàn bộ backlink (DataForSEO)
+
+DFS_GRACE_DAYS = 45      # sau chừng này ngày từ lúc đặt mà DataForSEO vẫn chưa thấy link: báo
+DFS_STATES = {"found": ("Đã ghi nhận", "green"), "found_nofollow": ("Ghi nhận · nofollow", "amber"),
+              "lost": ("Mất so với lần trước", "red"), "missing": ("Chưa ghi nhận", "amber"),
+              "waiting": ("Chờ ghi nhận", "grey"), "none": ("Chưa có dữ liệu", "grey")}
+UNRECORDED_LABELS = ("Textlink", "Báo PR", "PBN", "Web 2.0")  # link mới từ website gắn các nhãn này: có thể do team đặt
+UNRECORDED_DAYS = 90
+UNRECORDED_MAX_SPAM = 30
+SPAM_TEXT = re.compile(r"backlink|telegram|tg @|casino|cbd|crosslink|seo rank|link build", re.I)
+
+
+def dfs_match(rows: list[dict], data: dict | None, today: date | None = None) -> dict[int, dict]:
+    """Đối chiếu link đã xây với danh sách backlink lần lấy gần nhất: {id: {"state", "first", "anchor", "dofollow"}}.
+    state: found | found_nofollow | lost (có ở lần trước, lần này mất) | missing (đặt quá DFS_GRACE_DAYS ngày vẫn
+    chưa thấy) | waiting (mới đặt, DataForSEO chưa kịp ghé) | none (chưa có danh sách)."""
+    today = today or date.today()
+    if not data:
+        return {r["id"]: {"state": "none"} for r in rows}
+
+    def index(items):
+        out = {}
+        for x in items:
+            out.setdefault((norm(x["u_from"]), norm(x["u_to"])), x)
+            out.setdefault((norm(x["u_from"]), _host(x["u_to"])), x)  # trang đích có thể khác chút (dấu ?, /)
+        return out
+    cur = index(data["items"])
+    prev = index(data["prev"]["items"]) if data.get("prev") else {}
+    seen_at = data["fetched_at"][:10]
+    out = {}
+    for r in rows:
+        k1, k2 = (norm(r["url_from"]), norm(r["url_to"])), (norm(r["url_from"]), _host(r["url_to"]))
+        x = cur.get(k1) or cur.get(k2)
+        if x:
+            out[r["id"]] = {"state": "found" if x["follow"] else "found_nofollow", "first": x.get("first"),
+                            "anchor": x.get("anchor") or "", "dofollow": x["follow"], "at": seen_at}
+        elif prev.get(k1) or prev.get(k2):
+            out[r["id"]] = {"state": "lost", "at": seen_at}
+        else:
+            placed = date.fromisoformat(r["placed_on"]) if r.get("placed_on") else None
+            old = placed is None or (date.fromisoformat(seen_at) - placed).days >= DFS_GRACE_DAYS
+            out[r["id"]] = {"state": "missing" if old else "waiting", "at": seen_at}
+    return out
+
+
+def unrecorded(rows: list[dict], data: dict | None, labels: dict, today: date | None = None) -> list[dict]:
+    """Link mới (thấy lần đầu trong UNRECORDED_DAYS ngày) từ website gắn nhãn Textlink / Báo PR / PBN / Web 2.0 mà
+    chưa có trong Link đã xây: có thể team đặt mà quên ghi."""
+    from . import site_labels as SL
+    if not data:
+        return []
+    today = today or date.today()
+    since = (today - timedelta(days=UNRECORDED_DAYS)).isoformat()
+    have = {norm(r["url_from"]) for r in rows}
+    out = []
+    for x in data["items"]:
+        labs = [lb for lb in SL.lookup(labels, x["d_from"]) if lb in UNRECORDED_LABELS]
+        spammy = ((x.get("spam") or 0) >= UNRECORDED_MAX_SPAM or x.get("threat")  # link spam không phải team đặt
+                  or (x.get("lang") or "vi") != "vi"  # team đặt link cho website Việt: trang nguồn tiếng Việt
+                  or SPAM_TEXT.search(f"{x.get('anchor') or ''} {x.get('title') or ''}"))
+        if labs and not spammy and (x.get("first") or "") >= since and norm(x["u_from"]) not in have:
+            out.append({**x, "labels": labs})
+    return sorted(out, key=lambda x: x.get("first") or "", reverse=True)
+
+
+def dfs_alerts(con, site: str, data: dict | None) -> list[dict]:
+    """Cảnh báo chuông: link đã xây mất trong dữ liệu DataForSEO, hoặc đặt lâu mà vẫn chưa được ghi nhận."""
+    rows = links(con, site)
+    if not rows or not data:
+        return []
+    m = dfs_match(rows, data)
+    out = []
+    lost = [r for r in rows if m[r["id"]]["state"] == "lost"]
+    missing = [r for r in rows if m[r["id"]]["state"] == "missing"]
+    if lost:
+        out.append({"level": "high", "key": f"bl:built_dfs_lost:{data['fetched_at'][:10]}:{len(lost)}",
+                    "title": f"{len(lost)} link đã xây không còn trong dữ liệu backlink",
+                    "detail": ", ".join(_host(r["url_from"]) for r in lost[:3]) + " · có ở lần lấy trước, lần này mất",
+                    "href": "/backlink?tab=built"})
+    if missing:
+        out.append({"level": "medium", "key": f"bl:built_dfs_missing:{data['fetched_at'][:10]}:{len(missing)}",
+                    "title": f"{len(missing)} link đã xây đặt hơn {DFS_GRACE_DAYS} ngày vẫn chưa được ghi nhận",
+                    "detail": ", ".join(_host(r["url_from"]) for r in missing[:3])
+                    + " · trang đặt link có thể chưa được index hoặc link bị chặn",
+                    "href": "/backlink?tab=built"})
+    return out

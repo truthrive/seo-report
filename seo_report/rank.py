@@ -720,7 +720,8 @@ BACKLINK_RUNS = {"history": "Lịch sử backlink theo tháng", "summary": "Tổ
                  "anchors": "Anchor text", "pages": "Trang được link nhiều nhất",
                  "gap": "Backlink GAP: website trỏ về đối thủ mà chưa trỏ về mình",
                  "gap_links": "Backlink GAP: link cụ thể của một website",
-                 "gap_multi": "Backlink GAP nhanh: website trỏ về từ 2 đối thủ"}
+                 "gap_multi": "Backlink GAP nhanh: website trỏ về từ 2 đối thủ",
+                 "links": "Toàn bộ backlink (mỗi link một dòng)"}
 # API thực gọi của từng khoản chi (để biết call từ API nào)
 API_NAMES = {"rank": "DataForSEO SERP · google/organic/task_post",
              "serp": "DataForSEO SERP · google/organic/live/advanced",
@@ -729,7 +730,7 @@ API_NAMES = {"rank": "DataForSEO SERP · google/organic/task_post",
              "intent": "DataForSEO Labs · google/search_intent"}
 BACKLINK_ENDPOINTS = {"history": "history", "summary": "summary", "domains": "referring_domains",
                       "changes": "backlinks", "anchors": "anchors", "pages": "domain_pages",
-                      "gap": "domain_intersection", "gap_links": "backlinks", "gap_multi": "domain_intersection"}
+                      "gap": "domain_intersection", "gap_links": "backlinks", "gap_multi": "domain_intersection", "links": "backlinks"}
 SPEND_KINDS = {"rank": "Check rank", "volume": "Volume từ khóa", "backlinks": "Backlink", "intent": "Ý định từ khóa",
                "serp": "Xem kết quả Google"}
 

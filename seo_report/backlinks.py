@@ -22,7 +22,7 @@ from .projects import domain
 
 BASE = "https://api.dataforseo.com/v3/backlinks"
 REFRESH_DAYS = 7
-EST_COST = 0.15  # ước tính một lượt (số tổng + lịch sử + 4 danh sách) để chặn trước khi gọi; số thật lấy từ phản hồi
+EST_COST = 0.2  # ước tính một lượt (số tổng + lịch sử + 4 danh sách + toàn bộ backlink) để chặn trước khi gọi
 LIST_KINDS = ("domains", "changes", "anchors", "pages")
 CHANGE_DAYS = 30  # link mới / mất trong bao nhiêu ngày gần nhất
 
@@ -218,6 +218,7 @@ def lists(con: sqlite3.Connection, site: str) -> dict[str, dict]:
 
 EVERY_CHOICES = {7: "Mỗi tuần", 14: "2 tuần một lần", 30: "Mỗi tháng"}
 COST_SUMMARY, COST_LIST = 0.025, 0.027  # USD mỗi lần (theo hóa đơn thật 06/11/2026), để ước tính chi phí tháng
+COST_LINKS = 0.05  # toàn bộ backlink (website khoảng 600 link: 1 lượt gọi); website lớn tốn hơn
 
 
 def settings(con: sqlite3.Connection, site: str) -> dict:
@@ -243,7 +244,7 @@ def monthly_estimate(st: dict) -> float:
     """Chi phí ước tính mỗi tháng theo lịch (0 khi tạm ngưng tự lấy)."""
     if st["paused"]:
         return 0.0
-    return (COST_SUMMARY + COST_LIST * len(st["lists"])) * 30 / st["every_days"]
+    return (COST_SUMMARY + COST_LIST * len(st["lists"]) + COST_LINKS) * 30 / st["every_days"]
 
 
 def next_due(con: sqlite3.Connection, site: str, today: date | None = None) -> date | None:
@@ -342,6 +343,19 @@ def refresh(con: sqlite3.Connection, site: str, cfg, today: date | None = None, 
         save_history(con, site, items, hcost)
         cost += hcost
     cost += fetch_lists(con, site, client, target, today, log, kinds=st["lists"])
+    from . import backlink_links as BLL
+    try:  # toàn bộ backlink cụ thể (mỗi link một dòng): bảng "Tất cả backlink", audit theo từng link
+        cost += BLL.fetch(con, site, client, target, log)
+    except Exception as e:  # noqa: BLE001  (giữ lần lấy cũ, không chặn phần khác)
+        log(f"Không lấy được danh sách toàn bộ backlink: {e}")
+    else:
+        from .cwv import load_key
+        key = load_key(cfg)
+        if key:  # Google Safe Browsing: website nguồn bị đánh dấu mã độc / lừa đảo (miễn phí)
+            try:
+                BLL.safe_check(con, site, key)
+            except Exception as e:  # noqa: BLE001
+                log(f"Safe Browsing: {e}")
     log(f"Đã lấy số backlink của {target}: {res.get('referring_domains')} website trỏ về, "
         f"{res.get('backlinks')} backlink ({R.usd(cost, 3)} USD).")
     return True

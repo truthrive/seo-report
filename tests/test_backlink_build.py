@@ -201,3 +201,30 @@ class EffectTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DfsMatchTest(unittest.TestCase):
+    def test_match_states_and_unrecorded(self):
+        from datetime import date as _d
+
+        from seo_report import backlink_build as BB_
+        from seo_report import backlink_links as BLL
+        rows = [{"id": 1, "url_from": "https://www.bao.vn/a/", "url_to": "https://s.vn/x", "placed_on": "2026-08-01"},
+                {"id": 2, "url_from": "https://blog.vn/b", "url_to": "https://s.vn/y", "placed_on": "2026-08-01"},
+                {"id": 3, "url_from": "https://new.vn/c", "url_to": "https://s.vn/z", "placed_on": "2026-11-01"},
+                {"id": 4, "url_from": "https://gone.vn/d", "url_to": "https://s.vn/", "placed_on": "2026-06-01"},
+                {"id": 5, "url_from": "https://nf.vn/e", "url_to": "https://s.vn/", "placed_on": "2026-06-01"}]
+        sl = lambda f, t, **k: BLL.slim({"domain_from": f.split("/")[2], "url_from": f, "url_to": t, **k})  # noqa
+        cur = [sl("https://bao.vn/a", "https://s.vn/x/", dofollow=True, first_seen="2026-08-05 00:00:00 +00:00",
+                  anchor="kính"),
+               sl("https://nf.vn/e", "https://s.vn/", dofollow=False),
+               sl("https://pr.vn/new", "https://s.vn/", dofollow=True, first_seen="2026-11-01 00:00:00 +00:00")]
+        prev = cur + [sl("https://gone.vn/d", "https://s.vn/")]
+        data = {"fetched_at": "2026-11-12T00:00:00+00:00", "items": cur, "prev": {"items": prev}}
+        m = BB_.dfs_match(rows, data)
+        self.assertEqual({k: v["state"] for k, v in m.items()},
+                         {1: "found", 2: "missing", 3: "waiting", 4: "lost", 5: "found_nofollow"})
+        self.assertEqual(m[1]["first"], "2026-08-05")
+        un = BB_.unrecorded(rows, data, {"pr.vn": ["Báo PR"], "bao.vn": ["Báo PR"]}, _d(2026, 11, 13))
+        self.assertEqual([x["d_from"] for x in un], ["pr.vn"])  # bao.vn đã ghi; nf.vn không có nhãn
+        self.assertEqual(BB_.dfs_match(rows, None)[1]["state"], "none")

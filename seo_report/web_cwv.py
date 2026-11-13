@@ -46,16 +46,24 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
             return
         state["running"] = True
         btn.props("loading")
-        note = ui.notification("Đang kiểm tra tốc độ các trang (vài phút)…", spinner=True, timeout=None,
+        note = ui.notification("Đang kiểm tra tốc độ các trang (khoảng 1 phút)…", spinner=True, timeout=None,
                                type="ongoing", position="bottom-right")
+        prog = {"done": 0, "total": 0}
+
+        def show():
+            if prog["total"]:
+                note.message = f"Đang kiểm tra tốc độ: xong {prog['done']}/{prog['total']} trang…"
+        poll = ui.timer(2, show)
 
         def work():
             logs: list[str] = []
             with closing(db.connect(cfg.db_path)) as c:
-                r = C.refresh(c, cfg, force=True, log=logs.append)
+                r = C.refresh(c, cfg, force=True, log=logs.append,
+                              progress=lambda d, t: prog.update(done=d, total=t))
             return r, logs
         try:
             r, logs = await run.io_bound(work)
+            poll.cancel()
             note.dismiss()
             if r is None:
                 ui.notify(logs[-1] if logs else "Chưa kiểm tra được", type="warning", position="bottom-right")
@@ -63,6 +71,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                 ui.notify(f"Đã kiểm tra {r['pages']} trang" + (f" ({r['errors']} lỗi)" if r["errors"] else ""),
                           type="warning" if r["errors"] else "positive", position="bottom-right", classes="sr-toast")
         except Exception as e:  # noqa: BLE001
+            poll.cancel()
             note.dismiss()
             ui.notify("Không kiểm tra được", caption=str(e)[:300], type="negative", position="bottom-right",
                       timeout=0, close_button="Đóng")
@@ -215,7 +224,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         state["tab"] = "pages"
         body.refresh()
         if state["filter"]:
-            ui.run_javascript("document.getElementById('cwv-pages')?.scrollIntoView({behavior:'smooth', block:'start'})")
+            T.scroll_to(ui, "cwv-pages", 150)  # đợi trang vẽ lại xong
 
     def site_block(series) -> None:
         with T.section(ui, "Cả website · người dùng thật", "groups",

@@ -1629,7 +1629,8 @@ HEAD = """
   .sr-kr-panel .sr-kr-words { border-right: 1px solid #EEECE4; padding-right: 10px; }
   @media (max-width: 900px) { .sr-kr-panel .sr-kr-words { border-right: 0; border-bottom: 1px solid #EEECE4;
     padding: 0 0 10px; } }
-  .sr-fx .q-table { table-layout: fixed; width: 100%; }
+  .sr-fx .q-table { table-layout: fixed; width: 100%; min-width: var(--tk-minw, 0); }
+  .sr-fx .q-table__middle { max-width: 100%; }
   .sr-fx .q-table td, .sr-fx .q-table th { overflow: hidden; text-overflow: ellipsis; }
   .sr-fx .q-table th.q-table--col-auto-width, .sr-fx .q-table td.q-table--col-auto-width { width: 44px;
     min-width: 44px; max-width: 44px; }
@@ -1805,6 +1806,14 @@ HEAD = """
   .sr-au-chip { all: unset; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
     background: #E8EFFD; color: #2a5bab; border-radius: 999px; padding: 2px 10px; font-size: 12.5px; font-weight: 600; }
   .sr-au-chip:hover { background: #DCE6FB; }
+  /* thanh chọn chính (bốn cách xem của tab Danh sách): to hơn thanh chọn phụ bên dưới */
+  .sr-seg.sr-seg-main .q-btn { padding: 4px 16px; min-height: 32px; font-size: 13.5px; }
+  .sr-au-group-h { align-items: baseline; gap: 8px; margin: 16px 0 2px; flex-wrap: wrap; }
+  .sr-au-group-h > div:first-child { font-size: 12.5px; font-weight: 700; letter-spacing: .03em;
+    text-transform: uppercase; color: #6B6A5E; }
+  .sr-au-group-note { font-size: 12px; color: #8C8A7E; }
+  .sr-au-fold { margin-top: 10px; border-top: 1px solid #EEECE4; }
+  .sr-au-fold .q-item { padding-left: 4px; padding-right: 4px; }
   .sr-au-num { font-size: 14px; font-weight: 700; color: #1F221E; white-space: nowrap; }
   .sr-au-table { margin-top: 4px; }
   .sr-au-item .q-expansion-item__content { padding: 0 4px 12px; }
@@ -3369,6 +3378,16 @@ def count_badge(ui, n: int, label: str, tone: str = "red", floating: bool = Fals
     with el:
         ui.html(f'<span aria-hidden="true">{n}</span><span class="sr-only">{label}</span>')
     return el
+
+
+def scroll_to(ui, element_id: str, delay_ms: int = 120) -> None:
+    """Cuộn tới phần tử (bấm mục lọc thì xuống bảng): đợi bảng vẽ lại, cuộn mượt; trình duyệt không cuộn mượt được
+    (tab nền, tắt hiệu ứng) thì sau 0,7 giây nhảy thẳng tới."""
+    ui.run_javascript(
+        "setTimeout(() => { const e = document.getElementById(" + repr(element_id) + "); if (!e) return; "
+        "e.scrollIntoView({behavior: 'smooth', block: 'start'}); "
+        "setTimeout(() => { if (Math.abs(e.getBoundingClientRect().top) > 60) e.scrollIntoView({block: 'start'}); }, 700);"
+        " }, " + str(delay_ms) + ")")
 
 
 def filter_chip(ui, text: str, on_remove, remove_label: str = "Bỏ lọc", icon: str = "filter_list"):

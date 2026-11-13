@@ -125,14 +125,17 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
         cards()
         panel()
 
-    def explain(title: str, lines: list[str]) -> None:
-        """Đầu tab: tên tab + một câu mô tả; cách đọc / việc nên làm gấp lại, bấm "Cách đọc" để mở."""
+    def explain(title: str, lines: list[str], extra=None) -> None:
+        """Đầu tab: tên tab + một câu mô tả; cách đọc / việc nên làm gấp lại, bấm "Cách đọc" để mở. extra: nút thêm
+        (ví dụ Xuất) đặt cạnh "Cách đọc"."""
         name = dict(TABS)[state["tab"]]
         with ui.row().classes("w-full items-start no-wrap gap-3 sr-op-head"):
             ui.icon(TAB_ICON[state["tab"]], size="22px").classes("sr-op-head-ico").props('aria-hidden="true"')
             with ui.column().classes("gap-0 col").style("min-width:0"):
                 ui.label(name).classes("sr-op-head-title")
                 ui.label(title).classes("text-sm muted")
+            if extra:
+                extra()
             btn = ui.button("Cách đọc", icon="help_outline").props(
                 'flat dense no-caps size=sm aria-expanded="false"').classes("sr-op-howbtn")
         box = ui.element("div").classes("sr-op-explain")
@@ -651,20 +654,21 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
     def forecast_tab(fc: dict) -> None:
         from . import keyword_research as KR
         cur = fc["currency"]
+        def export_btn() -> None:  # giá trị theo giá thầu Google Ads: chỉ để đối chiếu, có trong file Excel
+            from datetime import date as _d
+
+            from .web_export import export_menu
+            export_menu(ui, cfg, connect, f"day-len-top_{_d.today():%Y-%m-%d}", lambda: forecast_xlsx(fc, site),
+                        label="Xuất", user=user, category="audit")
         explain(f"Từ khóa đang theo dõi hạng chưa vào top {fc['target']}: lên được top {fc['target']} thì có thêm bao "
                 "nhiêu click mỗi tháng.", [
                     "Từ khóa đầu danh sách đáng đẩy nhất. “Sắp vào mùa”: 2 tháng tới người tìm nhiều hơn bình thường, "
                     "nên đẩy ngay.",
                     f"Không tính {fc['no_volume']} từ khóa gần như không ai tìm (Google Ads không có số)."
-                    if fc["no_volume"] else "Ước tính, dùng để xếp thứ tự ưu tiên."])
-        if fc["rows"] and ed:  # giá trị theo giá thầu Google Ads: chỉ để đối chiếu, có trong file Excel
-            from datetime import date as _d
-
-            from .web_export import export_menu
-            with ui.row().classes("w-full justify-end q-mb-xs"):
-                export_menu(ui, cfg, connect, f"day-len-top_{_d.today():%Y-%m-%d}", lambda: forecast_xlsx(fc, site),
-                            label="Xuất Excel (kèm giá trị ước tính theo giá thầu Google Ads)", user=user,
-                            category="audit")
+                    if fc["no_volume"] else "Ước tính, dùng để xếp thứ tự ưu tiên.",
+                    *(["Nút Xuất: file Excel có thêm giá trị ước tính của số click tăng thêm theo giá thầu Google Ads "
+                       "(chỉ để đối chiếu)."] if fc["rows"] and ed else [])],
+                extra=export_btn if fc["rows"] and ed else None)
         if not fc["rows"]:
             T.empty_state(ui, "emoji_events", "Không có từ khóa nào cần đẩy",
                           "Các từ khóa đều đã ở top 3.")

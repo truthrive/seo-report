@@ -81,7 +81,8 @@ def internal_dialog(ui, cfg, connect, target: str) -> None:
     d.open()
 
 
-def needs_panel(ui, cfg, connect, lists: dict) -> None:
+def needs_panel(ui, cfg, connect, lists: dict, on_plan=None) -> None:
+    """on_plan(rows): nút “AI kế hoạch xây link” cho các trang đã chọn (None: ẩn)."""
     from . import urls as U
     with connect() as c:
         groups = dict(U.list_groups(c, cfg.site_url))
@@ -90,11 +91,11 @@ def needs_panel(ui, cfg, connect, lists: dict) -> None:
 
     @ui.refreshable
     def panel() -> None:
-        _needs(ui, cfg, connect, lists, state, groups, seo, panel)
+        _needs(ui, cfg, connect, lists, state, groups, seo, panel, on_plan)
     panel()
 
 
-def _needs(ui, cfg, connect, lists: dict, state: dict, groups: dict, seo: list, panel) -> None:
+def _needs(ui, cfg, connect, lists: dict, state: dict, groups: dict, seo: list, panel, on_plan=None) -> None:
     from . import keywords as K
     only = None
     if state["g"]:
@@ -143,7 +144,11 @@ def _needs(ui, cfg, connect, lists: dict, state: dict, groups: dict, seo: list, 
                 {"name": "impr", "label": "Lượt hiển thị", "field": "impr", "align": "right", "width": 120},
                 {"name": "dom", "label": "Website trỏ về", "field": "dom", "align": "right", "width": 120},
                 {"name": "act", "label": "", "field": "url", "align": "right", "width": 130}]
+        raw = {r["url"]: r for r in res["rows"]}
+        acts = [{"label": lambda sel: f"AI kế hoạch xây link · {len(sel)} trang", "icon": "auto_awesome",
+                 "on": lambda sel: on_plan([raw[x["url"]] for x in sel if x["url"] in raw])}] if on_plan else None
         TK.table(ui, columns=cols, rows=rows, row_key="url", st=state["kit"], noun="trang", classes="sr-kw-tbl",
+                 actions=acts,
                  filters=[("text", "Trang / từ khóa / nhóm URL SEO", ["path", "best", "seo"]),
                           ("num", "Vị trí từ khóa", "pos"), ("num", "Số từ khóa 4–20", "n"),
                           ("num", "Lượt hiển thị", "impr"), ("num", "Website trỏ về (“ít” tính là 0)", "dom_f")],
@@ -296,6 +301,11 @@ def gap_panel(ui, cfg, connect, user) -> None:
             rv = BG.all_rivals(c, cfg)
             gap = BG.latest(c, site)
             saved = BG.saved_links(c, site)
+            from . import semrush as SR
+            file_links: dict[str, int] = {}
+            for g_ in SR.rival_data(c, site).values():
+                for x in g_["backlinks"] or []:
+                    file_links[x["d_from"]] = file_links.get(x["d_from"], 0) + 1
         with T.section(ui, "Backlink GAP", "group_add",
                        "Website đang đặt link (dofollow) về đối thủ nhưng chưa link về mình: danh sách nên đi xin link. "
                        "Website link về càng nhiều đối thủ càng dễ xin"):
@@ -312,6 +322,11 @@ def gap_panel(ui, cfg, connect, user) -> None:
                     ui.label("Chưa tìm lần nào" + (": bấm Tìm rồi chọn / nhập đối thủ (tốn phí, chỉ chạy khi bấm)."
                                                     if ed else ".")).classes("text-sm muted col")
                 if ed and not cl:
+                    from .web_backlink_links import import_dialog
+                    ui.button("Nhập file Semrush", icon="upload_file",
+                              on_click=lambda: import_dialog(ui, cfg, user, body.refresh)).props(
+                        "outline no-caps dense color=grey-9").tooltip(
+                        "File Referring Domains / Backlinks của đối thủ xuất từ Semrush: thêm vào GAP, miễn phí")
                     btn = ui.button("Tìm lại" if gap else "Tìm backlink GAP", icon="travel_explore",
                                     on_click=lambda: confirm(btn)).props("unelevated no-caps dense").classes(
                         "sr-bg-run")
@@ -320,7 +335,7 @@ def gap_panel(ui, cfg, connect, user) -> None:
             if not gap:
                 return
             n_links = sum(len(v["links"]) for v in saved.values())
-            ui.toggle({"sites": "Danh sách website", "links": f"Link đã lấy · {F.n(n_links)}"}, value=state["tab"],
+            ui.toggle({"sites": "Website nên xin link", "links": f"Link đã lấy · {F.n(n_links)}"}, value=state["tab"],
                       on_change=lambda e: (state.update(tab=e.value), body.refresh())).props(
                 "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
                 "sr-seg q-mb-sm")
@@ -335,10 +350,10 @@ def gap_panel(ui, cfg, connect, user) -> None:
             items = gap["items"]
             clean = [g for g in items if cl or (g["spam"] or 0) < BG.SPAM_HIDE]
             multi = [g for g in clean if len(g["rivals"]) >= 2]
-            views = {"clean": (f"Không spam · {len(clean)}" if not cl else f"Tất cả · {len(clean)}"),
-                     "multi": f"Trỏ về từ 2 đối thủ · {len(multi)}"}
+            views = {"clean": (f"Nên xin link · {len(clean)}" if not cl else f"Tất cả · {len(clean)}"),
+                     "multi": f"Trỏ về từ 2 đối thủ trở lên · {len(multi)}"}
             if not cl:
-                views["all"] = f"Cả website spam · {len(items)}"
+                views["all"] = f"Tất cả, gồm cả spam · {len(items)}"
             with ui.row().classes("w-full items-center gap-2 q-mb-xs"):
                 ui.toggle(views, value=state["view"] if state["view"] in views else "clean",
                           on_change=lambda e: (state.update(view=e.value), body.refresh())).props(
@@ -347,14 +362,31 @@ def gap_panel(ui, cfg, connect, user) -> None:
                 if not cl:
                     ui.label(f"Spam = điểm spam từ {BG.SPAM_HIDE}/100: nên bỏ qua khi xin link").classes(
                         "text-xs muted gt-xs")
+            from . import link_audit as LA_
+            groups = LA_.pbn_groups([{"d_from": g["domain"], "ip": g.get("ip") or ""} for g in items if g.get("ip")])
+            if groups and not cl:
+                with ui.expansion(f"{len(groups)} nhóm website trỏ về đối thủ dùng chung IP / dải IP (nghi PBN của đối "
+                                  "thủ)", icon="hub").props("dense").classes("w-full q-mb-xs"):
+                    for g_ in groups[:30]:
+                        ui.label(f"{g_['where']} · {len(g_['domains'])} website: " + ", ".join(g_["domains"][:12])
+                                 + (" …" if len(g_["domains"]) > 12 else "")).classes("text-xs")
+                    ui.label("Từ IP trong file Referring Domains (Semrush). Đã bỏ IP của CDN / hosting dùng chung lớn; "
+                             "hosting nhỏ dùng chung vẫn có thể báo nhầm.").classes("text-xs muted")
             shown = {"clean": clean, "multi": multi}.get(state["view"], items)
             rows = [{"domain": g["domain"], "rank": g["rank"], "n": len(g["rivals"]), "rivals": ", ".join(g["rivals"]),
                      "rivals_l": list(g["rivals"]), "links_n": g["backlinks"],
+                     "ascore": g.get("ascore"), "country": g.get("country") or "", "ip": g.get("ip") or "",
+                     "src": " + ".join({"dfs": "DataForSEO", "semrush": "Semrush"}.get(s_, s_)
+                                       for s_ in (g.get("src") or ["dfs"])),
+                     "src_l": [{"dfs": "DataForSEO", "semrush": "Semrush"}.get(s_, s_) for s_ in (g.get("src") or ["dfs"])],
                      "links": ("≥" if g.get("partial") else "") + F.n(g["backlinks"]),
                      "spam": g["spam"], "first_iso": g["first_seen"] or "",
-                     "saved": len(saved[g["domain"]]["links"]) if g["domain"] in saved else -1,
+                     "saved": (len(saved[g["domain"]]["links"]) if g["domain"] in saved else 0)
+                     + file_links.get(g["domain"], 0) if g["domain"] in saved or g["domain"] in file_links else -1,
                      "first": _vn(g["first_seen"]) if g["first_seen"] else "–"} for g in shown]
             cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True},
+                    {"name": "ascore", "label": "Ascore", "field": "ascore", "align": "right", "sortable": True,
+                     "width": 85},
                     {"name": "rank", "label": "Uy tín", "field": "rank", "align": "right", "sortable": True,
                      "width": 100},
                     {"name": "n", "label": "Trỏ về đối thủ", "field": "n", "align": "left", "sortable": True,
@@ -376,7 +408,8 @@ def gap_panel(ui, cfg, connect, user) -> None:
                              "sortable": True, "width": 130})
             TK.table(ui, columns=cols, rows=rows, row_key="domain", st=state["kit"], noun="website",
                      classes="sr-kw-tbl", page_size=25,
-                     filters=[("text", "Website", ["domain"]), ("num", "Uy tín", "rank"),
+                     filters=[("text", "Website", ["domain"]), ("num", "Uy tín", "rank"), ("num", "Ascore", "ascore"),
+                              ("enum", "Nguồn dữ liệu", "src_l"), ("enum", "Quốc gia", "country"),
                               ("num", "Số đối thủ", "n"), ("num", "Link về đối thủ", "links_n"),
                               *([] if cl else [("num", "Điểm spam", "spam")]),
                               ("enum", "Trỏ về đối thủ", "rivals_l"), WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
@@ -385,7 +418,8 @@ def gap_panel(ui, cfg, connect, user) -> None:
                      actions=([{"label": lambda sel: f"Lấy link · {len(sel)} website", "icon": "travel_explore",
                                 "on": lambda sel: bulk_dialog([r["domain"] for r in sel])}]
                               if ed and not cfg.rank.paused else []) + WL.action(ui, user, "domain", body.refresh),
-                     copy=[("Website", "domain"), WL.COPY, ("Uy tín", "rank"), ("Số đối thủ", "n"),
+                     copy=[("Website", "domain"), WL.COPY, ("Nguồn", "src"), ("Ascore (Semrush)", "ascore"),
+                           ("Quốc gia", "country"), ("IP", "ip"), ("Uy tín", "rank"), ("Số đối thủ", "n"),
                            ("Trỏ về đối thủ", "rivals"), ("Link về đối thủ", "links_n"),
                            ("Thấy lần đầu", "first_iso"), *([] if cl else [("Điểm spam", "spam")])],
                      slots={
@@ -408,6 +442,10 @@ def gap_panel(ui, cfg, connect, user) -> None:
                   """ + fetch_btn + """
                 </q-td>""",
                          "body-cell-first": """<q-td :props="props">{{ props.row.first }}</q-td>""",
+                         "body-cell-ascore": """
+                <q-td :props="props"><span v-if="props.row.ascore != null">{{ props.row.ascore }}</span>
+                  <span v-else class="muted">–</span>
+                  <div class="sr-bb-sub">{{ props.row.src }}</div></q-td>""",
                          "body-cell-n": """
                 <q-td :props="props"><div class="ellipsis" :title="props.row.rivals"><span class="num">{{
                   props.row.n }}</span><span class="sr-bb-sub" style="margin-left:6px">{{ props.row.rivals }}</span>
@@ -505,14 +543,24 @@ def gap_panel(ui, cfg, connect, user) -> None:
             def inner() -> None:
                 with connect() as c:
                     got = BG.saved_links(c, site).get(dom)
+                    from . import semrush as SR
+                    flinks = SR.rival_links(c, site, dom)
+                if flinks:  # gộp link từ file Semrush của đối thủ (miễn phí) với link đã lấy qua DataForSEO
+                    seen_ = {(x["url_from"], x["url_to"]) for x in (got or {}).get("links") or []}
+                    extra = [x for x in flinks if (x["url_from"], x["url_to"]) not in seen_]
+                    got = {"fetched_at": (got or {}).get("fetched_at") or "", "links": ((got or {}).get("links") or [])
+                           + extra, "file": len(extra)}
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
                     with ui.column().classes("gap-0 col").style("min-width:0"):
                         ui.label(f"Link từ {dom}").classes("text-lg font-semibold ellipsis")
                         ui.label("Trỏ về " + ", ".join(t["name"] for t in targets) +
-                                 (f" · lấy lúc {_vn(got['fetched_at'])}" if got else "")).classes(
+                                 (f" · lấy lúc {_vn(got['fetched_at'])}" if got and got.get("fetched_at") else "")
+                                 + (f" · {got['file']} link từ file Semrush (miễn phí)" if got and got.get("file")
+                                    else "")).classes(
                             "text-xs muted ellipsis")
                     if ed and got and not cfg.rank.paused:
-                        ui.button(f"Lấy lại · {price}", icon="refresh", on_click=lambda: go()).props(
+                        ui.button(("Lấy lại" if got.get("fetched_at") else "Lấy thêm từ DataForSEO") + f" · {price}",
+                                  icon="refresh", on_click=lambda: go()).props(
                             "flat no-caps dense color=grey-8")
                     ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
                 if not got:
@@ -760,12 +808,63 @@ def _effect_cells(ef: dict | None) -> dict:
     return {"eff": pos or clk, "eff_sub": clk if pos else "", "eff_tone": tone, "eff_sort": pc}
 
 
+def _dfs_cells(m: dict) -> dict:
+    """Ô "Dữ liệu backlink": link đã xây có trong danh sách toàn bộ backlink (DataForSEO) không."""
+    from . import backlink_build as BB_
+    lab, tone = BB_.DFS_STATES.get(m["state"], ("–", "grey"))
+    sub = ""
+    if m["state"].startswith("found"):
+        sub = f"thấy từ {_vn(m['first'])}" if m.get("first") else ""
+        if m.get("anchor"):
+            sub += (" · " if sub else "") + f"“{m['anchor'][:40]}”"
+    elif m["state"] == "missing":
+        sub = f"đặt hơn {BB_.DFS_GRACE_DAYS} ngày, trang có thể chưa được index"
+    elif m["state"] == "waiting":
+        sub = "mới đặt, chờ lần lấy số sau"
+    elif m["state"] == "lost":
+        sub = "có ở lần lấy trước, lần này không thấy"
+    return {"dfs": lab, "dfs_tone": tone, "dfs_sub": sub, "dfs_first": m.get("first") or "",
+            "dfs_rank": {"lost": 0, "missing": 1, "found_nofollow": 2, "waiting": 3, "found": 4}.get(m["state"], 5)}
+
+
 def built_panel(ui, cfg, connect, user) -> None:
     from nicegui import run
     site = cfg.site_url
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: không xem chi phí
     kit = TK.new_state()
+
+    def unrecorded_box(unrec: list[dict]) -> None:
+        """Link mới từ website gắn nhãn Textlink / Báo PR / PBN / Web 2.0 chưa có trong danh sách: thêm nhanh."""
+        pick = {i: True for i in range(len(unrec))}
+        with ui.expansion(f"{len(unrec)} link mới từ website Textlink / Báo PR / PBN / Web 2.0 chưa ghi vào danh sách",
+                          icon="playlist_add_check").props("dense").classes("w-full q-mb-sm sr-bb-unrec"):
+            ui.label(f"Thấy lần đầu trong {BB.UNRECORDED_DAYS} ngày gần nhất (danh sách toàn bộ backlink). Nếu là link "
+                     "team đặt / mua thì thêm vào để tool theo dõi link còn, nofollow, anchor.").classes(
+                "text-xs muted")
+            with ui.column().classes("w-full gap-0 q-mt-xs").style("max-height:260px; overflow:auto"):
+                for i, x in enumerate(unrec[:60]):
+                    with ui.row().classes("w-full items-center no-wrap gap-2"):
+                        ui.checkbox(value=True, on_change=lambda e, i=i: pick.update({i: e.value})).props("dense")
+                        with ui.column().classes("gap-0 col").style("min-width:0"):
+                            ui.link(x.get("title") or x["u_from"], x["u_from"], new_tab=True).classes(
+                                "text-sm ellipsis sr-bb-link")
+                            ui.label(f"{x['d_from']} · {', '.join(x['labels'])} · → {_path(x['u_to'])} · "
+                                     f"“{(x.get('anchor') or '')[:40]}” · thấy {_vn(x.get('first'))}").classes(
+                                "text-xs muted ellipsis")
+
+            def add_picked() -> None:
+                rows_ = [{"url_from": x["u_from"], "url_to": x["u_to"], "anchor": x.get("anchor") or "",
+                          "placed_on": _vn(x.get("first")) if x.get("first") else ""}
+                         for i, x in enumerate(unrec[:60]) if pick.get(i)]
+                with connect() as c:
+                    res = BB.add_links(c, site, rows_, str(user))
+                ui.notify(f"Đã thêm {res['added']} link vào danh sách" + (f" ({len(res['bad'])} bỏ qua)"
+                                                                          if res["bad"] else ""),
+                          type="positive", position="bottom-right")
+                body.refresh()
+            ui.button("Thêm các link đã chọn", icon="add", on_click=add_picked).props(
+                "unelevated no-caps dense q-mt-sm")
 
     @ui.refreshable
     def body() -> None:
@@ -775,6 +874,16 @@ def built_panel(ui, cfg, connect, user) -> None:
             end = K.latest_date(c, site)
             effects = {r["id"]: BB.effect(c, site, r, end) for r in rows}
             by_src = BB.effects_by_source(c, site, rows, end) if rows else []
+            from . import backlink_links as BLL
+            ld = BLL.latest(c, site)
+        from . import site_labels as SL
+        try:
+            with SL.connect() as c:
+                labels_ = SL.all_labels(c)
+        except Exception:  # noqa: BLE001
+            labels_ = {}
+        dfs = BB.dfs_match(rows, ld)
+        unrec = BB.unrecorded(rows, ld, labels_) if not cl else []
         sm = BB.summary(rows)
         with T.section(ui, "Link đã xây", "add_link",
                        "Link team đã đặt / mua. Tool tự tải trang đặt link mỗi tuần để kiểm tra link còn, dofollow và "
@@ -795,6 +904,8 @@ def built_panel(ui, cfg, connect, user) -> None:
                         "flat no-caps dense color=grey-8")
                 if ed:
                     ui.button("Thêm link", icon="add", on_click=add_dialog).props("unelevated no-caps")
+            if unrec and ed:
+                unrecorded_box(unrec)
             if not rows:
                 ui.label("Chưa có link nào. Bấm “Thêm link” để ghi các link team đã đặt / mua." if ed else
                          "Chưa có link nào.").classes("text-sm muted")
@@ -810,7 +921,7 @@ def built_panel(ui, cfg, connect, user) -> None:
                              "checked_iso": (r["checked_at"] or "")[:10],
                              "detail": r["detail"] or "", "checked": _vn(r["checked_at"]) if r["checked_at"] else "chưa",
                              "rank": {"lost": 0, "error": 1, "nofollow": 2, "anchor": 3, "pending": 4, "ok": 5}.get(
-                                 r["state"], 9), **_effect_cells(effects.get(r["id"]))})
+                                 r["state"], 9), **_effect_cells(effects.get(r["id"])), **_dfs_cells(dfs[r["id"]])})
             data.sort(key=lambda x: x["rank"])
             WL.enrich(data, "from_host")
             cols = [{"name": "from", "label": "Trang đặt link", "field": "from_host", "align": "left",
@@ -823,6 +934,8 @@ def built_panel(ui, cfg, connect, user) -> None:
                              "sortable": True, "width": 110})
             cols += [{"name": "state", "label": "Tình trạng", "field": "rank", "align": "left", "sortable": True,
                       "width": 150},
+                     {"name": "dfs", "label": "Dữ liệu backlink", "field": "dfs_rank", "align": "left",
+                      "sortable": True, "width": 165},
                      {"name": "eff", "label": "Trang đích trước → sau", "field": "eff_sort", "align": "left",
                       "sortable": True, "width": 190}]
             if ed:
@@ -837,6 +950,10 @@ def built_panel(ui, cfg, connect, user) -> None:
                   :title="'Mở chi tiết URL: ' + props.row.to">{{ props.row.to_path }}</a>
                   <div v-if="props.row.anchor" class="sr-bb-sub ellipsis">“{{ props.row.anchor }}”</div></q-td>""",
                 "body-cell-placed": """<q-td :props="props">{{ props.row.placed }}</q-td>""",
+                "body-cell-dfs": """
+                <q-td :props="props"><span class="sr-bb-st" :class="props.row.dfs_tone">{{ props.row.dfs }}</span>
+                  <div v-if="props.row.dfs_sub" class="sr-bb-sub ellipsis" :title="props.row.dfs_sub">
+                  {{ props.row.dfs_sub }}</div></q-td>""",
                 "body-cell-labels": WL.SLOT,
                 "body-cell-cost": """<q-td :props="props">{{ props.row.cost }}</q-td>""",
                 "body-cell-state": """
@@ -859,12 +976,14 @@ def built_panel(ui, cfg, connect, user) -> None:
             TK.table(ui, columns=cols, rows=data, row_key="id", st=kit, noun="link", classes="sr-kw-tbl",
                      filters=[("text", "Trang đặt link / trang đích / anchor", ["from", "to", "anchor"]),
                               *([] if cl else [("num", "Chi phí (đ)", "cost_n")]),
-                              ("enum", "Tình trạng", "state"), WL.FILTER, ("date", "Ngày đặt", "placed_iso"),
+                              ("enum", "Tình trạng", "state"), ("enum", "Dữ liệu backlink", "dfs"), WL.FILTER,
+                              ("date", "Ngày đặt", "placed_iso"),
                               ("date", "Lần kiểm tra", "checked_iso")],
                      actions=WL.action(ui, user, "from_host", body.refresh),
                      copy=[("Trang đặt link", "from"), WL.COPY, ("Trang đích", "to"), ("Anchor", "anchor"),
                            ("Ngày đặt", "placed_iso"), *([] if cl else [("Chi phí (đ)", "cost_n")]),
                            ("Tình trạng", "state"), ("Chi tiết", "detail"), ("Kiểm tra lúc", "checked_iso"),
+                           ("Dữ liệu backlink", "dfs"), ("Ghi nhận từ", "dfs_first"),
                            ("Trang đích trước → sau", "eff")],
                      slots=slots, events=events)
             ui.label(f"Trước → sau: vị trí trung bình và click mỗi ngày của trang đích trong {BB.EFFECT_DAYS} ngày "

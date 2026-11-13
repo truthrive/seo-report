@@ -6,6 +6,10 @@ News; và danh sách sitemap. Cùng quyền Search Console đang có, miễn ph�
 - Trang hàng đầu của từng loại (`gsc_type_pages`): 28 ngày gần nhất và 28 ngày trước đó để so, ghi đè mỗi lần lấy.
 - Sitemap (`gsc_sitemaps`): đường dẫn, lần gửi / Google đọc gần nhất, số URL đã gửi, lỗi, cảnh báo.
 Discover và Google News không có vị trí trung bình (Google không trả).
+- Loại kết quả (`gsc_appearance`, chiều searchAppearance): click / hiển thị theo dạng hiển thị trên Google (đoạn trích
+  sản phẩm, đánh giá sao, FAQ, video…), 28 ngày gần nhất và 28 ngày trước đó.
+- Số theo giờ (`gsc_hourly`, dataState hourly_all): click / hiển thị từng giờ của mấy ngày gần nhất để thấy sớm khi
+  traffic tụt (Google trả theo giờ Thái Bình Dương; lưu theo UTC, hiện theo giờ Việt Nam).
 """
 import json
 import sqlite3
@@ -18,6 +22,17 @@ FIRST_DAYS = 486          # ~16 tháng (giới hạn của Search Console)
 OVERLAP_DAYS = 3
 PAGE_DAYS = 28
 PAGE_ROWS = 100
+HOURLY_DAYS = 3           # Google giữ số theo giờ vài ngày gần nhất
+HOURLY_KEEP = 10          # giữ số theo giờ bao nhiêu ngày (để so cùng giờ hôm trước / tuần trước)
+HOURLY_EVERY_H = 3        # lịch tự lấy số theo giờ
+APPEARANCE = {
+    "PRODUCT_SNIPPETS": "Đoạn trích sản phẩm (giá, tình trạng)", "MERCHANT_LISTINGS": "Danh sách người bán",
+    "REVIEW_SNIPPET": "Đánh giá sao", "FAQ_RICH_RESULT": "Câu hỏi thường gặp (FAQ)", "VIDEO": "Video",
+    "AMP_BLUE_LINK": "AMP", "AMP_TOP_STORIES": "AMP · Tin nổi bật", "TRANSLATED_RESULT": "Kết quả được dịch",
+    "RECIPE_FEATURE": "Công thức", "RECIPE_RICH_SNIPPET": "Công thức (rich)", "EVENT": "Sự kiện",
+    "JOB_LISTING": "Việc làm", "JOB_DETAILS": "Chi tiết việc làm", "EDUCATION_Q_AND_A": "Hỏi đáp giáo dục",
+    "PRACTICE_PROBLEMS": "Bài tập", "SPECIAL_ANNOUNCEMENT": "Thông báo đặc biệt", "WEBLITE": "Web Light",
+    "ORGANIC_SHOPPING": "Mua sắm tự nhiên", "LEARNING_VIDEOS": "Video học tập"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS gsc_type_daily (
@@ -40,6 +55,26 @@ CREATE TABLE IF NOT EXISTS gsc_type_pages (
     start TEXT NOT NULL,
     end TEXT NOT NULL,
     PRIMARY KEY (site, type, period, page)
+);
+CREATE TABLE IF NOT EXISTS gsc_appearance (
+    site TEXT NOT NULL,
+    period TEXT NOT NULL,          -- now | prev
+    appearance TEXT NOT NULL,
+    clicks INTEGER NOT NULL,
+    impressions INTEGER NOT NULL,
+    position REAL,
+    start TEXT NOT NULL,
+    end TEXT NOT NULL,
+    PRIMARY KEY (site, period, appearance)
+);
+CREATE TABLE IF NOT EXISTS gsc_hourly (
+    site TEXT NOT NULL,
+    hour TEXT NOT NULL,            -- UTC, YYYY-MM-DDTHH:00
+    clicks INTEGER NOT NULL,
+    impressions INTEGER NOT NULL,
+    position REAL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (site, hour)
 );
 CREATE TABLE IF NOT EXISTS gsc_sitemaps (
     site TEXT NOT NULL,
@@ -100,6 +135,23 @@ def refresh(con, site: str, service, today: date | None = None, log=print) -> di
                                      a.isoformat(), b.isoformat()))
         except Exception as e:  # noqa: BLE001  (một loại lỗi không chặn loại khác)
             log(f"Search Console {TYPES[t]}: {str(e)[:200]}")
+    try:  # loại kết quả (chiều searchAppearance chỉ dùng một mình, không ghép với page / date)
+        with con:
+            con.execute("DELETE FROM gsc_appearance WHERE site = ?", (site,))
+            for period, a, b in (("now", p_start, p_end), ("prev", q_start, q_end)):
+                body = {"startDate": a.isoformat(), "endDate": b.isoformat(), "dimensions": ["searchAppearance"],
+                        "type": "web", "dataState": "all"}
+                for r in _execute(service.searchanalytics().query(siteUrl=site, body=body)).get("rows", []):
+                    con.execute("INSERT OR REPLACE INTO gsc_appearance VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                (site, period, r["keys"][0], int(r.get("clicks", 0)), int(r.get("impressions", 0)),
+                                 r.get("position"), a.isoformat(), b.isoformat()))
+        out["appearance"] = True
+    except Exception as e:  # noqa: BLE001
+        log(f"Search Console loại kết quả: {str(e)[:200]}")
+    try:
+        out["hourly"] = refresh_hourly(con, site, service, today)
+    except Exception as e:  # noqa: BLE001
+        log(f"Search Console số theo giờ: {str(e)[:200]}")
     try:
         maps = _execute(service.sitemaps().list(siteUrl=site)).get("sitemap", [])
         with con:
@@ -111,6 +163,85 @@ def refresh(con, site: str, service, today: date | None = None, log=print) -> di
     except Exception as e:  # noqa: BLE001
         log(f"Search Console sitemap: {str(e)[:200]}")
     return out
+
+
+def _utc_hour(key: str) -> str:
+    """'2026-11-11T00:00:00-08:00' → '2026-11-11T08:00' (UTC)."""
+    return datetime.fromisoformat(key).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00")
+
+
+def refresh_hourly(con, site: str, service, today: date | None = None) -> int:
+    """Số theo giờ HOURLY_DAYS ngày gần nhất (ghi đè giờ đã có: giờ gần đây Google còn cập nhật)."""
+    from .gsc import _execute
+    ensure_tables(con)
+    today = today or date.today()
+    body = {"startDate": (today - timedelta(days=HOURLY_DAYS)).isoformat(), "endDate": today.isoformat(),
+            "dimensions": ["hour"], "type": "web", "dataState": "hourly_all", "rowLimit": 1000}
+    resp = _execute(service.searchanalytics().query(siteUrl=site, body=body))
+    rows = resp.get("rows", [])
+    cut_partial = (resp.get("metadata") or {}).get("firstIncompleteHour")  # từ giờ này Google chưa có đủ số
+    if cut_partial:
+        cut_utc = _utc_hour(cut_partial)
+        rows = [r for r in rows if _utc_hour(r["keys"][0]) < cut_utc]
+    now = _now()
+    with con:
+        if cut_partial:  # giờ dở dang đã lưu ở lần trước: bỏ, chờ số đủ
+            con.execute("DELETE FROM gsc_hourly WHERE site = ? AND hour >= ?", (site, cut_utc))
+        for r in rows:
+            con.execute("INSERT OR REPLACE INTO gsc_hourly VALUES (?, ?, ?, ?, ?, ?)",
+                        (site, _utc_hour(r["keys"][0]), int(r.get("clicks", 0)), int(r.get("impressions", 0)),
+                         r.get("position"), now))
+        cut = (datetime.now(timezone.utc) - timedelta(days=HOURLY_KEEP)).strftime("%Y-%m-%dT%H:00")
+        con.execute("DELETE FROM gsc_hourly WHERE site = ? AND hour < ?", (site, cut))
+    return len(rows)
+
+
+def hourly_due(con, site: str, now: datetime | None = None) -> bool:
+    ensure_tables(con)
+    last = con.execute("SELECT MAX(fetched_at) FROM gsc_hourly WHERE site = ?", (site,)).fetchone()[0]
+    now = now or datetime.now(timezone.utc)
+    return not last or datetime.fromisoformat(last) < now - timedelta(hours=HOURLY_EVERY_H)
+
+
+def hourly(con, site: str, hours: int = 48) -> list[dict]:
+    """Giờ gần nhất có số (theo giờ Việt Nam), kèm số cùng giờ hôm trước: [{"hour" (VN), "clicks", "impressions",
+    "prev_clicks", "prev_impressions"}]."""
+    ensure_tables(con)
+    rows = {h: (c, i) for h, c, i in con.execute(
+        "SELECT hour, clicks, impressions FROM gsc_hourly WHERE site = ? ORDER BY hour", (site,))}
+    if not rows:
+        return []
+    vn = timezone(timedelta(hours=7))
+    keys = sorted(rows)[-hours:]
+    out = []
+    for h in keys:
+        t = datetime.strptime(h, "%Y-%m-%dT%H:00").replace(tzinfo=timezone.utc)
+        p = (t - timedelta(days=1)).strftime("%Y-%m-%dT%H:00")
+        out.append({"hour": t.astimezone(vn).strftime("%Y-%m-%d %H:00"), "clicks": rows[h][0],
+                    "impressions": rows[h][1], "prev_clicks": rows.get(p, (None, None))[0],
+                    "prev_impressions": rows.get(p, (None, None))[1]})
+    return out
+
+
+def appearance(con, site: str) -> tuple[list[dict], tuple[str, str] | None]:
+    """[{"key", "name", "clicks", "impressions", "position", "prev_clicks", "prev_impressions"}], (từ, đến)."""
+    ensure_tables(con)
+    cur, prev, period = {}, {}, None
+    for per, k, c, i, pos, a, b in con.execute(
+            "SELECT period, appearance, clicks, impressions, position, start, end FROM gsc_appearance WHERE site = ?",
+            (site,)):
+        (cur if per == "now" else prev)[k] = (c, i, pos)
+        if per == "now":
+            period = (a, b)
+    out = [{"key": k, "name": APPEARANCE.get(k, k.replace("_", " ").title()), "clicks": v[0], "impressions": v[1],
+            "position": v[2], "prev_clicks": (prev.get(k) or (None,))[0],
+            "prev_impressions": (prev.get(k) or (None, None))[1]}
+           for k, v in cur.items()]
+    for k, v in prev.items():
+        if k not in cur:
+            out.append({"key": k, "name": APPEARANCE.get(k, k), "clicks": 0, "impressions": 0, "position": None,
+                        "prev_clicks": v[0], "prev_impressions": v[1]})
+    return sorted(out, key=lambda r: -(r["impressions"] or 0)), period
 
 
 # ---------------------------------------------------------------- đọc cho trang

@@ -14,7 +14,7 @@ from . import gbp as G
 from . import ui_theme as T
 
 PERIODS = {28: "28 ngày", 90: "90 ngày", 365: "12 tháng"}
-TABS = (("overview", "Tổng quan"), ("keywords", "Từ khóa"), ("audit", "Kiểm tra hồ sơ"))
+TABS = (("overview", "Tổng quan"), ("reviews", "Đánh giá"), ("keywords", "Từ khóa"), ("audit", "Kiểm tra hồ sơ"))
 LEVELS = {"high": ("Cần sửa", "red", "error"), "medium": ("Nên sửa", "amber", "warning"),
           "info": ("Tham khảo", "blue", "info"), "ok": ("Ổn", "green", "check_circle")}
 
@@ -168,6 +168,10 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
             export_menu(ui, cfg, connect, f"local-seo_{date.today():%Y-%m-%d}", lambda: make_xlsx(locs, names, last),
                         label="Xuất Local SEO (Excel / Google Sheets)", user=user, icon_only=True, category="local")
         checks = {x["name"]: G.audit(x, site) for x in locs if x["name"] in names}
+        from . import gbp_reviews as GR
+        with connect() as c:
+            revs = GR.rows(c, names)
+        n_low = GR.stats(revs)["low_unanswered"]
         n_high = sum(1 for cs in checks.values() for c_ in cs if c_["level"] == "high")
         with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs"):
@@ -175,14 +179,188 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
                 with ui.tab(k, label):
                     if k == "audit" and n_high:
                         T.count_badge(ui, n_high, f"{n_high} việc cần xử lý").classes("sr-tab-badge")
+                    if k == "reviews" and n_low:
+                        T.count_badge(ui, n_low, f"{n_low} đánh giá 1–3 sao chưa trả lời").classes("sr-tab-badge")
         with ui.tab_panels(value=state["tab"]).classes("w-full").props("animated=false") as panels:
             state["panels"] = panels
             with ui.tab_panel("overview").classes("q-px-none"):
                 overview(locs, names, last)
+            with ui.tab_panel("reviews").classes("q-px-none"):
+                reviews_tab(locs, revs)
             with ui.tab_panel("keywords").classes("q-px-none"):
                 keywords(names)
             with ui.tab_panel("audit").classes("q-px-none"):
                 audit_tab(locs, checks)
+
+    def reviews_tab(locs, revs) -> None:
+        """Đánh giá Google Maps: điểm, phân bố sao, theo tháng; danh sách (lọc chưa trả lời); trả lời + AI viết nháp."""
+        from . import gbp_reviews as GR
+        from . import table_kit as TK
+        if not revs:
+            T.empty_state(ui, "reviews", "Chưa có đánh giá nào",
+                          "Đánh giá được lấy cùng lượt “Lấy số mới” (miễn phí)." if ed else "Chưa có đánh giá nào.")
+            return
+        stt = GR.stats(revs)
+        titles = {x["name"]: x["title"] for x in locs}
+        with T.kpi_row(ui):
+            T.kpi(ui, "star", "Điểm trung bình", f"{stt['avg']:.1f}".replace(".", ",") if stt["avg"] else "–",
+                  tone="lime", info=("Tính trên các đánh giá đã lấy về (Google Maps có thể làm tròn khác).",))
+            T.kpi(ui, "reviews", "Đánh giá", F.n(stt["total"]), tone="blue")
+            T.kpi(ui, "mark_chat_unread", "Chưa trả lời", F.n(stt["unanswered"]),
+                  tone="red" if stt["low_unanswered"] else "grey",
+                  hint=f"{stt['low_unanswered']} đánh giá 1–3 sao chưa trả lời" if stt["low_unanswered"] else "",
+                  info=("Trả lời đánh giá (nhất là đánh giá thấp) giúp tăng niềm tin và là tín hiệu tốt cho xếp hạng "
+                        "trên Maps.",))
+        with ui.element("div").classes("sr-bl-two w-full"):
+            with T.section(ui, "Phân bố sao", "star_half"):
+                tot = sum(stt["stars"].values()) or 1
+                for s_, n_ in stt["stars"].items():
+                    with ui.row().classes("w-full items-center no-wrap gap-2"):
+                        ui.label(f"{s_} sao").classes("text-sm").style("width:44px")
+                        with ui.element("div").style("flex:1; height:8px; background:#EEECE4; border-radius:4px"):
+                            ui.element("div").style(f"width:{n_ / tot * 100:.0f}%; height:8px; border-radius:4px; "
+                                                    f"background:{'#1E7C31' if s_ >= 4 else '#B45309' if s_ == 3 else '#C2410C'}")
+                        ui.label(F.n(n_)).classes("text-sm num").style("width:40px; text-align:right")
+            months = stt["months"][-12:]
+            if len(months) >= 2:
+                with T.section(ui, "Đánh giá theo tháng", "bar_chart", "Số đánh giá mới và điểm trung bình"):
+                    ui.echart({"animation": False, "grid": {"left": 36, "right": 36, "top": 26, "bottom": 24},
+                               "tooltip": {"trigger": "axis"},
+                               "legend": {"top": 0, "right": 0, "icon": "roundRect", "itemWidth": 10,
+                                          "itemHeight": 10, "textStyle": {"fontSize": 12, "color": "#4A4A40"}},
+                               "xAxis": {"type": "category", "data": [f"{m['month'][5:]}/{m['month'][2:4]}"
+                                                                     for m in months],
+                                         "axisTick": {"show": False}, "axisLabel": {"color": "#8C8A7E"}},
+                               "yAxis": [{"type": "value", "splitLine": {"lineStyle": {"color": "#EEECE4"}},
+                                          "axisLabel": {"color": "#8C8A7E"}},
+                                         {"type": "value", "min": 1, "max": 5, "splitLine": {"show": False},
+                                          "axisLabel": {"color": "#8C8A7E"}}],
+                               "series": [{"type": "bar", "name": "Đánh giá mới", "barMaxWidth": 14,
+                                           "itemStyle": {"color": "#1E7C31", "borderRadius": [3, 3, 0, 0]},
+                                           "data": [m["count"] for m in months]},
+                                          {"type": "line", "name": "Điểm TB", "yAxisIndex": 1, "symbolSize": 6,
+                                           "lineStyle": {"width": 2, "color": "#B45309"},
+                                           "itemStyle": {"color": "#B45309"}, "data": [m["avg"] for m in months]}]}
+                              ).classes("w-full").style("height:220px")
+        st = state.setdefault("rv", {"view": "todo" if stt["unanswered"] else "all", "kit": TK.new_state()})
+        with T.section(ui, "Danh sách đánh giá", "reviews"):
+            ui.toggle({"todo": f"Chưa trả lời · {stt['unanswered']}", "all": f"Tất cả · {stt['total']}"},
+                      value=st["view"], on_change=lambda e: (st.update(view=e.value), body.refresh())).props(
+                "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                "sr-seg q-mb-sm")
+            shown = [r for r in revs if st["view"] == "all" or not r["reply"]]
+            rows = [{"k": f"{r['location']}|{r['id']}", "loc": titles.get(r["location"], ""), "author": r["author"],
+                     "rating": r["rating"], "stars": "★" * r["rating"] + "☆" * (5 - r["rating"]) if r["rating"] else "–",
+                     "comment": r["comment"], "reply": r["reply"] or "", "date_iso": (r["created"] or "")[:10],
+                     "date": _vn(date.fromisoformat(r["created"][:10])) if r["created"] else "–",
+                     "state": "Đã trả lời" if r["reply"] else "Chưa trả lời"} for r in shown]
+            cols = [{"name": "date", "label": "Ngày", "field": "date_iso", "align": "left", "sortable": True,
+                     "width": 105},
+                    {"name": "stars", "label": "Sao", "field": "rating", "align": "left", "sortable": True, "width": 95},
+                    {"name": "comment", "label": "Đánh giá", "field": "comment", "align": "left"},
+                    {"name": "reply", "label": "Trả lời của bạn", "field": "reply", "align": "left", "width": 280}]
+            if len(locs) > 1:
+                cols.insert(1, {"name": "loc", "label": "Chi nhánh", "field": "loc", "align": "left", "sortable": True,
+                                "width": 150})
+            if ed:
+                cols.append({"name": "act", "label": "", "field": "k", "align": "right", "width": 100})
+            TK.table(ui, columns=cols, rows=rows, row_key="k", st=st["kit"], noun="đánh giá", classes="sr-kw-tbl",
+                     page_size=20, selectable=False,
+                     filters=[("text", "Nội dung / người viết", ["comment", "author", "reply"]),
+                              ("num", "Số sao", "rating"), ("enum", "Trạng thái", "state"),
+                              ("date", "Ngày", "date_iso")],
+                     copy=[("Ngày", "date_iso"), ("Chi nhánh", "loc"), ("Người viết", "author"), ("Sao", "rating"),
+                           ("Đánh giá", "comment"), ("Trả lời", "reply")], export="danh-gia-google-maps",
+                     events={"reply": lambda e: reply_dialog(locs, revs, e.args)} if ed else None,
+                     slots={
+                         "body-cell-date": """<q-td :props="props">{{ props.row.date }}</q-td>""",
+                         "body-cell-stars": """
+                <q-td :props="props"><span :style="{color: props.row.rating >= 4 ? '#1E7C31' : props.row.rating === 3
+                  ? '#B45309' : '#C2410C', letterSpacing: '1px'}">{{ props.row.stars }}</span></q-td>""",
+                         "body-cell-comment": """
+                <q-td :props="props"><div class="sr-bb-sub" style="font-size:12.5px;color:#1F221E">{{ props.row.author }}
+                  </div><div style="white-space:normal; line-height:1.45">{{ props.row.comment || '(không có chữ)' }}
+                  </div></q-td>""",
+                         "body-cell-reply": """
+                <q-td :props="props"><div v-if="props.row.reply" style="white-space:normal; line-height:1.45">
+                  {{ props.row.reply }}</div><span v-else class="sr-bl-type k-lost">chưa trả lời</span></q-td>""",
+                         "body-cell-act": """
+                <q-td :props="props"><q-btn flat dense no-caps size="sm" color="primary"
+                  :label="props.row.reply ? 'Sửa trả lời' : 'Trả lời'" @click.stop="$parent.$emit('reply', props.row.k)"/>
+                </q-td>"""})
+
+    def reply_dialog(locs, revs, key: str) -> None:
+        """Trả lời một đánh giá: AI viết nháp (tùy chọn), sửa, gửi công khai lên Google Maps."""
+        from nicegui import run as run_
+
+        from . import gbp_reviews as GR
+        loc_name, rid = key.split("|", 1)
+        r = next((x for x in revs if x["location"] == loc_name and x["id"] == rid), None)
+        loc = next((x for x in locs if x["name"] == loc_name), None)
+        if not r or not loc:
+            return
+        with ui.dialog() as d, ui.card().style("width:620px; max-width:96vw; border-radius:14px"):
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label(f"Trả lời đánh giá {r['rating']}★ của {r['author'] or 'khách'}").classes(
+                    "text-lg font-semibold col")
+                ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
+            ui.label(r["comment"] or "(không có chữ)").classes("text-sm q-pa-sm").style(
+                "background:#F6F6F1; border-radius:8px; white-space:pre-wrap")
+            note = ui.input("Ghi chú cho AI (không bắt buộc)",
+                            placeholder="ví dụ: khách đã được đổi tròng miễn phí ngày 10/11").props(
+                "dense outlined").classes("w-full q-mt-sm")
+            box = ui.textarea("Câu trả lời", value=r["reply"] or "").props("outlined autogrow").classes("w-full")
+
+            async def ai_draft():
+                from . import ai_writer as AW
+                entry = PT.take(ui, user, cfg, "ai_review_reply", detail=r["author"] or "")
+                if entry is False:
+                    return
+                b_ai.props("loading")
+                try:
+                    prov = AW.provider(cfg, "review_reply")
+                    note_ = note.value or ""
+
+                    def work():
+                        from .spend import runner
+                        with runner(str(user)):  # nhật ký chi phí AI ghi đúng người bấm (chạy trong luồng riêng)
+                            return GR.draft(prov, loc["title"], r, note_)
+                    box.value = await run_.io_bound(work)
+                except Exception as e:  # noqa: BLE001
+                    PT.give_back(entry)
+                    ui.notify(f"AI chưa viết được: {str(e)[:200]}", type="negative", position="bottom-right")
+                b_ai.props(remove="loading")
+
+            async def send():
+                text = (box.value or "").strip()
+                if not text:
+                    ui.notify("Câu trả lời đang trống", type="warning")
+                    return
+                b_send.props("loading")
+                try:
+                    def work():
+                        creds = auth.get_credentials(cfg, need=(auth.BUSINESS_SCOPE,))
+                        GR.Client(creds).reply(loc, rid, text)
+                        with connect() as c:
+                            GR.mark_replied(c, loc_name, rid, text)
+                    await run_.io_bound(work)
+                    d.close()
+                    ui.notify("Đã gửi câu trả lời lên Google Maps", type="positive", position="bottom-right")
+                    body.refresh()
+                except Exception as e:  # noqa: BLE001
+                    ui.notify(f"Chưa gửi được: {G.explain(e)}", type="negative", position="bottom-right",
+                              multi_line=True, timeout=0, close_button="Đóng")
+                b_send.props(remove="loading")
+            with ui.row().classes("w-full items-center gap-2 q-mt-sm"):
+                b_ai = ui.button("AI viết nháp" + PT.label(user, "ai_review_reply"), icon="auto_awesome",
+                                 on_click=ai_draft).props("outline no-caps dense color=grey-9")
+                ui.space()
+                ui.button("Hủy", on_click=d.close).props("flat no-caps")
+                b_send = ui.button("Gửi lên Google Maps", icon="send", on_click=send).props("unelevated no-caps")
+            ui.label("Câu trả lời hiện công khai dưới đánh giá trên Google Maps ngay sau khi gửi.").classes(
+                "text-xs muted")
+        d.on("hide", d.delete)
+        d.open()
 
     def pick(v: str) -> None:
         state["tab"] = v

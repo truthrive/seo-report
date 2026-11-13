@@ -32,6 +32,17 @@ TASKS = {
                   None),
     "rank_target": ("Gợi ý URL mục tiêu", "AI chọn trang đích cho từ khóa chưa có URL mục tiêu.", None),
     "rank_actions": ("Việc cần làm theo từ khóa", "AI lập việc cụ thể để đưa các từ khóa đã chọn lên hạng.", None),
+    "backlink_insight": ("Nhận định hồ sơ backlink", "AI tóm tắt sức khỏe hồ sơ backlink, rủi ro, việc nên làm "
+                         "(trang Backlink › Tổng quan).", None),
+    "backlink_classify": ("Phân loại website trỏ về", "AI gợi ý nhãn (Báo PR, Textlink, PBN…) cho website chưa gắn "
+                          "nhãn; team xác nhận mới gắn.", None),
+    "backlink_disavow": ("Duyệt danh sách disavow", "AI đề xuất disavow / giữ / xem tay cho website nghi spam.", None),
+    "backlink_rivals": ("Chiến lược backlink đối thủ", "AI phân tích đối thủ dựa vào loại link nào (Backlink GAP).",
+                        None),
+    "backlink_plan": ("Kế hoạch xây link theo từ khóa", "AI lập kế hoạch anchor, nguồn link, việc cụ thể cho trang "
+                      "sắp lên top.", None),
+    "review_reply": ("Trả lời đánh giá Google Maps", "AI viết nháp câu trả lời cho một đánh giá ở trang Local SEO; team "
+                     "sửa rồi mới gửi.", None),
 }
 DAYS = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
 DEFAULTS = {
@@ -48,12 +59,21 @@ DEFAULTS = {
     "rank_diag": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "rank_target": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "rank_actions": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "review_reply": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "backlink_insight": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "backlink_classify": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "backlink_disavow": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "backlink_rivals": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "backlink_plan": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
 }
 CAP_DEFAULT = 300
 ACTION_TASK = {"ai_aio": "aio_answer", "ai_report": "report_week", "ai_brief": "brief", "ai_plan": "kw_strategy",
                "ai_kwbrief": "kw_brief", "ai_kpi": "kpi_import",
                "ai_kpi_insight": "kpi_insight", "ai_rank_insight": "rank_insight", "ai_rank_diag": "rank_diag",
-               "ai_rank_target": "rank_target", "ai_rank_actions": "rank_actions"}  # mã credit -> tác vụ
+               "ai_rank_target": "rank_target", "ai_rank_actions": "rank_actions",
+               "ai_review_reply": "review_reply", "ai_bl_insight": "backlink_insight",
+               "ai_bl_classify": "backlink_classify", "ai_bl_disavow": "backlink_disavow",
+               "ai_bl_rivals": "backlink_rivals", "ai_bl_plan": "backlink_plan"}  # mã credit -> tác vụ
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_settings (scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,

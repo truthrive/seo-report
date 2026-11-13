@@ -251,9 +251,13 @@ def refresh(con, cfg, today: date | None = None, client=None, log=print) -> dict
     locs = linked(con)
     if not locs:
         return {"locations": 0, "days": 0, "months": 0}
+    review_client = None
     if client is None:
         from . import auth
-        client = Client(auth.get_credentials(cfg, need=(auth.BUSINESS_SCOPE,)))
+        from . import gbp_reviews as GR
+        creds = auth.get_credentials(cfg, need=(auth.BUSINESS_SCOPE,))
+        client = Client(creds)
+        review_client = GR.Client(creds)
     days = months = 0
     end = today - timedelta(days=1)
     for loc in locs:
@@ -282,8 +286,12 @@ def refresh(con, cfg, today: date | None = None, client=None, log=print) -> dict
             except Exception as e:  # noqa: BLE001
                 log(f"Không lấy được từ khóa {loc['title']} tháng {m}/{y}: {explain(e)}")
                 break
+    reviews = 0
+    if review_client is not None:  # đánh giá Google Maps (My Business API v4)
+        from . import gbp_reviews as GR
+        reviews = GR.refresh(con, locs, review_client, log)
     log(f"Đã lấy số Google Business Profile của {len(locs)} hồ sơ.")
-    return {"locations": len(locs), "days": days, "months": months}
+    return {"locations": len(locs), "days": days, "months": months, "reviews": reviews}
 
 
 # ---------------------------------------------------------------- tính số cho trang

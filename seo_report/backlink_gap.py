@@ -170,7 +170,15 @@ def _merge(per_rival: list[tuple[str, list[dict]]]) -> list[dict]:
     for rv_name, items in per_rival:
         for it in items:
             g = out.setdefault(it["domain"], {"domain": it["domain"], "rank": 0, "rivals": [], "backlinks": 0,
-                                              "spam": 0, "first_seen": None, "_unknown": 0, "_legacy": 0})
+                                              "spam": 0, "first_seen": None, "_unknown": 0, "_legacy": 0,
+                                              "ascore": None, "country": "", "ip": "", "src": []})
+            for s_ in (it.get("src") if isinstance(it.get("src"), list) else [it.get("src") or "dfs"]):
+                if s_ not in g["src"]:
+                    g["src"].append(s_)
+            if it.get("ascore") is not None:
+                g["ascore"] = max(g["ascore"] or 0, it["ascore"])
+            g["country"] = g["country"] or it.get("country") or ""
+            g["ip"] = g["ip"] or it.get("ip") or ""
             if rv_name not in g["rivals"]:
                 g["rivals"].append(rv_name)
             g["rank"] = max(g["rank"], it.get("rank") or 0)
@@ -185,6 +193,7 @@ def _merge(per_rival: list[tuple[str, list[dict]]]) -> list[dict]:
                 g["first_seen"] = fs
     for g in out.values():
         unknown, legacy = g.pop("_unknown"), g.pop("_legacy")
+        g["src"] = sorted(g["src"], key=lambda x: {"dfs": 0, "semrush": 1}.get(x, 2))
         if unknown and unknown == len(g["rivals"]):
             g["backlinks"] = legacy
         elif unknown:
@@ -202,6 +211,8 @@ def _migrate(con, site: str) -> None:
     if not row:
         return
     rivals_, items = json.loads(row[2]), json.loads(row[3])
+    if any("fetched_at" in r for r in rivals_):  # định dạng mới (đã gộp từ bảng riêng / file Semrush): không chuyển
+        return
     with con:
         for r in rivals_:
             mine = [{"domain": it["domain"], "rank": it.get("rank") or 0, "spam": it.get("spam") or 0,
@@ -238,8 +249,10 @@ def rebuild(con, site: str) -> None:
                        "WHERE site = ? ORDER BY rowid", (site,)).fetchall()
     multi = con.execute("SELECT fetched_at, fetched_by, rivals, items, cost FROM backlink_gap_multi WHERE site = ?",
                         (site,)).fetchone()
+    from . import semrush as SR
+    imp = SR.rival_data(con, site)
     with con:
-        if not rows and not multi:
+        if not rows and not multi and not imp:
             con.execute("DELETE FROM backlink_gap WHERE site = ?", (site,))
             return
         rivals_ = [{"name": r[1], "domain": r[0], "total": r[4], "fetched_at": r[2]} for r in rows]
@@ -258,12 +271,67 @@ def rebuild(con, site: str) -> None:
                 cur = pairs.setdefault(it["rival"], {}).get(it["domain"])
                 if cur is None or cur[0] <= multi[0]:
                     pairs[it["rival"]][it["domain"]] = (multi[0], {k: v for k, v in it.items() if k != "rival"})
+        if imp:  # file Semrush của đối thủ: website trỏ về đối thủ mà chưa trỏ về mình (theo mọi dữ liệu của mình)
+            ours = our_domains(con, site)
+            names = SR.names(con, site)
+            for dom, g in imp.items():
+                name = names.get(dom) or next((r["name"] for r in rivals_ if r["domain"] == dom), dom)
+                items = {}
+                for x in g["refdomains"] or []:
+                    items[x["domain"]] = {"domain": x["domain"], "rank": 0, "backlinks": x["backlinks"], "spam": 0,
+                                          "first_seen": x.get("first"), "ascore": x.get("ascore"),
+                                          "country": x.get("country") or "", "ip": x.get("ip") or "",
+                                          "src": "semrush"}
+                for x in g["backlinks"] or []:
+                    it = items.setdefault(x["d_from"], {"domain": x["d_from"], "rank": 0, "backlinks": 0, "spam": 0,
+                                                        "first_seen": x.get("first"), "ascore": None, "country": "",
+                                                        "ip": "", "src": "semrush"})
+                    if not g["refdomains"]:
+                        it["backlinks"] += 1
+                gap = {d: it for d, it in items.items() if not _covered(d, ours)}
+                stamps.append((g["imported_at"], "file Semrush"))
+                rv_ = next((r for r in rivals_ if r["domain"] == dom), None)
+                if rv_ is None:
+                    rivals_.append({"name": name, "domain": dom, "total": len(gap), "fetched_at": g["imported_at"],
+                                    "src": "semrush"})
+                elif rv_.get("total") is None:
+                    rv_["total"] = len(gap)
+                cur_pairs = pairs.setdefault(name, {})
+                for d, it in gap.items():
+                    have_ = cur_pairs.get(d)
+                    if have_ is None:
+                        cur_pairs[d] = (g["imported_at"], it)
+                    else:  # DataForSEO đã có: giữ số DataForSEO, ghi thêm nguồn + ascore / quốc gia / IP
+                        x = dict(have_[1])
+                        x["src"] = ["dfs", "semrush"]
+                        for k in ("ascore", "country", "ip"):
+                            x.setdefault(k, it.get(k))
+                        cur_pairs[d] = (have_[0], x)
         merged = _merge([(name, [v[1] for v in items.values()]) for name, items in pairs.items()])
         newest = max(stamps)
         con.execute("INSERT OR REPLACE INTO backlink_gap VALUES (?, ?, ?, ?, ?, ?)",
                     (site, newest[0], newest[1], json.dumps(rivals_, ensure_ascii=False),
                      json.dumps(merged, ensure_ascii=False),
                      sum(r[6] or 0 for r in rows) + (multi[4] if multi else 0)))
+
+
+def _covered(d: str, ours: set[str]) -> bool:
+    """Website d (hoặc tên miền cha / con của nó) đã trỏ về mình."""
+    if d in ours:
+        return True
+    parts = d.split(".")
+    return any(".".join(parts[i:]) in ours for i in range(1, len(parts) - 1))
+
+
+def our_domains(con, site: str) -> set[str]:
+    """Mọi website đang trỏ về mình theo dữ liệu đã có: danh sách toàn bộ backlink (DataForSEO + file Semrush) và file
+    Referring domains của website mình. Dùng loại khỏi GAP khi tính từ file của đối thủ."""
+    from . import backlink_links as BLL
+    from . import semrush as SR
+    out = {x["d_from"] for x in ((BLL.latest(con, site) or {}).get("items") or [])}
+    out |= set(SR.own_domain_info(con, site))
+    out.add(domain(site))
+    return out
 
 
 def estimate_multi() -> float:

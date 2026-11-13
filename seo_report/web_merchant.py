@@ -366,8 +366,7 @@ def build_merchant_page(ui, cfg, connect, user, start: str = "") -> None:
             check_rows.refresh()
             table.refresh()
             if state["f"]:
-                ui.run_javascript(f"document.getElementById('{anchor}')?.scrollIntoView({{behavior: 'smooth', "
-                                  "block: 'start'}})")
+                T.scroll_to(ui, anchor, 150)
 
         @ui.refreshable
         def check_rows() -> None:

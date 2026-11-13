@@ -9,6 +9,9 @@ from urllib.parse import quote, urlparse
 
 from . import table_kit as TK
 from . import web_labels as WL
+from . import backlink_links as BLL
+from . import web_backlink_links as WBL
+from . import web_backlink_v2 as WV2
 from . import spend as SP
 from . import points as PT
 from . import access as A
@@ -41,11 +44,16 @@ def _vn(d: str) -> str:
 
 
 # "Trang đích" gộp Trang được link + Trang cần link (bộ lọc); "Website trỏ về" gộp Link mới / mất (bộ lọc)
-PAGE_TABS = (("overview", "Tổng quan"), ("pages", "Trang đích"), ("built", "Link đã xây"), ("gap", "Backlink GAP"),
-             ("domains", "Website trỏ về"), ("anchors", "Anchor text"))
+PAGE_TABS = (("overview", "Tổng quan"), ("audit", "Audit"), ("list", "Danh sách"), ("built", "Link đã xây"),
+             ("gap", "Backlink GAP"), ("sources", "Nguồn dữ liệu"))
+# Bốn cách xem cùng một kho link: gộp trong tab "Danh sách", chọn bằng thanh ngay dưới tab (link cũ ?tab=… vẫn chạy)
+LIST_VIEWS = (("links", "Tất cả backlink"), ("domains", "Website trỏ về"), ("pages", "Trang đích"),
+              ("anchors", "Anchor text"))
+# có danh sách toàn bộ backlink: "Việc cần làm" ở Tổng quan dùng mục audit theo từng link thay cho các mục này
+REPLACED = ("spam", "broken", "redirect", "heavy")
 TEAM_TABS = ("built", "gap")  # việc của team: khách hàng không thấy
 # link cũ ?tab=… → (tab, bộ lọc của tab)
-OLD_TABS = {"needs": ("pages", "need"), "changes": ("domains", "moi"), "audit": ("domains", "moi")}
+OLD_TABS = {"needs": ("pages", "need"), "changes": ("domains", "moi")}
 VIEWS = {"pages": ("all", "need"), "domains": ("all", "moi", "mat")}
 CHECK_TAB = AU.CHECK_TAB  # mục kiểm tra nào nằm ở tab nào
 
@@ -62,7 +70,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: không chi phí / lịch lấy, không điểm spam, không việc cần làm của team
     right = T.page_header(ui, "add_link", "Backlink",
-                          "Ai đang link về website, link mới / mất, anchor" + ("." if cl else " và việc cần xử lý. Số của DataForSEO."))
+                          "Ai đang link về website, link mới / mất, anchor" + ("." if cl else " và việc cần xử lý. Số của DataForSEO "
+                          "và file Semrush đã nhập."))
 
     async def fetch(btn, points_ok: bool = False):
         if not ed:  # tốn tiền DataForSEO: chặn ở server, nút bị ẩn chưa đủ
@@ -171,10 +180,40 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
         """Hàm tạo file Excel (cả trang / audit / một danh sách) cho nút Xuất."""
         def build() -> bytes:
             from . import backlink_export as BX
+            from . import site_labels as SL
+            try:
+                with SL.connect() as c:
+                    labels = SL.all_labels(c)
+            except Exception:  # noqa: BLE001
+                labels = {}
             with connect() as c:
+                ld_ = BLL.latest(c, site)
                 return BX.build(BL.lists(c, site), BL.latest(c, site), brand_terms_of(own_brand(c)), site, which,
-                                client=cl)
+                                client=cl, links=ld_, labels=labels,
+                                sources=sources_info(c, ld_) if which == "all" and not cl else None)
         return build
+
+    def sources_info(c, ld_) -> dict:
+        """Phần Nguồn dữ liệu của file xuất: trạng thái DataForSEO, file Semrush đã nhập, thay đổi giữa hai lần nhập."""
+        from . import backlink_agg as AG
+        from . import semrush as SR
+        now = (BL.latest(c, site) or {}).get("now") or {}
+        dfs_items = [x for x in ((ld_ or {}).get("items") or []) if "dfs" in (x.get("src") or ["dfs"])]
+        own_ = SR.host(site)
+        nm = SR.names(c, site)
+        out = {"dfs": {"Lần lấy gần nhất": now.get("day") or "chưa lấy",
+                       "Số tổng": f"{now.get('backlinks')} backlink · {now.get('referring_domains')} website" if now
+                       else "", "Danh sách link": f"{len(dfs_items)} link · {len({x['d_from'] for x in dfs_items})} website"},
+               "imports": [], "changes": []}
+        for o in SR.owners(c, site):
+            who = own_ if o["owner"] == own_ else f"Đối thủ {nm.get(o['owner'], o['owner'])}"
+            out["imports"].append({"who": who, "kind": SR.KINDS[o["kind"]], "count": o["count"] or 0,
+                                   "at": (o["imported_at"] or "")[:10]})
+            d = SR.latest(c, site, o["owner"], o["kind"])
+            ch = AG.import_changes(d["items"], d["prev_items"], "domain" if o["kind"] == "refdomains" else "d_from")
+            if ch:
+                out["changes"].append((f"{SR.KINDS[o['kind']]} của {who}", ch))
+        return out
 
     def export_btn(which: str, name: str, label: str, icon_only: bool = True) -> None:
         from .web_export import export_menu
@@ -182,10 +221,14 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
         export_menu(ui, cfg, connect, f"backlink-{name}_{host}_{date.today():%Y-%m-%d}", make_xlsx(which),
                     label=label, user=user, icon_only=icon_only, category="backlink")
 
-    with right, ui.row().classes("items-center no-wrap gap-2"):
+    with right, ui.row().classes("items-center gap-2 justify-end"):
         export_btn("all", "bao-cao", "Xuất báo cáo", icon_only=False)
     if ed and not cfg.rank.paused:
-        with right, ui.row().classes("items-center no-wrap gap-2"):
+        with right, ui.row().classes("items-center gap-2 justify-end"):
+            ui.button("Nhập dữ liệu", icon="upload_file",
+                      on_click=lambda: WBL.import_dialog(ui, cfg, user, body.refresh)).props(
+                "outline no-caps color=grey-9").tooltip("Nhập file Backlinks / Referring Domains xuất từ Semrush "
+                                                        "(website mình và đối thủ), miễn phí")
             ui.button("Lịch lấy", icon="event_repeat", on_click=schedule_dialog).props(
                 "outline no-caps color=grey-9").tooltip("Đặt chu kỳ tự lấy, tạm ngưng, chọn danh sách lấy kèm")
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary")
@@ -195,8 +238,12 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
 
     page_tabs = [t for t in PAGE_TABS if not (cl and t[0] in TEAM_TABS)]  # khách hàng: không thấy tab việc của team
     keys = [k for k, _ in page_tabs]
+    list_keys = [k for k, _ in LIST_VIEWS]
     start, view = OLD_TABS.get(start, (start, view))
-    state = {"tab": start if start in keys else "overview", "q": {k: "" for k in BL.LIST_KINDS},
+    in_list = start in list_keys  # link cũ tới một danh sách: mở tab Danh sách, chọn sẵn cách xem đó
+    state = {"list": start if in_list else "links",
+             "tab": "list" if in_list else (start if start in keys else "overview"),
+             "q": {k: "" for k in BL.LIST_KINDS},
              "f": {k: None for k in BL.LIST_KINDS},  # f: mục kiểm tra đang dùng làm bộ lọc của từng tab
              "view": {t: (view if start == t and view in vs else "all") for t, vs in VIEWS.items()},
              "redraw": {}}
@@ -206,8 +253,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
     from . import web_backlink_build as WBB
 
     def set_url(tab: str) -> None:
-        v = state["view"].get(tab, "all")
-        q = "" if tab == "overview" else f"?tab={tab}" + ("" if v == "all" else f"&xem={v}")
+        key = state["list"] if tab == "list" else tab  # địa chỉ giữ tên danh sách cũ để link đã chia sẻ vẫn mở đúng
+        v = state["view"].get(key, "all")
+        q = "" if key == "overview" else f"?tab={key}" + ("" if v == "all" else f"&xem={v}")
         ui.run_javascript(f"history.replaceState(null, '', '/backlink{q}')")
 
     @ui.refreshable
@@ -217,7 +265,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             ls = BL.lists(c, site)
             st, due = BL.settings(c, site), BL.next_due(c, site)
             own = own_brand(c)
-        if not bl and not ls:
+            ld = BLL.latest(c, site)
+        state["ld"] = ld
+        if not bl and not ls and not ld:
             T.empty_state(ui, "add_link", "Chưa lấy số backlink lần nào",
                           (f"Bấm “Lấy số mới” để lấy số tổng, lịch sử 12 tháng và 4 danh sách ({PT.cost('backlink')} "
                            "credit)." if PT.member(user) else
@@ -228,10 +278,55 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             return
         status_line(bl, st, due)
         checks = AU.audit(ls, brand_terms_of(own)) if ls and not cl else []
+        lchecks = []
+        if ld and not cl:
+            from . import link_audit as LA
+            from . import site_labels as SL
+            try:
+                with SL.connect() as c:
+                    labels_ = SL.all_labels(c)
+            except Exception:  # noqa: BLE001
+                labels_ = {}
+            lchecks = LA.audit(ld["items"], ld["prev"]["items"] if ld.get("prev") else None, brand_terms_of(own),
+                               labels_)
         by_tab = {k: [c_ for c_ in checks if CHECK_TAB.get(c_["key"]) == k] for k in BL.LIST_KINDS}
-        badge_of = {"domains": by_tab["domains"] + by_tab["changes"]}
+        by_tab["links"] = lchecks
+        audit_checks = audit_list(ld, ls, checks, lchecks, brand_terms_of(own)) if not cl else []
+        badge_of = {"audit": audit_checks}
+        from types import SimpleNamespace
+
+        from . import ai_settings as AIS
+        from . import backlink_agg as AG_
+        from . import web_ai_backlink as WAB
+        actx = SimpleNamespace(cfg=cfg, connect=connect, user=user, site=site, ld=ld, bl=bl, ls=ls,
+                               checks=audit_checks, brand_terms=brand_terms_of(own), refresh=body.refresh)
+        ai_on = (lambda task: not cl and AIS.enabled(site, task))
+
+        def ai_btn(label_: str, tip: str, fn) -> None:
+            ui.button(label_, icon="auto_awesome", on_click=fn).props(
+                "unelevated no-caps dense color=deep-purple-1 text-color=deep-purple-9").classes(
+                "sr-kg-aibtn").tooltip(tip)
+        items_all = (ld or {}).get("items") or []
+        kits = state.setdefault("kits", {k: TK.new_state() for k in ("domains", "pages", "anchors")})
+
+        def open_links(kind: str, key: str) -> None:
+            if kind == "domain":
+                sel_, title_ = BLL.for_site(items_all, key), f"Link từ {key}"
+            elif kind == "anchor":
+                sel_, title_ = BLL.for_anchor(items_all, key), f"Link dùng anchor “{key or '(trống)'}”"
+            else:
+                sel_, title_ = BLL.for_page(items_all, key), f"Link trỏ về {_path(key)}"
+            WBL.dialog(ui, user, title_, f"{len(sel_)} link · DataForSEO + file Semrush", sel_, on_label=body.refresh)
+
+        n_dom = len({x["d_from"] for x in items_all})
 
         def label(k: str, name: str) -> str:
+            """Nhãn một cách xem trong tab Danh sách: luôn kèm số dòng để so được với các cách xem khác."""
+            if items_all:
+                n_ = {"links": len(items_all), "domains": n_dom,
+                      "pages": len(AG_.pages(items_all)),
+                      "anchors": len(AG_.anchors(items_all, brand_terms_of(own)))}.get(k)
+                return name + (f" · {F.n(n_)}" if n_ is not None else "")
             d_ = ls.get(k)
             return name + (f" · {F.n(d_['total'] or len(d_['items']))}" if d_ else "")
 
@@ -249,9 +344,13 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             if not cl:
                 view_toggle("pages", {"all": label("pages", "Tất cả trang"), "need": "Cần thêm link"})
             if state["view"]["pages"] == "need" and not cl:
-                WBB.needs_panel(ui, cfg, connect, ls)
+                WBB.needs_panel(ui, cfg, connect, ls,
+                                on_plan=(lambda rows: WAB.plan_dialog(ui, actx, rows) if rows else None)
+                                if ai_on("backlink_plan") else None)
+            elif items_all:
+                WV2.pages_panel(ui, user, items_all, kits["pages"], open_links)
             else:
-                list_panel("pages", ls, own, by_tab["pages"])
+                list_panel("pages", ls, own, [])
 
         @ui.refreshable
         def domains_tab() -> None:
@@ -261,36 +360,91 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                                     "moi": f"Mới {BL.CHANGE_DAYS} ngày · {F.n(n_new)}",
                                     "mat": f"Mất {BL.CHANGE_DAYS} ngày · {F.n(len(ch) - n_new)}"})
             v = state["view"]["domains"]
-            if v == "all":
-                list_panel("domains", ls, own, by_tab["domains"])
+            if v == "all" and items_all:
+                WV2.domains_panel(ui, user, items_all, kits["domains"], body.refresh, open_links)
+            elif v == "all":
+                list_panel("domains", ls, own, [])
             else:
-                keep = [c_ for c_ in by_tab["changes"] if (c_["key"] == "lost") == (v == "mat")]
-                list_panel("changes", ls, own, keep, only_lost=v == "mat")
-        state["redraw"] = {"pages": pages_tab, "domains": domains_tab}
+                list_panel("changes", ls, own, [], only_lost=v == "mat")
+        @ui.refreshable
+        def list_tab() -> None:
+            """Tab Danh sách: bốn cách xem cùng một kho link (link / website / trang đích / anchor)."""
+            def pick_view(e) -> None:
+                state["list"] = e.value
+                set_url("list")
+                list_tab.refresh()
+            ui.toggle({k: label(k, n) for k, n in LIST_VIEWS}, value=state["list"], on_change=pick_view).props(
+                "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes(
+                "sr-seg sr-seg-main q-mb-sm")
+            v = state["list"]
+            if v == "links":
+                WBL.panel(ui, cfg, user, ld, [], state, body.refresh,
+                          export=lambda: export_btn("links", "tat-ca-backlink",
+                                                    "Xuất tất cả backlink kèm audit (mỗi mục một sheet)"))
+            elif v == "domains":
+                domains_tab()
+            elif v == "pages":
+                pages_tab()
+            elif items_all:
+                WV2.anchors_panel(ui, items_all, brand_terms_of(own), kits["anchors"], open_links)
+            else:
+                list_panel("anchors", ls, own, [])
+        state["redraw"] = {"pages": pages_tab, "domains": domains_tab, "list": list_tab}
         with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
             for k, name in page_tabs:
-                with ui.tab(k, label(k, name)):
-                    high = sum(1 for c_ in badge_of.get(k, by_tab.get(k, [])) if c_["level"] == "high")
+                with ui.tab(k, name):
+                    high = sum(1 for c_ in badge_of.get(k, []) if c_["level"] == "high")  # chỉ tab Audit
                     if high:  # chấm đỏ: tab có việc cần xử lý
                         T.count_badge(ui, high, f"{high} việc cần xử lý trong tab này").classes("sr-tab-badge")
         state["tabs"] = tabs
         with ui.tab_panels(tabs, value=state["tab"]).classes("w-full").props("animated=false"):
             with ui.tab_panel("overview").classes("q-px-none"):
-                kpis(bl, ls)
-                todo(checks)
+                kpis(bl, ls, ld)
+                if not cl:
+                    WAB.profile_box(ui, actx)
+                WV2.overview(ui, ld, bl, audit_checks, open_check,
+                             on_import=(lambda: WBL.import_dialog(ui, cfg, user, body.refresh)) if ed else None)
                 trend(bl)
-            with ui.tab_panel("pages").classes("q-px-none"):
-                pages_tab()
+            with ui.tab_panel("audit").classes("q-px-none"):
+                if cl:
+                    ui.label("Audit là việc của team.").classes("text-sm muted")
+                else:
+                    if ai_on("backlink_classify") or ai_on("backlink_disavow"):
+                        with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
+                            ui.label("AI hỗ trợ:").classes("text-xs muted")
+                            if ai_on("backlink_classify") and items_all:
+                                ai_btn("AI phân loại website", "AI gợi ý nhãn cho website trỏ về chưa gắn nhãn",
+                                       lambda: WAB.classify_dialog(ui, actx))
+                            if ai_on("backlink_disavow") and items_all:
+                                ai_btn("AI duyệt disavow", "AI xem website nghi spam: nên disavow, giữ hay xem tay",
+                                       lambda: WAB.disavow_dialog(ui, actx))
+                    WBL.panel(ui, cfg, user, ld, audit_checks, state, body.refresh, mode="audit")
+            with ui.tab_panel("list").classes("q-px-none"):
+                list_tab()
             if not cl:
                 with ui.tab_panel("built").classes("q-px-none"):
                     WBB.built_panel(ui, cfg, connect, user)
                 with ui.tab_panel("gap").classes("q-px-none"):
+                    if ai_on("backlink_rivals"):  # cùng kiểu với hàng AI ở tab Audit
+                        with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
+                            ui.label("AI hỗ trợ:").classes("text-xs muted")
+                            ai_btn("AI chiến lược đối thủ", "AI đọc Backlink GAP + nhãn website: đối thủ dựa vào loại "
+                                   "link nào, website mình nên làm gì", lambda: WAB.rivals_dialog(ui, actx))
                     WBB.gap_panel(ui, cfg, connect, user)
-            with ui.tab_panel("domains").classes("q-px-none"):
-                domains_tab()
-            with ui.tab_panel("anchors").classes("q-px-none"):
-                list_panel("anchors", ls, own, by_tab["anchors"])
+            with ui.tab_panel("sources").classes("q-px-none"):
+                WV2.sources(ui, cfg, user, connect, ld, bl, st if not cl else None, due, body.refresh, None)
+
+    def audit_list(ld, ls, checks, lchecks, brand_terms) -> list[dict]:
+        """Mọi mục kiểm tra cho tab Audit (dùng chung với file xuất: backlink_agg.full_audit)."""
+        from . import backlink_agg as AG
+        from . import site_labels as SL
+        try:
+            with SL.connect() as c:
+                labels_ = SL.all_labels(c)
+        except Exception:  # noqa: BLE001
+            labels_ = {}
+        return AG.full_audit(ld, ls, brand_terms, labels_)
 
     def pick(v: str) -> None:
         state["tab"] = v
@@ -315,10 +469,13 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                                  " · ~" + f"{BL.monthly_estimate(st):.2f} USD/tháng".replace(".", ",")),
                               "green", "event_repeat")
 
-    def kpis(bl, ls) -> None:
+    def kpis(bl, ls, ld=None) -> None:
+        from . import backlink_agg as AG
         now, prev = (bl or {}).get("now"), (bl or {}).get("prev")
         if not now:
             return
+        sm = AG.summary((ld or {}).get("items") or [])
+        merged = sm["semrush"]["links"] > 0  # có file Semrush: số website / backlink theo dữ liệu gộp
 
         def delta(field: str, good_up: bool = True):
             if not prev or now[field] is None or prev[field] is None:
@@ -330,37 +487,48 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                     {"label": f"lần lấy {date.fromisoformat(prev['day']):%d/%m}", "value": F.n(prev[field])})
         with T.kpi_row(ui):
             d, g, _ = delta("referring_domains")
-            T.kpi(ui, "language", "Website trỏ về", F.n(now["referring_domains"] or 0), delta=d, good=g, tone="green",
-                  info=("Số website (tên miền) khác nhau đang có ít nhất một link về site.",
-                        "Chỉ số quan trọng nhất: nhiều website khác nhau link về có giá trị hơn nhiều link từ một "
-                        "website."),
-                  hint=f"{F.n(now['referring_domains_nofollow'] or 0)} website chỉ có link nofollow")
+            if merged:
+                T.kpi(ui, "language", "Website trỏ về · gộp", F.n(sm["all"]["domains"]), tone="green",
+                      info=("Số website khác nhau đang link về site, gộp DataForSEO và file Semrush (bỏ trùng).",
+                            "Số dưới thẻ đếm từ danh sách link của từng nguồn nên khớp bảng Số liệu theo nguồn; "
+                            f"riêng DataForSEO còn báo số tổng {F.n(now['referring_domains'] or 0)} website"
+                            + (f" ({d} so với lần lấy trước)" if d else "") + ".",
+                            "Chi tiết từng nguồn: bảng Số liệu theo nguồn bên dưới, tab Nguồn dữ liệu."),
+                      hint=f"DataForSEO {F.n(sm['dfs']['domains'])} · Semrush {F.n(sm['semrush']['domains'])}"
+                      + " · đếm từ danh sách link")
+            else:
+                T.kpi(ui, "language", "Website trỏ về", F.n(now["referring_domains"] or 0), delta=d, good=g,
+                      tone="green",
+                      info=("Số website (tên miền) khác nhau đang có ít nhất một link về site.",
+                            "Chỉ số quan trọng nhất: nhiều website khác nhau link về có giá trị hơn nhiều link từ một "
+                            "website."),
+                      hint=f"{F.n(now['referring_domains_nofollow'] or 0)} website chỉ có link nofollow")
             d, g, _ = delta("backlinks")
-            T.kpi(ui, "link", "Backlink", F.n(now["backlinks"] or 0), delta=d, good=g, tone="blue",
-                  info=("Tổng số link đang trỏ về site (một website có thể link nhiều lần).",))
+            ch = (ls.get("changes") or {}).get("items")
+            moves = (f"+{sum(1 for x in ch if not x['lost'])} / −{sum(1 for x in ch if x['lost'])} trong "
+                     f"{BL.CHANGE_DAYS} ngày (DataForSEO)") if ch is not None else ""
+            card = T.kpi(ui, "link", "Backlink · gộp" if merged else "Backlink",
+                         F.n(sm["all"]["links"]) if merged else F.n(now["backlinks"] or 0),
+                         delta="" if merged else d, good=None if merged else g, tone="blue",
+                         info=("Tổng số link đang trỏ về site (một website có thể link nhiều lần).",
+                               "Bấm để xem link mới / mất 30 ngày."),
+                         hint=moves)
+            if ch is not None:
+                card.classes("clickable").on("click", lambda: go("changes"))
             d, g, _ = delta("rank")
-            T.kpi(ui, "military_tech", "Uy tín", f"{now['rank'] if now['rank'] is not None else '–'}/1000", delta=d,
+            T.kpi(ui, "military_tech", "Uy tín (DataForSEO)",
+                  f"{now['rank'] if now['rank'] is not None else '–'}/1000", delta=d,
                   good=g, tone="lime",
                   info=("Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link trỏ về.",))
             d, g, _ = delta("spam_score", good_up=False)
             spam = now["spam_score"]
             if not cl:  # điểm spam: số kiểm soát nội bộ, không đưa cho khách
-                T.kpi(ui, "gpp_maybe", "Điểm spam", f"{spam if spam is not None else '–'}/100", delta=d, good=g,
+                T.kpi(ui, "gpp_maybe", "Điểm spam (DataForSEO)", f"{spam if spam is not None else '–'}/100", delta=d,
+                      good=g,
                       tone="red" if (spam or 0) >= 30 else "grey",
                       info=("Điểm spam trung bình của các backlink (0–100). Càng thấp càng tốt.",
                             "Từ 30 trở lên nên xem lại các website link về có dấu hiệu spam."),
                       hint=f"{F.n(now['broken_backlinks'] or 0)} link trỏ về trang không còn (link gãy)")
-            ch = (ls.get("changes") or {}).get("items")
-            if ch is not None:
-                new_n = sum(1 for x in ch if not x["lost"])
-                card = T.kpi(ui, "swap_vert", f"Link {BL.CHANGE_DAYS} ngày qua", f"+{new_n} / −{len(ch) - new_n}",
-                             tone="purple",
-                             info=(f"Số backlink mới xuất hiện / vừa mất trong {BL.CHANGE_DAYS} ngày gần nhất.",
-                                   "Bấm để xem danh sách."),
-                             hint="" if cl else
-                             f"{sum(1 for x in ch if not x['lost'] and (x.get('spam') or 0) >= SPAM_FLAG)} "
-                             "link mới có điểm spam cao")
-                card.classes("clickable").on("click", lambda: go("changes"))
 
     def open_check(tab: str, key: str) -> None:
         """Sang tab chứa mục kiểm tra và bật bộ lọc của mục đó."""
@@ -379,6 +547,11 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             state["view"][tab] = v
             if tab in state["redraw"]:
                 state["redraw"][tab].refresh()
+        if tab in [k for k, _ in LIST_VIEWS]:  # bốn danh sách nằm chung tab "Danh sách"
+            state["list"] = tab
+            tab = "list"
+            if "list" in state["redraw"]:
+                state["redraw"]["list"].refresh()
         state["tab"] = tab
         set_url(tab)
         tabs_ = state.get("tabs")  # thanh tab của lần vẽ trang gần nhất
@@ -398,7 +571,8 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                 for c in items:
                     label, tone, icon = LEVELS[c["level"]]
                     row = ui.element("button").classes("sr-au-todo-row").props('type="button"')
-                    row.on("click", lambda _, t=CHECK_TAB.get(c["key"], "overview"), k=c["key"]: open_check(t, k))
+                    row.on("click", lambda _, t=("links" if c["key"].startswith("L_") else
+                                                 CHECK_TAB.get(c["key"], "overview")), k=c["key"]: open_check(t, k))
                     with row:
                         T.status_chip(ui, label, tone, icon)
                         ui.label(c["title"]).classes("text-sm font-semibold").style("flex:1 1 0; text-align:left")
@@ -493,8 +667,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             check_rows.refresh()
             table.refresh()
             if state["f"][kind]:
-                ui.run_javascript(f"document.getElementById('{anchor_id}')?.scrollIntoView("
-                                  "{behavior: 'smooth', block: 'start'})")
+                T.scroll_to(ui, anchor_id)
 
         state.setdefault("setf", {})[kind] = set_filter  # "Việc cần làm" ở Tổng quan bật lọc của tab này
 
@@ -652,13 +825,34 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                     ui.label(note).classes("text-xs muted")
                 kit = state.setdefault("kit", {}).setdefault(kind, TK.new_state())
                 lab_kind = kind in ("domains", "changes")
+                ld_ = state.get("ld")
+                drill = ld_ is not None and kind in ("domains", "anchors", "pages")
+                if drill:
+                    columns.append({"name": "drill", "label": "Link", "field": "k", "align": "left", "width": 96,
+                                    "sortable": False})
+
+                def open_links(e, kind=kind):
+                    k_ = e.args
+                    its = ld_["items"]
+                    if kind == "domains":
+                        sel_, title_ = BLL.for_site(its, k_), f"Link từ {k_}"
+                    elif kind == "anchors":
+                        sel_, title_ = BLL.for_anchor(its, k_), f"Link dùng anchor “{k_ or '(trống)'}”"
+                    else:
+                        sel_, title_ = BLL.for_page(its, k_), f"Link trỏ về {_path(k_)}"
+                    WBL.dialog(ui, user, title_, f"{len(sel_)} link · lấy lúc {_vn(ld_['fetched_at'][:10])}", sel_,
+                               on_label=body.refresh)
                 TK.table(ui, columns=columns, rows=rows, row_key="k", st=kit,
                          filters=kit_filters(kind) + ([WL.FILTER] if lab_kind else []),
                          copy=kit_copy(kind)[:1] + ([WL.COPY] if lab_kind else []) + kit_copy(kind)[1:],
                          actions=WL.action(ui, user, "domain" if kind == "domains" else "source", table.refresh)
                          if lab_kind else None,
-                         noun=KIT_NOUN[kind], classes="sr-bl-table", slots={
+                         noun=KIT_NOUN[kind], classes="sr-bl-table",
+                         events={"drill": open_links} if drill else None, slots={
                     "body-cell-labels": WL.SLOT,
+                    "body-cell-drill": """
+                    <q-td :props="props" style="overflow:visible"><q-btn flat dense no-caps size="sm" color="primary"
+                      label="Xem link" class="q-px-xs" @click.stop="$parent.$emit('drill', props.row.k)"/></q-td>""",
                     "body-cell-domain": """
                     <q-td :props="props"><a :href="props.row.href" target="_blank" rel="noopener"
                        class="sr-bl-link">{{ props.value }}</a></q-td>""",

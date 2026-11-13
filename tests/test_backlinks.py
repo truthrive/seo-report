@@ -168,7 +168,7 @@ class ScheduleTest(unittest.TestCase):
 
     def test_estimate(self):
         self.assertAlmostEqual(BL.monthly_estimate({"paused": False, "every_days": 30, "lists": ["domains"]}),
-                               BL.COST_SUMMARY + BL.COST_LIST)
+                               BL.COST_SUMMARY + BL.COST_LIST + BL.COST_LINKS)
         with self.assertRaises(ValueError):
             BL.save_settings(self.con, SITE, 3, False, [])
 
@@ -243,7 +243,8 @@ class ExportTest(unittest.TestCase):
         BL.refresh(con, SITE, cfg(), today=date(2026, 11, 4), client=FakeClient(), log=lambda m: None)
         ls, latest = BL.lists(con, SITE), BL.latest(con, SITE)
         wb = load_workbook(_io.BytesIO(BX.build(ls, latest, ["example"], SITE)))
-        self.assertEqual(wb.sheetnames[:3], ["Tổng quan", "Lịch sử 12 tháng", "Audit"])
+        self.assertEqual(wb.sheetnames[:2], ["Tổng quan", "Audit"])
+        self.assertEqual(wb.sheetnames[-1], "Lịch sử 12 tháng")  # lịch sử để cuối file
         for name in ("Website trỏ về", "Link mới - mất", "Anchor text", "Trang được link"):
             self.assertIn(name, wb.sheetnames)
         self.assertEqual(wb["Tổng quan"]["B2"].value, 120)  # website trỏ về

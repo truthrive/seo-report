@@ -44,6 +44,12 @@ COSTS = {
     "backlink_gap": ("Backlink GAP đối thủ", 30),
     "backlink_gap_links": ("Xem link cụ thể trong Backlink GAP", 25),
     "backlink_gap_multi": ("Backlink GAP nhanh (website trỏ về từ 2 đối thủ)", 30),
+    "ai_review_reply": ("AI nháp trả lời đánh giá Google Maps", 2),
+    "ai_bl_insight": ("AI nhận định hồ sơ backlink", 5),
+    "ai_bl_classify": ("AI phân loại website trỏ về", 8),
+    "ai_bl_disavow": ("AI duyệt danh sách disavow", 8),
+    "ai_bl_rivals": ("AI chiến lược backlink đối thủ", 5),
+    "ai_bl_plan": ("AI kế hoạch xây link theo từ khóa", 5),
 }
 
 SCHEMA = """

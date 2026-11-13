@@ -73,11 +73,15 @@ class _Page(HTMLParser):
         self.links_int = self.links_ext = 0
         self.words = 0
         self.schema: list[str] = []
+        self.products: list[dict] = []  # tóm tắt các nút Product trong JSON-LD
+        self.micro_product = False      # có itemtype schema.org/Product (microdata)
         self._in, self._skip, self._buf = None, 0, []
         self._ld = False
 
     def handle_starttag(self, tag, attrs):
         a = {k: (v or "") for k, v in attrs}
+        if "schema.org/Product" in a.get("itemtype", ""):
+            self.micro_product = True
         if tag in self.SKIP:
             self._skip += 1
             if tag == "script" and "ld+json" in a.get("type", ""):
@@ -114,6 +118,7 @@ class _Page(HTMLParser):
             if tag == "script" and self._ld:
                 self._ld = False
                 self.schema += _ld_types("".join(self._buf))
+                self.products += _ld_products("".join(self._buf))
             return
         if tag == self._in:
             text = " ".join("".join(self._buf).split())
@@ -153,6 +158,80 @@ def _ld_types(text: str) -> list[str]:
     return [str(t) for t in out]
 
 
+def _first(v):
+    return v[0] if isinstance(v, list) and v else v
+
+
+def _ld_products(text: str) -> list[dict]:
+    """Tóm tắt các nút Product: tên, ảnh, giá, tiền tệ, tình trạng hàng, điểm đánh giá, thương hiệu, sku."""
+    out = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            t = x.get("@type")
+            if "Product" in (t if isinstance(t, list) else [t]):
+                offers = _first(x.get("offers")) or {}
+                if isinstance(offers, dict) and offers.get("@type") == "AggregateOffer":
+                    price = offers.get("lowPrice") or offers.get("price")
+                else:
+                    price = offers.get("price") if isinstance(offers, dict) else None
+                    if price is None and isinstance(offers, dict):
+                        spec = _first(offers.get("priceSpecification")) or {}
+                        price = spec.get("price") if isinstance(spec, dict) else None
+                rating = x.get("aggregateRating") or {}
+                out.append({
+                    "name": bool(str(x.get("name") or "").strip()), "image": bool(x.get("image")),
+                    "offers": bool(offers), "price": None if price in (None, "") else str(price),
+                    "currency": (offers.get("priceCurrency") if isinstance(offers, dict) else None) or None,
+                    "availability": str((offers.get("availability") if isinstance(offers, dict) else "") or "")
+                    .rsplit("/", 1)[-1] or None,
+                    "rating": rating.get("ratingValue") if isinstance(rating, dict) else None,
+                    "reviews": (rating.get("reviewCount") or rating.get("ratingCount")) if isinstance(rating, dict)
+                    else None,
+                    "review": bool(x.get("review")), "brand": bool(x.get("brand")),
+                    "sku": bool(x.get("sku") or x.get("gtin") or x.get("gtin13") or x.get("mpn"))})
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    try:
+        walk(json.loads(text))
+    except ValueError:
+        pass
+    return out
+
+
+def product_problems(products: list[dict]) -> tuple[list[str], list[str]]:
+    """(thiếu bắt buộc cho đoạn trích sản phẩm / danh sách người bán, thiếu nên có) của Product đầu tiên."""
+    p = products[0]
+    must, nice = [], []
+    if not p["name"]:
+        must.append("tên (name)")
+    if not p["image"]:
+        must.append("ảnh (image)")
+    if not p["offers"]:
+        must.append("offers (giá bán)")
+    else:
+        try:
+            ok = p["price"] is not None and float(str(p["price"]).replace(",", "")) > 0
+        except ValueError:
+            ok = False
+        if not ok:
+            must.append("giá (price) trống hoặc bằng 0")
+        if not p["currency"]:
+            must.append("tiền tệ (priceCurrency)")
+        if not p["availability"]:
+            must.append("tình trạng hàng (availability)")
+    if p["rating"] is None and not p["review"]:
+        nice.append("đánh giá (aggregateRating / review) để hiện sao")
+    if not p["brand"]:
+        nice.append("thương hiệu (brand)")
+    if not p["sku"]:
+        nice.append("mã sản phẩm (sku / gtin)")
+    return must, nice
+
+
 def parse(html: str, url: str) -> dict:
     p = _Page(url)
     try:
@@ -161,7 +240,8 @@ def parse(html: str, url: str) -> dict:
         pass
     return {"title": p.title, "desc": p.desc, "robots": p.robots.strip(), "canonical": p.canonical,
             "h1": p.h1[:5], "h1_count": len(p.h1), "imgs": p.imgs, "noalt": p.noalt, "words": p.words,
-            "links_int": p.links_int, "links_ext": p.links_ext, "schema": sorted(set(p.schema))[:10]}
+            "links_int": p.links_int, "links_ext": p.links_ext, "schema": sorted(set(p.schema))[:10],
+            "products": p.products[:3], "micro_product": p.micro_product}
 
 
 # ---- Mở trang ----
@@ -333,6 +413,13 @@ CHECKS = {  # mã: (mức, tên, cách sửa)
              "đủ câu hỏi của người tìm."),
     "noalt": ("info", "Ảnh thiếu mô tả (alt)", "Thêm alt mô tả ảnh: giúp lên Google Hình ảnh và người dùng trình "
               "đọc màn hình."),
+    "product_no_schema": ("high", "Trang sản phẩm thiếu schema Product", "Thêm dữ liệu cấu trúc Product (JSON-LD) "
+                          "có tên, ảnh, giá, tiền tệ, tình trạng hàng: không có thì Google không hiện giá / sao ở "
+                          "kết quả tìm kiếm."),
+    "product_bad": ("high", "Schema Product thiếu trường bắt buộc", "Bổ sung các trường còn thiếu: Google bỏ đoạn "
+                    "trích sản phẩm (giá, tình trạng hàng) và danh sách người bán khi thiếu."),
+    "product_nice": ("info", "Schema Product nên bổ sung", "Thêm đánh giá (để hiện sao), thương hiệu, mã sản phẩm: "
+                     "giúp kết quả nổi bật hơn và đủ điều kiện nhiều dạng hiển thị hơn."),
     "slow": ("info", "Máy chủ phản hồi chậm (trên 3 giây)", "Xem lại cache / hosting; chi tiết tốc độ ở trang Tốc "
              "độ trang."),
 }
@@ -395,6 +482,17 @@ def findings(con: sqlite3.Connection, cfg, end: date | None = None) -> dict:
             add("noalt", uid, url, f"{d['noalt']}/{d['imgs']} ảnh")
         if type_ == U.BLOG and d.get("words", 0) < THIN_WORDS:
             add("thin", uid, url, f"khoảng {d.get('words', 0)} chữ")
+        prods = d.get("products")
+        if prods is not None:  # trang quét từ khi có kiểm tra schema Product
+            if prods:
+                must, nice = product_problems(prods)
+                if must:
+                    add("product_bad", uid, url, "thiếu " + ", ".join(must))
+                elif nice:
+                    add("product_nice", uid, url, "nên thêm " + ", ".join(nice))
+            elif type_ == U.PRODUCT:
+                add("product_no_schema", uid, url, "có microdata Product, chưa có JSON-LD" if d.get("micro_product")
+                    else "không thấy dữ liệu cấu trúc Product")
         h1 = d.get("h1_count", 0)
         if h1 == 0:
             add("no_h1", uid, url)

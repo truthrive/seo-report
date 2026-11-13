@@ -80,7 +80,7 @@ def fmt(metric: str, value) -> str:
 # ---------------------------------------------------------------- Google API
 
 class Client:
-    def __init__(self, api_key: str, timeout: int = 90):
+    def __init__(self, api_key: str, timeout: int = 100):  # trang nặng có thể mất gần 60 giây phía Google
         self.key, self.timeout = api_key, timeout
 
     def _json(self, req) -> dict:
@@ -205,9 +205,10 @@ def last_run(con) -> str | None:
 
 
 def refresh(con, cfg, today: date | None = None, force: bool = False, client=None, log=print,
-            workers: int = 4) -> dict | None:
+            workers: int = 16, progress=None) -> dict | None:
     """Lấy CrUX của website + PageSpeed các trang quan trọng (mỗi tuần một lần; force: ngay). None khi chưa đến hạn
-    hoặc chưa có API key."""
+    hoặc chưa có API key. Mỗi trang PageSpeed mất 20–60 giây phía Google: gửi mọi trang cùng lúc (đo thật: 15 trang
+    hết khoảng 1 phút, 8 trang một lượt hết 2 phút), lưu từng trang ngay khi xong; progress(số trang xong, tổng)."""
     ensure_tables(con)
     today = today or date.today()
     last = last_run(con)
@@ -229,21 +230,29 @@ def refresh(con, cfg, today: date | None = None, force: bool = False, client=Non
             log(f"CrUX {form}: {e}")
     urls = top_pages(con, cfg.site_url, today)
     at = _now()
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def one(url):
         err = ""
-        for _ in range(2):  # lỗi mạng / máy chủ tạm thời: thử lại một lần
+        for _ in range(2):  # lỗi kết nối chập chờn (SSL / mất kết nối): thử lại một lần; hết giờ chờ thì thôi
             try:
                 return url, parse_psi(client.psi(url, "mobile")), ""
             except Exception as e:  # noqa: BLE001
                 err = str(e)[:300]
+                if "timed out" in err.lower() or err[:3].isdigit():  # hết giờ / lỗi 4xx-5xx của Google: không thử lại
+                    break
         return url, None, err
-    errors = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:  # PageSpeed mất 10–30 giây mỗi trang: chạy song song
-        for url, res, err in ex.map(one, urls):
+    errors, done = 0, 0
+    if progress:
+        progress(0, len(urls))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for f in as_completed([ex.submit(one, u) for u in urls]):
+            url, res, err = f.result()
             save_page(con, url, "mobile", res, err, at)
             errors += bool(err)
+            done += 1
+            if progress:
+                progress(done, len(urls))
     with con:
         con.execute("INSERT INTO cwv_runs VALUES (?, ?, ?)", (at, len(urls), errors))
     log(f"Core Web Vitals: {got} kỳ CrUX, {len(urls)} trang PageSpeed ({errors} lỗi).")
