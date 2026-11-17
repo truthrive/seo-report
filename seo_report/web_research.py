@@ -31,7 +31,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
              "f": json.loads(json.dumps(KR.FILTER_DEFAULT)),
              "view": "list", "shown_groups": 30, "sel": [], "kind": "all", "match": "all", "word": None,
              "wsort": "count", "word_label": "",
-             "busy": False, "hidden": _hidden_cols(), "words": not _words_hidden()}
+             "busy": False, "hidden": _hidden_cols(), "words": not _words_hidden(), "form": False}
     if lookup:  # mở từ màn Hiệu suất URL / Tổng quan từ khóa: Tra URL
         preset = ("rank_url", lookup)
     for k, v in (view or {}).items():  # từ tab Tổng quan: "Xem tất cả" biến thể (khớp rộng) / câu hỏi
@@ -77,6 +77,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 return KR.research(c, cfg, state["mode"], state["seed"], str(user))
         try:
             state["rec"] = await run.io_bound(work)
+            state["form"] = False  # có kết quả: thu gọn ô nhập cho bảng lên cao
             reset_view()
             ui.run_javascript(f"history.replaceState(null, '', '/research?id={state['rec']['id']}')")
         except Exception as ex:  # noqa: BLE001
@@ -89,6 +90,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 btn.props(remove="loading")
         head.refresh()
         side.refresh()
+        form.refresh()
         results.refresh()
 
     keep = dict(view or {})
@@ -181,6 +183,21 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
 
     @ui.refreshable
     def form() -> None:
+        if state["rec"] and not state["form"]:  # đã có kết quả: thu gọn để bảng lên cao, bấm mới mở lại ô nhập
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.button("Tìm từ khóa khác", icon="search",
+                          on_click=lambda: (state.update(form=True), form.refresh())).props("outline no-caps dense")
+                hist_c = ui.button("Lịch sử", icon="history").props("flat no-caps dense")
+                with hist_c, ui.menu().classes("sr-kr-fmenu"):
+                    side()
+                ui.space()
+                try:
+                    from . import google_ads as GA_
+                    ui.label(f"Google Ads hôm nay còn {max(0, GA_.cap() - GA_.used()):,} lượt".replace(",", ".")
+                             ).classes("text-xs muted")
+                except Exception:  # noqa: BLE001
+                    pass
+            return
         with ui.row().classes("w-full items-center no-wrap gap-2 sr-kr-search"):
             ui_refs["mode"] = ui.select(KR.MODES, value=state["mode"],
                                         on_change=lambda e: set_mode(e.value) if e.value != state["mode"] else None).props(
@@ -282,11 +299,41 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         q = K.fold(state["q"]) if state["q"] else ""
         return [r for r in rows if not q or q in K.fold(r["keyword"])]
 
-    def shown_rows() -> list[dict]:
+    def merge_variants(rows: list[dict]) -> list[dict]:
+        """Gộp biến thể chỉ khác dấu ("nieng rang" và "niềng răng") vào một dòng: giữ dòng có dấu, ghi số biến thể.
+        File xuất và Sao chép vẫn đủ mọi dòng."""
+        out, by = [], {}
+        for r in rows:
+            k = (K.fold(r["keyword"]), r["volume"])
+            if k in by:
+                cur = by[k]
+                if _marks(r["keyword"]) > _marks(cur["keyword"]):  # dòng có dấu làm dòng chính
+                    cur["keyword"], r = r["keyword"], dict(r, keyword=cur["keyword"])
+                cur.setdefault("variants", []).append(r["keyword"])
+                continue
+            by[k] = dict(r)
+            out.append(by[k])
+        return out
+
+    def empty_cols() -> set:
+        """Cột không có dòng nào mang dữ liệu trong cả lần tìm này: ẩn đi cho bảng khỏi cuộn ngang."""
+        rs = (state["rec"] or {}).get("rows") or []
+        if not rs:
+            return set()
+        test = {"flags": lambda r: r["tracked"] or (r.get("aio") or {}).get("shown"),
+                "intent": lambda r: r.get("intent"),
+                "trend": lambda r: r.get("monthly"),
+                "comp": lambda r: r.get("competition_index") is not None,
+                "cpc": lambda r: r.get("cpc"),
+                "pillar": lambda r: r.get("pillar"),
+                "site": lambda r: r.get("gsc_impr")}
+        return {k for k, f in test.items() if not any(f(r) for r in rs)}
+
+    def shown_rows(merge: bool = False) -> list[dict]:
         rows = base_rows()
         if state["word"]:
             rows = [r for r in rows if state["word"] in KR.word_set(r["keyword"])]
-        return rows
+        return merge_variants(rows) if merge else rows
 
     def export_rows() -> list[dict]:
         """File xuất = đúng danh sách đang hiện theo bộ lọc hiện tại (kể cả ô Tìm nhanh)."""
@@ -635,7 +682,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
 
     @ui.refreshable
     def table() -> None:
-        rows = shown_rows()
+        rows = shown_rows(merge=True)
         rec = state["rec"]
         if not rows:
             T.empty_state(ui, "search_off", "Không có từ khóa nào khớp bộ lọc")
@@ -648,7 +695,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
         if rec["mode"] == "rank_url" and _host(rec["seed"]) == _host(site):
             own_url = _norm_url(rec["seed"])
         data = []
-        for i, r in enumerate(rows):
+        for i, r in enumerate(rows):  # rows: đã gộp biến thể không dấu
             mx = max((n for _, n in r["monthly"]), default=0) or 1
             data.append({"id": i, "keyword": r["keyword"], "volume": r["volume"], "cpc": r["cpc"],
                          "comp": COMP.get(r["competition"], ("–", ""))[0], "comp_cls": COMP.get(r["competition"],
@@ -665,10 +712,12 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                          "same_page": bool(own_url and r["gsc_page"] and _norm_url(r["gsc_page"]) == own_url),
                          "u_pos": r.get("url_pos"), "u_clicks": r.get("url_clicks"), "u_impr": r.get("url_impr"),
                          "u_src": r.get("source") or "", "u_date": (r.get("checked") or "")[:10],
+                         "variants": r.get("variants") or [],
                          "bars": [{"m": f"{m[5:]}/{m[2:4]}", "n": n, "h": max(2, round(22 * n / mx))}
                                   for m, n in r["monthly"]]})
         status(rows)
         cur = rec["currency"]
+        auto_note = [OPTIONAL_COLS[k] for k in empty_cols() if k in OPTIONAL_COLS]
         fmt_money = ("v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN', {maximumFractionDigits: "
                      + ("0" if cur == "VND" else "2") + "})")
         tb = ui.table(columns=[
@@ -678,7 +727,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
              "classes": "sr-kc sr-kc-flags", "headerClasses": "sr-kc sr-kc-flags"},
             {"name": "intent", "label": "Mục đích", "field": "intent", "align": "center",
              "classes": "sr-kc sr-kc-intent", "headerClasses": "sr-kc sr-kc-intent"},
-            {"name": "volume", "label": "Volume", "field": "volume", "align": "right",
+            {"name": "volume", "label": "Lượt tìm / tháng", "field": "volume", "align": "right",
              ":format": "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')",
              "classes": "sr-kc sr-kc-vol", "headerClasses": "sr-kc sr-kc-vol"},
             {"name": "trend", "label": "Xu hướng", "field": "volume", "align": "left", "sortable": False,
@@ -690,7 +739,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             *([{"name": "urlpos", "label": "Trang đang tra", "field": "u_pos", "align": "left",
                 "classes": "sr-kc sr-kc-urlpos", "headerClasses": "sr-kc sr-kc-urlpos"}]
               if rec["mode"] == "rank_url" else []),
-            {"name": "pillar", "label": "Pillar", "field": "pillar", "align": "left",
+            {"name": "pillar", "label": "Từ khóa trụ", "field": "pillar", "align": "left",
              "classes": "sr-kc sr-kc-pillar", "headerClasses": "sr-kc sr-kc-pillar"},
             {"name": "site", "label": "Trang khác của site" if own_url else "Website bạn", "field": "pos", "align": "left",
              "classes": "sr-kc sr-kc-site", "headerClasses": "sr-kc sr-kc-site"},
@@ -698,7 +747,10 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
             'flat dense binary-state-sort :rows-per-page-options="[25, 50, 100, 0]" '
             'rows-per-page-label="Dòng mỗi trang"').classes(
             "w-full sr-bl-table sr-kr-table" + (" wide" if rec["mode"] == "rank_url" else ""))
-        tb.columns = [c for c in tb.columns if c["name"] not in state["hidden"]]
+        auto = empty_cols()  # cột không dòng nào có dữ liệu: ẩn cho bảng khỏi phải cuộn ngang
+        tb.columns = [c for c in tb.columns if c["name"] not in state["hidden"] and c["name"] not in auto]
+        # bề rộng tối thiểu theo số cột đang hiện: ẩn bớt cột thì bảng khỏi cuộn ngang vô cớ
+        tb.style(f"--kr-minw:{min(1040 if rec['mode'] != 'rank_url' else 1220, 150 * len(tb.columns) + 44)}px")
         chosen = set(state["sel"])
         tb.selected = [d for d in data if d["keyword"] in chosen]
 
@@ -714,7 +766,10 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
               từ khóa</q-tooltip></a>
 
               <span v-if="props.row.brand" class="sr-bl-type q-ml-xs">thương hiệu</span>
-              <span v-if="props.row.rival" class="sr-bl-type q-ml-xs">đối thủ</span></div></q-td>""")
+              <span v-if="props.row.rival" class="sr-bl-type q-ml-xs">đối thủ</span>
+              <span v-if="props.row.variants.length" class="sr-bl-type q-ml-xs">+{{ props.row.variants.length }}
+                biến thể<q-tooltip>Cùng lượt tìm, chỉ khác dấu: {{ props.row.variants.join(", ") }}</q-tooltip>
+              </span></div></q-td>""")
         tb.add_slot("body-cell-flags", """
             <q-td :props="props"><div class="sr-kr-flags">
               <span class="sr-kr-slot"><q-icon v-if="props.row.tracked" name="leaderboard" size="18px"
@@ -773,6 +828,14 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 hiển thị</div>
               <div class="sr-bl-sub" v-else>check {{ props.row.u_date.slice(8, 10) }}/{{ props.row.u_date.slice(5, 7)
                 }}</div></template><span v-else class="muted">–</span></q-td>""")
+        notes = []
+        if auto_note:
+            notes.append("Đã ẩn cột không có dữ liệu: " + ", ".join(auto_note)
+                         + " (bật lại ở nút chọn cột nếu cần)")
+        if "intent" not in state["hidden"] and "intent" not in empty_cols():
+            notes.append("Mục đích: " + " · ".join(f"{k} {v.lower()}" for k, v in INTENT_NAMES.items()))
+        for n_ in notes:
+            ui.label(n_).classes("text-xs muted q-mt-xs")
         tb.add_slot("body-cell-site", """
             <q-td :props="props"><span v-if="props.row.same_page" class="muted">–</span>
               <template v-else-if="props.row.impr">
@@ -980,7 +1043,7 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
                 ui.label("Nhóm theo từ").classes("text-sm font-semibold col")
                 ui.button(icon="first_page", on_click=lambda: set_words(False)).props(
                     'flat round dense size=sm aria-label="Ẩn cột Nhóm theo từ"').tooltip("Ẩn cột để bảng rộng hơn")
-            ui.toggle({"count": "Số lượng", "volume": "Volume"}, value=state["wsort"],
+            ui.toggle({"count": "Số từ khóa", "volume": "Lượt tìm"}, value=state["wsort"],
                       on_change=lambda e: (state.update(wsort=e.value), words_panel.refresh())).props(
                 "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
             ).classes("sr-seg")
@@ -1097,13 +1160,19 @@ def build_research_page(ui, cfg, connect, user, open_id: int | None = None, look
 
 
 OPTIONAL_COLS = {"flags": "Rank · AIO", "intent": "Mục đích", "trend": "Xu hướng", "comp": "Cạnh tranh",
-                 "cpc": "CPC", "pillar": "Pillar", "site": "Website bạn"}
+                 "cpc": "CPC", "pillar": "Từ khóa trụ", "site": "Website bạn"}
 
 
 def _norm_url(u: str) -> str:
     """So khớp URL: bỏ http(s), www, tham số và dấu / cuối."""
     import re
     return re.sub(r"^https?://(www\.)?", "", (u or "").strip().lower()).split("?")[0].split("#")[0].rstrip("/")
+
+
+def _marks(text: str) -> int:
+    """Số ký tự có dấu trong chuỗi: dùng để chọn dòng chính giữa các biến thể chỉ khác dấu."""
+    import unicodedata
+    return sum(1 for ch in unicodedata.normalize("NFD", text) if unicodedata.combining(ch))
 
 
 def _host(u: str) -> str:

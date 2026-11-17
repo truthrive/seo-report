@@ -1554,7 +1554,7 @@ HEAD = """
   .sr-kr-ico.aio, .sr-kr-ico.aio-on { background: #F1ECFF; border-radius: 6px; padding: 3px; }
   .sr-kr-pillar { font-size: 13px; }
   /* Bảng Ý tưởng: độ rộng cột cố định theo nội dung, số liệu chính luôn thấy, không cột nào bị ép */
-  .sr-kr-table table { table-layout: fixed; min-width: 1040px; }
+  .sr-kr-table table { table-layout: fixed; min-width: var(--kr-minw, 1040px); }
   .sr-kr-table .sr-kc { padding-left: 8px !important; padding-right: 8px !important; }
   .sr-kr-table .sr-kc-keyword { width: 24%; white-space: normal; }
   .sr-kr-table .sr-kc-flags { width: 74px; }
@@ -1565,12 +1565,15 @@ HEAD = """
   .sr-kr-table .sr-kc-comp { width: 92px; }
   .sr-kr-table .sr-kc-pillar { width: 15%; white-space: normal; }
   .sr-kr-table .sr-kc-site { width: 18%; }
-  .sr-kr-table.wide table { min-width: 1220px; }
+  .sr-kr-table.wide table { min-width: var(--kr-minw, 1220px); }
   .sr-kr-table .sr-kc-urlpos { width: 150px; }
   /* Bảng Ý tưởng: dữ liệu chữ thường, không đậm cho đỡ rối */
   .sr-kr-table .sr-op-kw, .sr-kr-table .sr-op-kw .sr-ko-kw { font-weight: 400; }
   .sr-kr-table .sr-bl-type, .sr-kr-table .sr-kr-pillar.self { font-weight: 500; }
   .sr-kr-table thead th { white-space: nowrap; }
+  /* bảng dài: tiêu đề cột dính lại khi cuộn trong bảng */
+  .sr-kr-table .q-table__middle { max-height: calc(100vh - 230px); }
+  .sr-kr-table thead th { position: sticky; top: 0; z-index: 2; background: #F3F3ED; }
   .sr-kr-table .q-table--col-auto-width { width: 44px; }
   .sr-kr-page { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
   .sr-kr-page a { word-break: normal; }
