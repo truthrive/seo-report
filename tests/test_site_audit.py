@@ -60,10 +60,37 @@ class FindingsTest(unittest.TestCase):
                         "error": None}
             return {"status": 200, "final_url": None, "ms": 4000 if path == "/ok/" else 100,
                     "html": self.pages[path], "x_robots": "", "error": None}
-        self.result = SA.run(self.con, SITE, END, "test", fetcher=fetcher, sleep=lambda s: None, log=lambda m: None)
+        self.result = SA.run(self.con, SITE, END, "test", fetcher=fetcher, sleep=lambda s: None, log=lambda m: None,
+                             site_checks=False)
 
     def tearDown(self):
         self.con.close()
+
+    def test_seo_group_always_scanned(self):
+        from seo_report import urls as U
+        # trang mới trong nhóm URL SEO, chưa có click nào: trước đây không bao giờ được quét
+        uid = self.con.execute("INSERT INTO urls (site, url) VALUES (?, ?)", (SITE, SITE + "moi-dang/")).lastrowid
+        gid = U.ensure_group(self.con, SITE)
+        self.con.execute("INSERT INTO url_group_members VALUES (?, ?, ?, ?)", (gid, uid, "2026-11-17", "test"))
+        picked = SA.pick_pages(self.con, SITE, END, limit=3)
+        self.assertEqual(picked[0], (uid, SITE + "moi-dang/"))  # nhóm đứng đầu
+        self.assertEqual(len(picked), 3)                        # rồi lấp bằng trang nhiều click cho đủ
+        self.assertEqual(len({i for i, _ in picked}), 3)        # không trùng
+        # nhóm lớn hơn giới hạn: vẫn quét đủ nhóm
+        self.assertEqual(len(SA.pick_pages(self.con, SITE, END, limit=1)), 1)
+        self.assertEqual(SA.url_groups(self.con, SITE), {uid: [U.DEFAULT_GROUP]})
+
+    def test_page_clicks_and_level_pages(self):
+        f = SA.findings(self.con, self.cfg, END)
+        ids = sorted({p["url_id"] for c in f["checks"] for p in c["pages"]})
+        clicks = SA.page_clicks(self.con, SITE, END, ids)
+        noidx = next(p for c in f["checks"] if c["code"] == "noindex" for p in c["pages"])
+        self.assertEqual(clicks[noidx["url_id"]], (97, 1000))  # /noidx/ là trang thứ 4: 100 - 3 click
+        self.assertEqual(SA.page_clicks(self.con, SITE, END, []), {})
+        # đếm trang thật, không cộng dồn: trang 1 có 2 mục "Cần sửa" vẫn tính 1 trang (trước đây tính 2 "lượt trang")
+        au = {"checks": [{"level": "high", "pages": [{"url_id": 1}, {"url_id": 2}]},
+                         {"level": "high", "pages": [{"url_id": 1}]}, {"level": "info", "pages": [{"url_id": 1}]}]}
+        self.assertEqual(SA.level_pages(au), {"high": 2, "medium": 0, "info": 1})
 
     def codes(self):
         f = SA.findings(self.con, self.cfg, END)

@@ -34,7 +34,8 @@ NAV = [
                   ("Yêu cầu hỗ trợ", "/ho-tro", "support_agent"), ("Yêu cầu của tôi", "/yeu-cau", "support_agent")]),
     ("Từ khóa", [("Thứ hạng từ khóa", "/rank", "leaderboard"), ("Keyword Research", "/tu-khoa", "manage_search"),
                  ("Đối thủ", "/doi-thu", "groups"), ("SEO Opportunities", "/co-hoi", "insights")]),
-    ("Website", [("URL & Index", "/url", "link"), ("Tốc độ trang", "/toc-do", "speed"),
+    ("Website", [("URL & Index", "/url", "link"), ("Technical Audit", "/audit", "fact_check"),
+                 ("Tốc độ trang", "/toc-do", "speed"),
                  ("Backlink", "/backlink", "add_link")]),
     ("AI & GEO", [("AI Search & GEO", "/ai", "auto_awesome"), ("AI Overview", "/aio", "tips_and_updates")]),
     ("Kênh khác", [("Local SEO", "/local", "storefront"), ("Merchant Center", "/merchant", "shopping_bag")]),
@@ -604,7 +605,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     def sub_nav(user, P) -> dict[str, list[tuple[str, str]]]:
         """Tab con của từng mục menu (đúng tab có trên trang, theo quyền): mục → [(tên tab, địa chỉ)].
         Tab đầu là tab mặc định của trang nên không cần ?tab=."""
-        from . import web_backlink as WB, web_cwv as WC, web_local as WL, web_merchant as WM, web_opps as WO
+        from . import web_audit as WAU, web_backlink as WB, web_cwv as WC, web_local as WL, web_merchant as WM, \
+            web_opps as WO
         cl = A.is_client(user)
 
         def q(path, tabs):
@@ -614,7 +616,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                      and (not cl or h in A.CLIENT_PAGES)],
             "/tu-khoa": list(RESEARCH_TABS),
             "/projects": [(t, h) for t, h in ADMIN_TABS if h not in OWNER_PAGES or A.is_owner(user)],
-            "/toc-do": q("/toc-do", WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS),
+            "/toc-do": q("/toc-do", WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS), "/audit": q("/audit", WAU.TABS),
             "/backlink": q("/backlink", [t for t in WB.PAGE_TABS if not (cl and t[0] in WB.TEAM_TABS)]), "/local": q("/local", WL.TABS),
             "/merchant": q("/merchant", WM.TABS),
             "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"), ("trang-dich", "Trang đích"),
@@ -1168,12 +1170,25 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     def opps_page(request: Request):
         """Cơ hội SEO: sắp lên top, trang tụt traffic, tranh nhau từ khóa, trang mới (từ dữ liệu GSC, không tốn tiền).
         Chỉ team: khách hàng không mở."""
+        if request.query_params.get("tab") == "audit":  # Technical Audit đã thành mục riêng
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse("/audit")
         if not (opened := open_page(request)):
             return
         user, P = opened
         shell("SEO Opportunities", user, P, page_ctx(P), period=False, group=False)
         from .web_opps import build_opps_page
         build_opps_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+
+    @ui.page("/audit")
+    def audit_page(request: Request):
+        """Technical Audit: lỗi kỹ thuật SEO, dữ liệu cấu trúc, theo trang (tool tự quét, miễn phí). Chỉ team."""
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Technical Audit", user, P, page_ctx(P), period=False, group=False)
+        from .web_audit import build_audit_page
+        build_audit_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
 
     @ui.page("/research/tu-khoa")
     def keyword_overview_old(request: Request):

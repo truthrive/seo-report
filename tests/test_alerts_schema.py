@@ -27,6 +27,59 @@ class SchemaTest(unittest.TestCase):
         self.assertEqual(SA.parse("<div itemtype='https://schema.org/Product'></div>", "https://s.vn/")["products"], [])
         self.assertTrue(SA.parse("<div itemtype='https://schema.org/Product'></div>", "https://s.vn/")["micro_product"])
 
+    def test_ld_blocks_and_bad_syntax(self):
+        d = SA.parse(LD, "https://s.vn/a")
+        self.assertEqual((d["ld_blocks"], d["ld_bad"]), (1, 0))
+        self.assertIn("Product", d["schema"])
+        bad = '<html><script type="application/ld+json">{"@type":"Product",}</script></html>'
+        d = SA.parse(bad, "https://s.vn/a")
+        self.assertEqual((d["ld_blocks"], d["ld_bad"], d["schema"]), (1, 1, []))
+        d = SA.parse("<html><body>x</body></html>", "https://s.vn/a")
+        self.assertEqual((d["ld_blocks"], d["schema"]), (0, []))
+
+    def test_schema_summary(self):
+        con = sqlite3.connect(":memory:")
+        SA.ensure_tables(con)
+        rows = [(1, "https://s.vn/a", 200, json.dumps(SA.parse(LD, "https://s.vn/a"))),
+                (2, "https://s.vn/b", 200, json.dumps(SA.parse("<html><body>x</body></html>", "https://s.vn/b"))),
+                (3, "https://s.vn/c", 200, json.dumps(SA.parse(
+                    '<html><script type="application/ld+json">{,}</script></html>', "https://s.vn/c"))),
+                (4, "https://s.vn/d", 404, json.dumps({}))]
+        for uid, url, st, data in rows:
+            con.execute("INSERT INTO audit_pages (url_id, url, status, data, fetched_at) "
+                        "VALUES (?, ?, ?, ?, ?)", (uid, url, st, data, "2026-11-17T10:00:00"))
+        sm = SA.schema_summary(con)
+        self.assertEqual((sm["pages"], sm["with"], sm["bad"]), (3, 1, 1))  # trang 404 không tính
+        self.assertEqual(dict(sm["types"])["Product"], 1)
+        self.assertEqual((sm["products"], sm["rated"]), (1, 0))
+        self.assertEqual((sm["no_shipping"], sm["no_returns"]), (1, 1))
+        # chưa có lần quét xong: chưa ghi lịch sử; có rồi thì ghi đúng một lần
+        self.assertFalse(SA.snapshot(con))
+        con.execute("INSERT INTO audit_runs (started_at, finished_at, pages, created_by) VALUES (?, ?, ?, ?)",
+                    ("2026-11-17T08:00:00", "2026-11-17T08:05:00", 4, "test"))
+        self.assertTrue(SA.snapshot(con))
+        self.assertFalse(SA.snapshot(con))
+        h = SA.schema_history(con)
+        self.assertEqual((len(h), h[0]["products"], h[0]["rated"]), (1, 1, 0))
+
+    def test_rating_and_merchant_fields(self):
+        prods = SA.parse(LD, "https://s.vn/a")["products"]
+        self.assertFalse(SA.has_rating(prods))
+        self.assertTrue(SA.has_rating(SA.parse(OK, "https://s.vn/a")["products"]))
+        self.assertEqual(SA.merchant_missing(prods, []),
+                         ["phí vận chuyển (shippingDetails)", "chính sách đổi trả (hasMerchantReturnPolicy)"])
+        # chính sách đổi trả khai ở chỗ khác trên trang (ví dụ Organization) cũng tính là có
+        self.assertEqual(SA.merchant_missing(prods, ["MerchantReturnPolicy"]), ["phí vận chuyển (shippingDetails)"])
+        full = LD.replace('"priceCurrency":"VND"}', '"priceCurrency":"VND","shippingDetails":{"@type":'
+                          '"OfferShippingDetails"},"hasMerchantReturnPolicy":{"@type":"MerchantReturnPolicy"}}')
+        self.assertEqual(SA.merchant_missing(SA.parse(full, "https://s.vn/a")["products"], []), [])
+        # trang quét trước khi có hai trường này: không kết luận
+        old = [{k: v for k, v in prods[0].items() if k not in ("shipping", "returns")}]
+        self.assertIsNone(SA.merchant_missing(old, []))
+        # sao không còn nằm trong "nên bổ sung"
+        _, nice = SA.product_problems(prods)
+        self.assertFalse(any("đánh giá" in x for x in nice))
+
 
 class AlertsTest(unittest.TestCase):
     def setUp(self):

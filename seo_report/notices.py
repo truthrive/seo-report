@@ -184,7 +184,7 @@ def _seo(con, cfg) -> list[dict]:
         run_id = (au["run"] or {}).get("id")
         for ch in [c for c in au["checks"] if c["level"] == "high"]:
             out.append(_n("seo", "high", f"audit:{run_id}:{ch['code']}:{len(ch['pages'])}",
-                          f"Audit: {ch['name']} · {len(ch['pages'])} trang", ch["fix"], "/co-hoi?tab=audit",
+                          f"Audit: {ch['name']} · {len(ch['pages'])} trang", ch["fix"], "/audit",
                           ((au["run"] or {}).get("finished_at") or "")[:10]))
     except Exception:  # noqa: BLE001 — chưa quét lần nào / thiếu bảng
         pass
@@ -265,8 +265,8 @@ def _traffic(con, cfg) -> list[dict]:
                 out.append(_n("traffic", "high", f"appearance:{a['key']}:{(period or ('', ''))[1]}",
                               f"“{a['name']}” tụt {(pc - a['clicks']) / pc:.0%} click",
                               f"{a['clicks']:,} click 28 ngày gần nhất so với {pc:,} kỳ trước. Thường do dữ liệu cấu "
-                              "trúc bị lỗi / thiếu: xem mục schema ở Technical Audit.".replace(",", "."),
-                              "/nguon", (period or ("", ""))[1]))
+                              "trúc bị lỗi / thiếu: xem tab Schema ở Technical Audit.".replace(",", "."),
+                              "/audit?tab=schema", (period or ("", ""))[1]))
     return out
 
 
