@@ -137,6 +137,21 @@ def cut_off(style: str, data: dict) -> bool:
     return False
 
 
+def gateway_message(detail: str) -> str:
+    """Câu lỗi của nhà cung cấp lấy từ thân phản hồi ({"error": {"message"}}, {"message"}, {"detail"} hoặc chữ thường),
+    đã che mọi chuỗi giống khóa API, tối đa 200 ký tự."""
+    msg = ""
+    try:
+        d = json.loads(detail)
+        if isinstance(d, dict):
+            err = d.get("error")
+            msg = (err.get("message") if isinstance(err, dict) else err) or d.get("message") or d.get("detail") or ""
+    except ValueError:
+        msg = detail if "<" not in detail else ""  # trang HTML lỗi: bỏ
+    msg = re.sub(r"\b(sk|key|ak)-[A-Za-z0-9_\-]{6,}", r"\1-…", str(msg or ""))
+    return " ".join(msg.split())[:200]
+
+
 def complete(style: str, base: str, key: str, model: str, prompt: str, system: str = "", max_tokens: int = 1024,
              timeout: int = 120, opener=None, allow_cut: bool = False) -> str:
     """Gửi một câu hỏi, trả về chữ AI trả lời. Lỗi → AIError với câu dễ hiểu (không chứa khóa). allow_cut: chấp nhận
@@ -159,7 +174,15 @@ def complete(style: str, base: str, key: str, model: str, prompt: str, system: s
             raise QuotaError("Model AI chính đang bị phía người bán trên cổng từ chối (lỗi của họ, không phải khóa): "
                              "chọn model khác hoặc thêm model dự phòng ở Quản trị › AI") from e
         if e.code in (401, 403):
-            raise QuotaError("Khóa API không đúng hoặc không có quyền") from e
+            # nêu nguyên văn lý do của cổng: cổng bán lại hay từ chối vì khóa chưa được dùng model này (nhóm khóa),
+            # hết số dư, hoặc chỉ nhận một kiểu route / một phần mềm nhất định, dù khóa vẫn đúng
+            why = gateway_message(detail)
+            raise QuotaError(
+                (f"Khóa API không đúng (lỗi {e.code})" if e.code == 401 and not why else
+                 f"Nhà cung cấp từ chối lời gọi (lỗi {e.code})")
+                + (f": “{why}”" if why else "")
+                + ". Nếu “Thử kết nối” vẫn lấy được danh sách model thì khóa đúng, nhưng chưa được dùng model này: xem "
+                  "nhóm / quyền của khóa và số dư trên trang của nhà cung cấp, hoặc đổi Kiểu route") from e
         if e.code == 402 or "insufficient_quota" in low:
             if "price" in low:
                 raise QuotaError("Cổng AI đã đổi giá model đang dùng: vào trang quản lý của cổng để chấp nhận giá mới, "

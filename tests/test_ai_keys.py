@@ -64,6 +64,26 @@ class GatewayTest(unittest.TestCase):
         with self.assertRaises(AH.QuotaError):
             AH.complete("chat", "https://api.example.com/v1", "k", "m1", "hi", opener=open_)
 
+    def test_forbidden_shows_gateway_reason(self):
+        from seo_report import ai_http as AH
+
+        def open_(body, code=403):
+            def f(req, timeout=0):
+                raise HTTPError(req.full_url, code, "x", {}, io.BytesIO(body))
+            return f
+        body = '{"error":{"message":"Nhóm khóa không được dùng model này (key sk-abc123456789)"}}'.encode()
+        with self.assertRaises(AH.QuotaError) as cm:
+            AH.complete("responses", "https://api.example.com/v1", "k", "m1", "hi", opener=open_(body))
+        msg = str(cm.exception)
+        self.assertIn("Nhóm khóa không được dùng model này", msg)  # nguyên văn lý do của cổng
+        self.assertNotIn("abc123456789", msg)                       # chuỗi giống khóa bị che
+        self.assertIn("lỗi 403", msg)
+        with self.assertRaises(AH.QuotaError) as cm:
+            AH.complete("chat", "https://api.example.com/v1", "k", "m1", "hi", opener=open_(b"", 401))
+        self.assertIn("Khóa API không đúng (lỗi 401)", str(cm.exception))
+        self.assertEqual(AH.gateway_message("<html>403 Forbidden</html>"), "")
+        self.assertEqual(AH.gateway_message('{"message": "no balance"}'), "no balance")
+
     def test_gateway_check(self):
         v = {"base_url": "https://api.example.com/v1", "api_style": "chat", "model": "m1", "api_key": "k"}
         self.assertTrue(I._test_gateway(None, v, gateway_opener(["m1"]))[0])
