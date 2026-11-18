@@ -59,6 +59,14 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(d["fixed"], [("noindex", "https://x.vn/b")])
         self.assertFalse(AC.diff(cur, None, set())["has_prev"])
 
+    def test_diff_splits_first_time_pages(self):
+        prev = {"noalt": ["https://x.vn/a"]}
+        cur = {"noalt": ["https://x.vn/a", "https://x.vn/b", "https://x.vn/c"]}
+        d = AC.diff(cur, prev, {"https://x.vn/a", "https://x.vn/b", "https://x.vn/c"}, {"https://x.vn/a", "https://x.vn/b"})
+        self.assertEqual(d["new"], [("noalt", "https://x.vn/b")])  # trang đã quét lần trước: lỗi mới thật
+        self.assertEqual(d["first"], [("noalt", "https://x.vn/c")])  # trang lần đầu được quét
+        self.assertEqual(d["first_pages"], 1)
+
 
 class IgnoreAndHistoryTest(unittest.TestCase):
     def setUp(self):

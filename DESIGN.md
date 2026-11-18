@@ -102,10 +102,17 @@ nội dung        ── T.section (thẻ trắng bo 14px) xếp dọc, hoặc l
   lại ở tab Audit", không chép lại cả danh sách Audit.
 - Không để khoảng trống lớn, nhưng cũng không nhét số liệu cho đầy chỗ.
 - Danh sách mục kiểm tra chia nhóm theo mức (Cần sửa → Nên xem → Chỉ số hồ sơ thu gọn), không xếp phẳng.
-- **Audit dạng checklist** (Technical Audit): chia theo hạng mục của bộ tiêu chuẩn, mỗi tiêu chí một dòng có mã và
+- **Audit dạng checklist** (Technical Audit): chia theo hạng mục của bộ tiêu chuẩn, mỗi tiêu chí một dòng có
   trạng thái **Đạt / Cần sửa / Nên sửa / Tham khảo / Chưa kiểm / Không áp dụng** — hiện cả tiêu chí đạt để đọc như
-  một checklist. Không lấy được dữ liệu (hết giờ chờ, thiếu API key) thì là *Chưa kiểm*, không phải lỗi. Bảng chi
-  tiết có cột **Đang là / Nên là**; trường hợp cố ý thì đánh dấu "Cố ý, bỏ qua" chứ không xóa khỏi kết quả.
+  một checklist. Mã quy tắc chỉ hiện khi mở tiêu chí (không đặt cạnh tên). Không lấy được dữ liệu (hết giờ chờ, thiếu
+  API key) thì là *Chưa kiểm*, không phải lỗi. Bảng chi tiết có cột **Đang là / Nên là**; trường hợp cố ý thì đánh
+  dấu "Cố ý, bỏ qua" chứ không xóa khỏi kết quả; đã sửa thì "Đã xử lý, kiểm tra lại" (kiểm ngay, ghi nhật ký).
+- **Cột hạng mục**: checklist dài chia cột trái "Tổng quan" + từng hạng mục, mỗi lần hiện một mục (màn hẹp: thanh
+  trượt ngang, tự cuộn tới mục đang chọn). Dưới tên mỗi mục là một dòng chữ nhỏ ghi trạng thái ("1 cần sửa · 1
+  nên sửa", "✓ Đạt hết", "Chưa kiểm") thay cho chấm số màu; không đánh số mục; mỗi mục có icon riêng; mục đang chọn tô nền xanh nhạt
+  (không dùng vạch màu bên cạnh). Tổng quan không lặp lại danh sách hạng mục.
+- **Theo thời gian**: so qua các lần quét bằng bảng *tiêu chí × lần quét* (mới nhất bên trái, cột tên dính bên trái),
+  không bằng danh sách từng lần quét.
 - Thống kê mô tả (tỷ lệ dofollow, phân bố trang đích…) không đặt lẫn trong danh sách việc phải làm.
 
 ---

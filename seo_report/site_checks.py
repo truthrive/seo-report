@@ -311,6 +311,8 @@ def collect(con: sqlite3.Connection, site: str, pages: list[dict], key: str = ""
     ensure(con)
     home = urlunsplit((urlsplit(site).scheme or "https", urlsplit(site).netloc.lower(), "/", "", ""))
     out: dict = {"at": _now()}
+    step = (lambda ph, n_=0, t_=0: progress(n_, t_, ph)) if progress else (lambda *a: None)
+    step("basic")
 
     # robots.txt
     r = text_get(urljoin(home, "/robots.txt"))
@@ -344,7 +346,8 @@ def collect(con: sqlite3.Connection, site: str, pages: list[dict], key: str = ""
              if c and c not in scanned and host_of(c) == host_of(site)]
     sm = sitemap_urls(con, site)
     queue = sorted(refs, key=lambda u: -refs[u]) + canon + [u for u in sm if u not in scanned]
-    n = check_statuses(con, queue, opener=opener, progress=progress)
+    step("links", 0, len(queue))
+    n = check_statuses(con, queue, opener=opener, progress=lambda d, t: step("links", d, t))
     known = known_statuses(con)
     out["links"] = {"targets": len(refs), "checked": sum(1 for u in refs if u in known)}
     out["sitemap"] = {"urls": len(sm), "checked": sum(1 for u in sm if u in known or u in scanned)}
@@ -352,6 +355,7 @@ def collect(con: sqlite3.Connection, site: str, pages: list[dict], key: str = ""
 
     # Google Safe Browsing
     if key and ok_urls:
+        step("sb")
         try:
             if sb_query is None:
                 from .backlink_links import _sb_query as sb_query

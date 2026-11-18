@@ -1,5 +1,5 @@
-"""Audit kỹ thuật on-page (miễn phí): tool tự mở các trang quan trọng của website (nhiều click / hiển thị nhất 90 ngày
-qua, không tính URL biến thể có tham số) rồi kiểm tra mã trả về, chuyển hướng, noindex, canonical, tiêu đề, mô tả, H1,
+"""Audit kỹ thuật on-page (miễn phí): tool tự mở các trang của website (nhóm URL SEO, trang và sản phẩm nhiều click
+nhất 90 ngày qua, mọi trang không phải sản phẩm trong sitemap; không tính URL biến thể có tham số: pick_pages) rồi kiểm tra mã trả về, chuyển hướng, noindex, canonical, tiêu đề, mô tả, H1,
 ảnh thiếu alt, nội dung mỏng, tốc độ phản hồi; kèm kiểm tra từ dữ liệu Search Console (tiêu đề không chứa từ khóa
 chính, CTR thấp so với vị trí). Mỗi tuần quét một lần (lịch hằng ngày), hoặc bấm Quét ngay."""
 import gzip
@@ -18,8 +18,13 @@ from . import keywords as K
 from .crawl import HEADERS
 
 REFRESH_DAYS = 7
-MAX_PAGES = 300  # trang quan trọng nhất; site bán hàng có hàng nghìn sản phẩm không cần quét hết mỗi tuần
+TOP_TRAFFIC = 300  # số trang nhiều traffic nhất luôn được quét (mọi loại)
+TOP_PRODUCTS = 300  # thêm bấy nhiêu trang sản phẩm nhiều traffic nhất (mẫu đủ lớn để thấy lỗi giao diện sản phẩm)
+MAX_PAGES = 1500   # trần số trang mỗi lần quét (nhóm URL SEO luôn quét đủ dù vượt trần)
+# Trang không phải sản phẩm trong sitemap luôn được quét: mỗi bài / danh mục là nội dung riêng. Trang sản phẩm dùng
+# chung một giao diện nên chỉ quét các trang nhiều traffic: lỗi giao diện thì trang nào cũng có, quét mẫu là đủ thấy.
 DELAY = 0.4  # nghỉ giữa hai lần mở trang: không làm nặng server của website
+BLOCK_STREAK = 25  # bị chặn bấy nhiêu trang liên tiếp thì dừng quét trang
 TIMEOUT = 25
 SLOW_MS = 3000
 TITLE_MIN, TITLE_MAX = 20, 65
@@ -63,6 +68,19 @@ CREATE TABLE IF NOT EXISTS audit_findings_hist (
     run_id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,
     data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_settings (
+    k TEXT PRIMARY KEY,
+    v TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_fix_log (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL,
+    url TEXT NOT NULL,
+    at TEXT NOT NULL,
+    by TEXT NOT NULL,
+    result TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -337,6 +355,17 @@ class _NoRedirect(HTTPRedirectHandler):
 _opener = build_opener(_NoRedirect)
 
 
+# Dấu hiệu trang chặn / thử thách của tường lửa (Cloudflare, Sucuri, Imperva…): server trả trang này thay cho trang thật
+BLOCK_MARKS = ("cf-chl", "challenge-platform", "<title>just a moment", "attention required! | cloudflare",
+               "cf-browser-verification", "_incapsula_resource", "sucuri website firewall", "access denied | ")
+BLOCK_STATUS = {403, 429, 503}  # mã server hay trả khi chặn bot (429: gửi yêu cầu quá nhiều)
+
+
+def _block_mark(body: str) -> bool:
+    low = body[:30000].lower()
+    return any(m in low for m in BLOCK_MARKS)
+
+
 def fetch(url: str, timeout: int = TIMEOUT) -> dict:
     """Mở một trang, không tự theo chuyển hướng (để biết trang có chuyển hướng không). Trả status, final_url (đích
     chuyển hướng), ms, html, x_robots, error."""
@@ -347,14 +376,31 @@ def fetch(url: str, timeout: int = TIMEOUT) -> dict:
         if resp.headers.get("Content-Encoding") == "gzip":
             body = gzip.decompress(body)
         ctype = resp.headers.get("Content-Type", "")
+        html = body.decode("utf-8", "ignore") if "html" in ctype or not ctype else ""
+        if html and _block_mark(html):  # trang thử thách trả 200: không phải nội dung thật
+            return {"status": resp.status, "final_url": None, "ms": int((time.monotonic() - t) * 1000), "html": "",
+                    "x_robots": "", "error": None, "blocked": True}
         return {"status": resp.status, "final_url": None, "ms": int((time.monotonic() - t) * 1000),
-                "html": body.decode("utf-8", "ignore") if "html" in ctype or not ctype else "",
-                "x_robots": (resp.headers.get("X-Robots-Tag") or "").lower(), "error": None,
+                "html": html, "x_robots": (resp.headers.get("X-Robots-Tag") or "").lower(), "error": None,
                 "enc": (resp.headers.get("Content-Encoding") or "").lower(), "bytes": len(body)}
     except HTTPError as e:
         loc = e.headers.get("Location") if e.headers else None
-        return {"status": e.code, "final_url": urljoin(url, loc) if loc else None,
-                "ms": int((time.monotonic() - t) * 1000), "html": "", "x_robots": "", "error": None}
+        blocked = e.code == 429
+        if e.code in BLOCK_STATUS and not blocked:
+            try:
+                raw = e.read(40000)
+                if e.headers.get("Content-Encoding") == "gzip":
+                    raw = gzip.decompress(raw)
+                blocked = _block_mark(raw.decode("utf-8", "ignore"))
+            except Exception:  # noqa: BLE001
+                pass
+        out = {"status": e.code, "final_url": urljoin(url, loc) if loc else None,
+               "ms": int((time.monotonic() - t) * 1000), "html": "", "x_robots": "", "error": None}
+        if blocked:
+            out["blocked"] = True
+        if e.code == 429:
+            out["retry_after"] = e.headers.get("Retry-After") if e.headers else None
+        return out
     except (URLError, OSError, HTTPException) as e:
         return {"status": None, "final_url": None, "ms": None, "html": "", "x_robots": "", "error": str(e)[:200]}
 
@@ -386,22 +432,50 @@ def url_groups(con: sqlite3.Connection, site: str) -> dict[int, list[str]]:
     return out
 
 
-def pick_pages(con: sqlite3.Connection, site: str, end: date, limit: int = MAX_PAGES) -> list[tuple[int, str]]:
-    """Trang sẽ quét: mọi URL trong nhóm URL SEO trước (kể cả trang mới chưa có click, nhóm có hơn `limit` URL thì
-    vẫn quét đủ), rồi lấp cho đủ `limit` bằng URL nhiều click (rồi nhiều hiển thị) nhất 90 ngày qua, bỏ URL biến thể
-    có tham số và URL cũ/kỹ thuật."""
+def sitemap_pages(con: sqlite3.Connection, site: str) -> list[tuple[int, str]]:
+    """Trang không phải sản phẩm trong sitemap (lần đọc gần nhất): trang chủ, danh mục, bài viết, cửa hàng, trang thông
+    tin; bỏ URL có tham số."""
+    from . import urls as U
+    kinds = (U.HOME, U.CATEGORY, U.BRAND, U.STORE, U.INFO, U.BLOG)  # thứ tự: trang khung trước, bài viết sau
+    try:
+        m = con.execute("SELECT MAX(last_seen) FROM sitemap_urls WHERE site = ?", (site,)).fetchone()[0]
+        if not m:
+            return []
+        rows = con.execute(
+            f"""SELECT u.id, u.url, u.type FROM sitemap_urls s JOIN urls u ON u.site = s.site AND u.url = s.url
+                WHERE s.site = ? AND s.last_seen = ? AND u.url NOT LIKE '%?%'
+                AND u.type IN ({','.join('?' * len(kinds))})""", (site, m, *kinds)).fetchall()
+    except sqlite3.OperationalError:  # chưa đọc sitemap lần nào
+        return []
+    rows.sort(key=lambda r: (kinds.index(r[2]), r[1]))
+    return [(i, u) for i, u, _ in rows]
+
+
+def pick_pages(con: sqlite3.Connection, site: str, end: date, limit: int = MAX_PAGES,
+               top: int = TOP_TRAFFIC, top_products: int = TOP_PRODUCTS) -> list[tuple[int, str]]:
+    """Trang sẽ quét, theo thứ tự ưu tiên: (1) mọi URL trong nhóm URL SEO (kể cả trang mới chưa có click; nhóm lớn
+    hơn `limit` vẫn quét đủ); (2) `top` URL nhiều click (rồi nhiều hiển thị) nhất 90 ngày qua, mọi loại trang; (3)
+    `top_products` trang sản phẩm nhiều click nhất; (4) mọi trang không phải sản phẩm trong sitemap. Tối đa `limit`
+    trang; bỏ URL có tham số và URL cũ/kỹ thuật."""
     from . import urls as U
     picked = group_pages(con, site)
     have = {i for i, _ in picked}
+    cap = max(limit, len(picked))
     since = (end - timedelta(days=89)).isoformat()
     rows = con.execute(
         """SELECT u.id, u.url FROM gsc_page_daily d JOIN page_url pu ON pu.page_id = d.page_id
            JOIN urls u ON u.id = pu.url_id AND u.site = ?
            WHERE d.date BETWEEN ? AND ? AND u.url NOT LIKE '%?%' AND COALESCE(u.type, '') != ?
            GROUP BY u.id ORDER BY SUM(d.clicks) DESC, SUM(d.impressions) DESC LIMIT ?""",
-        (site, since, end.isoformat(), U.LEGACY, limit)).fetchall()
-    for i, u in rows:
-        if len(picked) >= limit:
+        (site, since, end.isoformat(), U.LEGACY, min(top, limit))).fetchall()
+    prods = con.execute(
+        """SELECT u.id, u.url FROM gsc_page_daily d JOIN page_url pu ON pu.page_id = d.page_id
+           JOIN urls u ON u.id = pu.url_id AND u.site = ?
+           WHERE d.date BETWEEN ? AND ? AND u.url NOT LIKE '%?%' AND u.type = ?
+           GROUP BY u.id ORDER BY SUM(d.clicks) DESC, SUM(d.impressions) DESC LIMIT ?""",
+        (site, since, end.isoformat(), U.PRODUCT, top_products)).fetchall() if top_products else []
+    for i, u in rows + prods + sitemap_pages(con, site):
+        if len(picked) >= cap:
             break
         if i not in have:
             picked.append((i, u))
@@ -433,26 +507,62 @@ def level_pages(au: dict) -> dict[str, int]:
             for k in LEVELS}
 
 
-def last_run(con) -> dict | None:
+def last_run(con, done: bool = False) -> dict | None:
+    """Lần quét mới nhất (done: lần quét xong mới nhất — kết quả hiển thị dựa trên lần này)."""
     ensure_tables(con)
     r = con.execute("SELECT id, started_at, finished_at, pages, errors, created_by FROM audit_runs "
-                    "ORDER BY id DESC LIMIT 1").fetchone()
+                    + ("WHERE finished_at IS NOT NULL " if done else "") + "ORDER BY id DESC LIMIT 1").fetchone()
     return dict(zip(("id", "started_at", "finished_at", "pages", "errors", "by"), r)) if r else None
+
+
+STALL = timedelta(minutes=10)  # lần quét đang chạy ghi một trang mỗi vài giây: 10 phút không ghi gì là đã dừng
+
+
+def stopped(con, now: datetime | None = None) -> dict | None:
+    """Lần quét mới nhất bị dừng giữa chừng (máy chủ khởi động lại, máy tắt, lỗi): chưa xong mà đã 10 phút không quét
+    thêm trang nào. Trả {"id", "started_at", "pages_done"} hoặc None. Lần quét đang chạy (ở đây hay ở lịch hằng ngày)
+    vẫn ghi trang đều nên không bị tính nhầm."""
+    last = last_run(con)
+    if not last or last["finished_at"]:
+        return None
+    now = now or datetime.now(timezone.utc)
+    started = datetime.fromisoformat(last["started_at"])
+    n, latest = con.execute("SELECT COUNT(*), MAX(fetched_at) FROM audit_pages WHERE fetched_at >= ?",
+                            (last["started_at"],)).fetchone()
+    alive = datetime.fromisoformat(latest) if latest else started
+    if now - alive < STALL:
+        return None
+    return {"id": last["id"], "started_at": last["started_at"], "pages_done": n}
 
 
 def run(con: sqlite3.Connection, site: str, end: date, user: str = "lịch tự động", limit: int = MAX_PAGES,
         fetcher=fetch, sleep=time.sleep, log=print, progress=None, key: str = "", site_checks: bool = True,
-        opener=None, text_get=None, sb_query=None) -> dict:
+        opener=None, text_get=None, sb_query=None, cfg=None) -> dict:
     """Quét lại các trang quan trọng. Kết quả cũ của trang không còn trong danh sách được xóa."""
     ensure_tables(con)
     pages = pick_pages(con, site, end, limit)
     with con:
         run_id = con.execute("INSERT INTO audit_runs (started_at, created_by) VALUES (?, ?)",
                              (_now(), user)).lastrowid
-    errors = 0
+    errors = blocked = streak = 0
+    stopped_early = False
     for n, (uid, url) in enumerate(pages, 1):
         r = fetcher(url)
+        if r.get("status") == 429:  # gửi quá nhanh: nghỉ theo server yêu cầu (tối đa 60 giây) rồi thử lại một lần
+            try:
+                wait = min(60, max(5, int(r.get("retry_after") or 15)))
+            except ValueError:
+                wait = 15
+            sleep(wait)
+            r = fetcher(url)
+        is_blocked = bool(r.get("blocked")) or r.get("status") == 429
         data = parse(r["html"], url) if r["html"] else {}
+        if is_blocked:
+            data["blocked"] = 1
+            blocked += 1
+            streak += 1
+        else:
+            streak = 0
         data["x_robots"] = r.get("x_robots", "")
         if r.get("html"):
             data["enc"], data["bytes"] = r.get("enc", ""), r.get("bytes", 0)
@@ -463,11 +573,15 @@ def run(con: sqlite3.Connection, site: str, end: date, user: str = "lịch tự 
                         (uid, url, _now(), r["status"], r["final_url"], r["ms"], json.dumps(data, ensure_ascii=False),
                          r["error"]))
         if progress:
-            progress(n, len(pages))
+            progress(n, len(pages), "pages", url)
         if n % 25 == 0:
             log(f"Audit: {n}/{len(pages)} trang")
+        if streak >= BLOCK_STREAK:  # bị chặn liên tục: dừng, mở tiếp chỉ làm tường lửa siết thêm
+            log(f"Audit: website chặn bot {streak} trang liên tiếp, dừng quét trang")
+            stopped_early = True
+            break
         if n < len(pages):
-            sleep(DELAY)
+            sleep(DELAY * (4 if streak else 1))  # vừa bị chặn: đi chậm lại
     keep = [uid for uid, _ in pages]
     with con:
         if keep:
@@ -479,32 +593,84 @@ def run(con: sqlite3.Connection, site: str, end: date, user: str = "lịch tự 
         from . import site_checks as SC
         rows = con.execute("SELECT url, status, final_url, data FROM audit_pages").fetchall()
         kw = {k: v for k, v in (("opener", opener), ("text_get", text_get), ("sb_query", sb_query)) if v}
-        if progress:
-            progress(0, 0, "site")
         try:
             SC.collect(con, site, [{"url": u, "status": st, "final_url": f, "data": json.loads(d or "{}")}
-                                   for u, st, f, d in rows], key=key, log=log,
-                       progress=(lambda n_, t_: progress(n_, t_, "site")) if progress else None, **kw)
+                                   for u, st, f, d in rows], key=key, log=log, progress=progress, **kw)
         except Exception as e:  # noqa: BLE001  (phần này lỗi không làm hỏng kết quả quét trang)
             log(f"Audit: kiểm tra cấp website chưa xong: {e}")
-    log(f"Audit: xong {len(pages)} trang, {errors} trang không mở được")
-    return {"pages": len(pages), "errors": errors}
+    _cache.clear()
+    if progress:
+        progress(0, 0, "calc")
+    if cfg is not None:  # ghi kết quả của lần quét này (xem lại theo tuần), không đợi ai mở trang
+        try:
+            findings_history(con, findings(con, cfg, end))
+        except Exception as e:  # noqa: BLE001
+            log(f"Audit: chưa ghi được kết quả tuần: {e}")
+    log(f"Audit: xong {len(pages)} trang, {errors} trang không mở được" + (f", {blocked} trang bị chặn" if blocked
+                                                                           else ""))
+    return {"pages": len(pages), "errors": errors, "blocked": blocked, "stopped_early": stopped_early}
 
 
-def refresh(con, cfg, today: date | None = None, force: bool = False, log=print) -> dict | None:
-    """Lịch hằng ngày: quét khi lần gần nhất đã cũ hơn 7 ngày (force: ngay)."""
+WEEKDAYS = ("Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ nhật")
+DEFAULT_SCHEDULE = {"weekday": 0, "hour": 2, "paused": False}  # 2 giờ sáng thứ Hai: website của khách ít người vào
+
+
+def schedule(con: sqlite3.Connection) -> dict:
+    """Lịch tự quét: {"weekday": 0 (thứ Hai)…6, "hour": 0–23 (giờ máy chủ), "paused": bool}."""
     ensure_tables(con)
-    today = today or date.today()
+    r = con.execute("SELECT v FROM audit_settings WHERE k = 'schedule'").fetchone()
+    return {**DEFAULT_SCHEDULE, **(json.loads(r[0]) if r else {})}
+
+
+def save_schedule(con: sqlite3.Connection, weekday: int, hour: int, paused: bool, user: str) -> dict:
+    ensure_tables(con)
+    v = {"weekday": max(0, min(6, int(weekday))), "hour": max(0, min(23, int(hour))), "paused": bool(paused),
+         "by": user, "at": _now()}
+    with con:
+        con.execute("INSERT OR REPLACE INTO audit_settings VALUES ('schedule', ?)", (json.dumps(v),))
+    return v
+
+
+def last_slot(sch: dict, now: datetime) -> datetime:
+    """Mốc quét theo lịch gần nhất đã qua (giờ máy chủ)."""
+    slot = now.replace(hour=sch["hour"], minute=0, second=0, microsecond=0)
+    slot -= timedelta(days=(now.weekday() - sch["weekday"]) % 7)
+    return slot if slot <= now else slot - timedelta(days=7)
+
+
+def next_slot(sch: dict, now: datetime) -> datetime:
+    return last_slot(sch, now) + timedelta(days=7)
+
+
+def due(con: sqlite3.Connection, now: datetime | None = None) -> bool:
+    """Tới lịch quét chưa: đã qua mốc của tuần này mà chưa có lần quét nào bắt đầu sau mốc đó (máy tắt lúc tới mốc
+    thì quét bù khi máy chạy lại). Tạm ngưng thì không."""
+    sch = schedule(con)
+    if sch["paused"]:
+        return False
+    now = now or datetime.now().astimezone()
     last = last_run(con)
-    if not force and last and last["finished_at"] and \
-            datetime.fromisoformat(last["finished_at"]).date() > today - timedelta(days=REFRESH_DAYS):
+    if not last:
+        return True
+    if not last["finished_at"]:  # đang quét thì thôi; bị dừng giữa chừng thì quét bù
+        return stopped(con, now) is not None
+    started = datetime.fromisoformat(last["started_at"]).astimezone(now.tzinfo)
+    return started < last_slot(sch, now)
+
+
+def refresh(con, cfg, today: date | None = None, force: bool = False, log=print, now: datetime | None = None,
+            **kw) -> dict | None:
+    """Quét theo lịch (thứ + giờ ở Technical Audit › Lịch quét; force: ngay). Gọi từ vòng lịch của máy chủ web (mỗi
+    15 phút) và từ lịch hằng ngày: lần nào tới trước thì quét, lần sau thấy đã quét rồi thì thôi."""
+    ensure_tables(con)
+    if not force and not due(con, now):
         return None
     from .cwv import load_key
     try:
         key = load_key(cfg)
     except Exception:  # noqa: BLE001
         key = ""
-    return run(con, cfg.site_url, K.latest_date(con, cfg.site_url), log=log, key=key)
+    return run(con, cfg.site_url, K.latest_date(con, cfg.site_url), log=log, key=key, cfg=cfg, **kw)
 
 
 # ---- Kiểm tra ----
@@ -604,6 +770,10 @@ CHECKS = {  # mã: (mức, tên, cách sửa)
     "robots_blocked": ("high", "Trang bị robots.txt chặn Googlebot", "Trang đang có traffic nhưng robots.txt cấm "
                        "Googlebot vào (ACC-003): sửa hoặc xóa dòng Disallow ghi ở cột Chi tiết, rồi kiểm tra lại bằng "
                        "URL Inspection."),
+    "blocked": ("info", "Website chặn bot quét của tool", "Tường lửa / Cloudflare của website trả trang chặn (403, 429, "
+                "503 hoặc trang thử thách) cho bot của tool, nên các trang này chưa kiểm được: không phải lỗi SEO. Nhờ "
+                "dev cho phép User-Agent “SEOReportBot” (hoặc IP của máy chạy tool) trong tường lửa, rồi quét lại. Nếu "
+                "trang đang có traffic, mở Search Console › Kiểm tra URL để chắc Googlebot không bị chặn theo."),
     "unsafe": ("high", "Google Safe Browsing cảnh báo trang", "Google đánh dấu trang là nguy hiểm (ACC-009): nhờ dev "
                "quét mã độc, gỡ mã lạ, đổi mật khẩu quản trị, rồi xin Google xem lại ở Search Console › Bảo mật."),
     "redirect_loop": ("high", "Chuyển hướng vòng lặp", "Trang chuyển hướng vòng tròn, không tới được trang nào (CANON-007): "
@@ -663,7 +833,7 @@ WANT = {
     "product_nice": "thêm brand / sku", "product_no_rating": "aggregateRating từ đánh giá thật",
     "product_merchant": "shippingDetails + hasMerchantReturnPolicy", "schema_error": "JSON-LD đúng cú pháp",
     "no_schema": "JSON-LD hợp loại trang", "slow": "dưới 3 giây", "robots_blocked": "Googlebot được vào",
-    "unsafe": "không bị cảnh báo", "redirect_loop": "chuyển thẳng tới trang đích", "redirect_broken": "đích trả 200",
+    "unsafe": "không bị cảnh báo", "blocked": "tool mở được trang (cho phép SEOReportBot)", "redirect_loop": "chuyển thẳng tới trang đích", "redirect_broken": "đích trả 200",
     "redirect_chain": "một bước tới URL cuối", "canonical_multi": "một thẻ canonical",
     "canonical_bad_target": "canonical tới URL trả 200", "canonical_missing": "canonical về chính trang",
     "link_broken": "link tới trang còn hoạt động", "nosnippet": "bỏ nosnippet / max-snippet:0",
@@ -678,7 +848,38 @@ SITE_CODES = {"host_dup", "host_redirect", "robots_error", "ai_search_blocked", 
 
 
 _cache: dict = {}  # (file dữ liệu, lần quét, ngày GSC) -> kết quả: chuông thông báo không tính lại liên tục
-running: dict = {}  # file dữ liệu -> {"n", "total", "by"} khi đang quét (một lần quét mỗi dự án)
+running: dict = {}  # file dữ liệu -> tiến độ lần quét đang chạy (một lần quét mỗi dự án), xem track()
+
+# Các bước của một lần quét, theo thứ tự (tên hiển thị, đơn vị đếm)
+STEPS = (("pages", "Quét các trang", "trang"), ("basic", "Kiểm robots.txt, HTTPS, bot AI", ""),
+         ("links", "Kiểm link nội bộ, canonical, sitemap", "URL"), ("sb", "Kiểm Google Safe Browsing", ""),
+         ("calc", "Tính kết quả", ""))
+
+
+def track(key: str, by: str):
+    """Bắt đầu theo dõi một lần quét: running[key] = {"phase", "n", "total", "url", "by", "t0", "pt0"}; trả hàm
+    progress(n, total, phase, url) để truyền cho run()."""
+    t = time.time()
+    running[key] = {"n": 0, "total": 0, "by": by, "phase": "pages", "url": "", "t0": t, "pt0": t}
+
+    def progress(n, total, phase="pages", url=None):
+        r = running.get(key)
+        if r is None:
+            return
+        if r["phase"] != phase:
+            r["pt0"] = time.time()
+        r.update(n=n, total=total, phase=phase)
+        if url:
+            r["url"] = url
+    return progress
+
+
+def eta(r: dict, now: float | None = None) -> int | None:
+    """Số giây còn lại ước tính của bước đang chạy (theo tốc độ từ đầu bước tới giờ); None khi chưa đủ số để ước."""
+    if not r.get("total") or r.get("n", 0) < 5:
+        return None
+    spent = (now or time.time()) - r["pt0"]
+    return int(spent / r["n"] * (r["total"] - r["n"]))
 
 
 def schema_summary(con: sqlite3.Connection) -> dict:
@@ -760,24 +961,174 @@ def set_ignored(con: sqlite3.Connection, code: str, urls: list[str], on: bool, u
     return len(urls)
 
 
+def _codes(data: dict) -> dict:
+    """Kết quả gọn {mã mục: [URL]} của một bản ghi lịch sử (bản ghi cũ chỉ có phần này)."""
+    if "codes" in data:
+        return data["codes"]
+    return {k: v for k, v in data.items() if isinstance(v, list)}
+
+
 def findings_history(con: sqlite3.Connection, au: dict) -> tuple[dict | None, str | None]:
-    """Ghi kết quả gọn của lần quét mới nhất (nếu chưa ghi) và trả (kết quả lần quét trước, ngày quét lần trước) để
-    so lỗi mới / đã sửa. Chưa có lần trước: (None, None)."""
+    """Ghi kết quả của lần quét mới nhất (nếu chưa ghi): lỗi theo mục, số tiêu chí theo trạng thái, số lỗi mới / đã hết
+    so với lần trước. Trả (kết quả gọn lần quét trước, ngày quét lần trước); chưa có lần trước: (None, None)."""
     from . import audit_checklist as AC
+    from . import site_checks as SC
     ensure_tables(con)
     last = au.get("run")
-    if last and last.get("finished_at") and not con.execute(
-            "SELECT 1 FROM audit_findings_hist WHERE run_id = ?", (last["id"],)).fetchone():
-        with con:
-            con.execute("INSERT INTO audit_findings_hist VALUES (?, ?, ?)",
-                        (last["id"], last["finished_at"], json.dumps(AC.snapshot(au), ensure_ascii=False)))
+    lid = (last or {}).get("id") or 0
     r = con.execute("SELECT at, data FROM audit_findings_hist WHERE run_id < ? ORDER BY run_id DESC LIMIT 1",
-                    ((last or {}).get("id") or 0,)).fetchone()
-    return (json.loads(r[1]), r[0]) if r else (None, None)
+                    (lid,)).fetchone()
+    prev, prev_at = (_codes(json.loads(r[1])), r[0]) if r else (None, None)
+    prev_scanned = set(json.loads(r[1]).get("scanned") or []) or None if r else None
+    if not (last and last.get("finished_at")):
+        return prev, prev_at
+    had = con.execute("SELECT data FROM audit_findings_hist WHERE run_id = ?", (lid,)).fetchone()
+    old_d = json.loads(had[0]) if had else {}
+    if not had or "status" not in old_d or "scanned" not in old_d:  # lần quét mới, hoặc ghi trước khi có các phần này
+        areas = AC.build(au, SC.latest(con), au.get("meta") or {})
+        status = {r["name"]: [r["status"], r["count"]] for a_ in areas for r in a_["rows"]}
+        if had:
+            old = json.loads(had[0])
+            data = {**(old if "codes" in old else {"codes": _codes(old)}), "status": status,
+                    "scanned": sorted(au.get("scanned") or [])}
+        else:
+            codes = AC.snapshot(au)
+            dif = AC.diff(codes, prev, set(au.get("scanned") or []), prev_scanned)
+            data = {"codes": codes, "totals": AC.totals(areas), "pages": au.get("pages", 0), "status": status,
+                    "scanned": sorted(au.get("scanned") or []),
+                    "new": len(dif["new"]) if dif["has_prev"] else None,
+                    "first": len(dif["first"]) if dif["has_prev"] else None,
+                    "fixed": len(dif["fixed"]) if dif["has_prev"] else None}
+        with con:
+            con.execute("INSERT OR REPLACE INTO audit_findings_hist VALUES (?, ?, ?)",
+                        (lid, last["finished_at"], json.dumps(data, ensure_ascii=False)))
+    return prev, prev_at
+
+
+def prev_scanned(con: sqlite3.Connection, au: dict) -> set[str] | None:
+    """Danh sách trang của lần quét trước lần đang xem (để tách lỗi ở trang lần đầu được quét); None khi lần trước
+    chưa ghi danh sách này (bản ghi cũ)."""
+    lid = (au.get("run") or {}).get("id") or 0
+    r = con.execute("SELECT data FROM audit_findings_hist WHERE run_id < ? ORDER BY run_id DESC LIMIT 1",
+                    (lid,)).fetchone()
+    return set(json.loads(r[0]).get("scanned") or []) or None if r else None
+
+
+def history_list(con: sqlite3.Connection, limit: int = 26) -> list[dict]:
+    """Các lần quét đã ghi, mới trước: [{"run_id", "at", "pages", "totals", "new", "fixed", "codes"}]."""
+    ensure_tables(con)
+    out = []
+    for rid, at, data in con.execute("SELECT run_id, at, data FROM audit_findings_hist ORDER BY run_id DESC LIMIT ?",
+                                     (limit,)):
+        d = json.loads(data)
+        out.append({"run_id": rid, "at": at, "pages": d.get("pages"), "totals": d.get("totals"),
+                    "new": d.get("new"), "first": d.get("first"), "fixed": d.get("fixed"), "codes": _codes(d),
+                    "status": d.get("status")})
+    return out
+
+
+# ---- "Đã xử lý" → kiểm lại ngay
+
+GSC_CODES = {"low_ctr"}  # cần số Search Console mới (vài tuần) mới biết đã đỡ chưa: không kiểm lại ngay được
+
+
+def recheck(con: sqlite3.Connection, cfg, items: list[tuple[str, str]], user: str, fetcher=fetch, opener=None,
+            text_get=None, sleep=time.sleep) -> list[dict]:
+    """Người dùng báo đã xử lý các dòng (mã mục, URL): mở lại đúng các trang đó (và URL mà link / canonical của trang
+    trỏ tới, URL sitemap, địa chỉ http / www, robots.txt khi cần), tính lại kết quả, ghi nhật ký. Trả mỗi dòng
+    {"code", "url", "result": "pass" | "fail" | "unknown", "now"}."""
+    from . import site_checks as SC
+    ensure_tables(con)
+    SC.ensure(con)
+    opener = opener or SC.head
+    site = cfg.site_url
+    pages = {u: uid for uid, u in con.execute("SELECT url_id, url FROM audit_pages")}
+    urls = list(dict.fromkeys(u for _, u in items if u in pages))
+    failed: set[str] = set()
+    targets: list[str] = []
+    for n, u in enumerate(urls):
+        r = fetcher(u)
+        data = parse(r["html"], u) if r["html"] else {}
+        data["x_robots"] = r.get("x_robots", "")
+        if r.get("html"):
+            data["enc"], data["bytes"] = r.get("enc", ""), r.get("bytes", 0)
+        if r["error"]:
+            failed.add(u)
+        with con:
+            con.execute("INSERT OR REPLACE INTO audit_pages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (pages[u], u, _now(), r["status"], r["final_url"], r["ms"],
+                         json.dumps(data, ensure_ascii=False), r["error"]))
+        targets += [h for h, _ in data.get("links") or []] + (data.get("canonicals") or [])[:1]
+        if n < len(urls) - 1:
+            sleep(DELAY)
+    # URL cấp website / đích của link, canonical, sitemap: bỏ trạng thái cũ rồi mở lại
+    targets += [u for c, u in items if c.startswith("sitemap_") and u.startswith("http")]
+    targets = [t for t in dict.fromkeys(targets) if t not in pages]
+    if targets:
+        with con:
+            con.executemany("DELETE FROM audit_url_status WHERE url = ?", [(t,) for t in targets])
+        SC.check_statuses(con, targets, budget=len(targets), opener=opener, pause=0.1)
+    sc = SC.latest(con) or {}
+    changed = False
+    if any(c in ("host_dup", "host_redirect") for c, _ in items):
+        sc["host"] = SC.host_check(site, opener)
+        changed = True
+    if any(c in ("robots_error", "robots_blocked", "ai_search_blocked") for c, _ in items):
+        r = (text_get or SC.get_text)(urljoin(site, "/robots.txt"))
+        if r["error"] or r["status"] is None or r["status"] >= 500:
+            sc["robots"] = {"status": r["status"], "error": r["error"] or f"máy chủ trả {r['status']}", "groups": None,
+                            "text": ""}
+        elif r["status"] >= 400:
+            sc["robots"] = {"status": r["status"], "error": None, "groups": [], "text": "", "missing": True}
+        else:
+            sc["robots"] = {"status": r["status"], "error": None, "groups": SC.parse_robots(r["text"]),
+                            "text": r["text"][:20000]}
+        ok_urls = [u for (u, st) in con.execute("SELECT url, status FROM audit_pages") if st == 200]
+        home = urljoin(site, "/")
+        sc["bots"] = SC.bot_policy(sc["robots"], ok_urls, home)
+        changed = True
+    for u in urls:  # trang đang chuyển hướng: đi lại chuỗi chuyển hướng
+        st = con.execute("SELECT status FROM audit_pages WHERE url = ?", (u,)).fetchone()[0]
+        if st and 300 <= st < 400:
+            sc.setdefault("redirects", {})[u] = SC.follow(u, opener)
+            changed = True
+    if changed and sc:
+        with con:
+            con.execute("INSERT OR REPLACE INTO audit_site VALUES ('latest', ?, ?)",
+                        (sc.get("at") or _now(), json.dumps(sc, ensure_ascii=False)))
+    _cache.clear()
+    au = findings(con, cfg)
+    now_rows = {(c["code"], p["url"]): p for c in au["checks"] for p in c["pages"]}
+    out = []
+    for code, u in items:
+        if code in GSC_CODES:
+            res, now = "unknown", "cần số Search Console mới (vài tuần) mới biết"
+        elif u in failed:
+            res, now = "unknown", "không mở được trang lúc kiểm lại"
+        elif (code, u) in now_rows:
+            res, now = "fail", now_rows[(code, u)].get("now") or now_rows[(code, u)].get("detail") or ""
+        else:
+            res, now = "pass", ""
+        out.append({"code": code, "url": u, "result": res, "now": now})
+    with con:
+        con.executemany("INSERT INTO audit_fix_log (code, url, at, by, result, detail) VALUES (?, ?, ?, ?, ?, ?)",
+                        [(r["code"], r["url"], _now(), user, r["result"], r["now"]) for r in out])
+    return out
+
+
+def fix_log(con: sqlite3.Connection, codes: list[str] | None = None, limit: int = 50) -> list[dict]:
+    """Nhật ký "Đã xử lý": ai xác nhận, lúc nào, kiểm lại ra sao. Mới trước."""
+    ensure_tables(con)
+    q, args = "SELECT code, url, at, by, result, detail FROM audit_fix_log", []
+    if codes:
+        q += f" WHERE code IN ({','.join('?' * len(codes))})"
+        args = list(codes)
+    q += " ORDER BY id DESC LIMIT ?"
+    return [dict(zip(("code", "url", "at", "by", "result", "detail"), r)) for r in con.execute(q, (*args, limit))]
 
 
 def cached_findings(con, cfg) -> dict:
-    last = last_run(con)
+    last = last_run(con, done=True)
     if not last:
         return {"checks": [], "pages": 0, "healthy": 0, "run": None}
     end = K.latest_date(con, cfg.site_url)
@@ -827,9 +1178,19 @@ def findings(con: sqlite3.Connection, cfg, end: date | None = None) -> dict:
     def short(u):
         return urlsplit(u).path or "/"
 
+    # Bị chặn: trang có dấu tường lửa / 429; hoặc nhiều trang cùng trả 403 / 503 (trang thật hiếm khi vậy hàng loạt)
+    n_bs = sum(1 for _, _, st, *_ in rows if st in (403, 503))
+    blocking = n_bs >= max(5, len(rows) * 0.03)
+
+    def is_blocked(st, d=None) -> bool:
+        return bool(d and d.get("blocked")) or st == 429 or (blocking and st in (403, 503))
+
     ok = []
     for uid, url, status, final, ms, data, err, type_ in rows:
         d = json.loads(data or "{}")
+        if is_blocked(status, d):
+            add("blocked", uid, url, f"HTTP {status}" + (" · trang chặn của tường lửa" if d.get("blocked") else ""))
+            continue
         if url in flagged:
             from .backlink_links import SB_TYPES
             add("unsafe", uid, url, SB_TYPES.get(flagged[url], flagged[url]))
@@ -873,7 +1234,7 @@ def findings(con: sqlite3.Connection, cfg, end: date | None = None) -> dict:
                 add("canonical_missing", uid, url)
             if cans and _norm(cans[0]) != _norm(url):
                 st_ = state(cans[0])
-                if st_ and st_[0] is None:
+                if st_ and (st_[0] is None or is_blocked(st_[0])):
                     unknown["canonical"] += 1
                 elif st_ and st_[0] >= 400:
                     add("canonical_bad_target", uid, url, f"canonical → {short(cans[0])} ({st_[0]})")
@@ -891,7 +1252,7 @@ def findings(con: sqlite3.Connection, cfg, end: date | None = None) -> dict:
             if not st_:
                 continue
             a = f"anchor “{anchor}”" if anchor else ""
-            if st_[0] is None:
+            if st_[0] is None or is_blocked(st_[0]):
                 unknown["links"] += 1
             elif st_[0] >= 400:
                 add("link_broken", uid, url, f"link tới {short(href)} ({st_[0]})", extra=a)
@@ -996,7 +1357,7 @@ def findings(con: sqlite3.Connection, cfg, end: date | None = None) -> dict:
         st_ = state(u)
         if not st_:
             continue
-        if st_[0] is None:
+        if st_[0] is None or is_blocked(st_[0]):
             unknown["sitemap"] += 1
         elif st_[0] >= 400:
             add("sitemap_broken", None, u, f"trả {st_[0]}")
@@ -1036,4 +1397,4 @@ def findings(con: sqlite3.Connection, cfg, end: date | None = None) -> dict:
             "merchant": any("shipping" in (d.get("products") or [{}])[0] for d in datas if d.get("products")),
             "unknown": unknown}
     return {"checks": checks, "ignored_checks": ignored_checks, "pages": len(rows), "healthy": len(rows) - len(bad),
-            "run": last_run(con), "meta": meta, "scanned": sorted(page_status)}
+            "run": last_run(con, done=True), "meta": meta, "scanned": sorted(page_status)}

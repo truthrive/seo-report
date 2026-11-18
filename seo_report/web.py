@@ -1188,7 +1188,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         user, P = opened
         shell("Technical Audit", user, P, page_ctx(P), period=False, group=False)
         from .web_audit import build_audit_page
-        build_audit_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""))
+        build_audit_page(ui, P.cfg, P.connect, user, request.query_params.get("tab", ""),
+                         request.query_params.get("muc", ""))
 
     @ui.page("/research/tu-khoa")
     def keyword_overview_old(request: Request):
@@ -1529,6 +1530,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         from .ai_auto import auto_loop
         background_tasks.create(schedule_loop(base), name="rank-schedule")
         background_tasks.create(auto_loop(base), name="ai-auto")  # AI tự chạy theo lịch ở Quản trị › AI
+        from .web_audit import schedule_loop as audit_loop
+        background_tasks.create(audit_loop(base), name="audit-schedule")  # Technical Audit theo lịch thứ + giờ
     app.on_startup(start_schedule)
     ui.run(host="127.0.0.1", port=port, title="SEO Report", reload=False, show=show, language="vi",
            storage_secret=_storage_secret(base), favicon=assets / "app-icon.svg")

@@ -31,6 +31,7 @@ CRITERIA = (
     ("access", "ACC-006", "Máy chủ trả lời ổn định (không 5xx, không hết giờ chờ)", ("5xx", "error"), "pages"),
     ("access", "ACC-007", "Trang có traffic không trả lỗi 4xx", ("4xx",), "pages"),
     ("access", "ACC-009", "Google Safe Browsing không cảnh báo", ("unsafe",), "safe"),
+    ("access", "", "Tool quét được website (không bị tường lửa chặn)", ("blocked",), "pages"),
     ("index", "INDEX-001", "Trang có traffic cho phép index", ("noindex",), "pages"),
     ("index", "INDEX-007", "Không chặn Google trích đoạn ngoài ý muốn", ("nosnippet", "data_nosnippet"), "fmt"),
     ("canon", "CANON-003", "Canonical đúng và trỏ tới trang hoạt động",
@@ -178,14 +179,21 @@ def snapshot(au: dict) -> dict[str, list[str]]:
     return {c["code"]: sorted({p["url"] for p in c["pages"]}) for c in au.get("checks") or []}
 
 
-def diff(cur: dict[str, list[str]], prev: dict[str, list[str]] | None, scanned: set[str]) -> dict:
-    """Lỗi mới / đã sửa so với lần quét trước. "Đã sửa" chỉ tính URL vẫn được quét lần này (URL không còn trong danh
-    sách quét thì chưa biết đã sửa hay chưa). None khi chưa có lần trước để so."""
+def diff(cur: dict[str, list[str]], prev: dict[str, list[str]] | None, scanned: set[str],
+         prev_scanned: set[str] | None = None) -> dict:
+    """So với lần quét trước, đơn vị là dòng (trang × vấn đề):
+    - "new": lỗi mới ở trang lần trước cũng được quét (thay đổi thật);
+    - "first": lỗi ở trang lần đầu được quét (lần trước không có trong danh sách quét, không phải lỗi mới phát sinh) —
+      chỉ tách được khi biết danh sách trang lần trước (prev_scanned);
+    - "fixed": lỗi đã hết, chỉ tính trang vẫn được quét lần này (trang bỏ khỏi danh sách thì chưa biết đã sửa chưa).
+    "first_pages": số trang lần đầu được quét."""
     if prev is None:
-        return {"new": [], "fixed": [], "has_prev": False}
-    new, fixed = [], []
+        return {"new": [], "first": [], "fixed": [], "first_pages": 0, "has_prev": False}
+    new, first, fixed = [], [], []
     for code in set(cur) | set(prev):
         a, b = set(cur.get(code) or []), set(prev.get(code) or [])
-        new += [(code, u) for u in sorted(a - b)]
+        for u in sorted(a - b):
+            (first if prev_scanned is not None and u in scanned and u not in prev_scanned else new).append((code, u))
         fixed += [(code, u) for u in sorted(b - a) if u in scanned or not u.startswith("http")]
-    return {"new": new, "fixed": fixed, "has_prev": True}
+    first_pages = len(scanned - prev_scanned) if prev_scanned is not None else 0
+    return {"new": new, "first": first, "fixed": fixed, "first_pages": first_pages, "has_prev": True}
