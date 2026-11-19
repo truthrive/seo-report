@@ -609,7 +609,8 @@ def work_section(ui, rep, unit: str) -> None:
     p, cnt = k["period"], k["counts"]
     pct = cnt[O.DONE] / k["total"] * 100 if k["total"] else 0
     with T.section(ui, "Công việc", "task_alt", f"OKR · hiện có {pct:.0f}% hạng mục đã hoàn thành"
-                   + (f" · {len(k['late'])} trễ hạn" if k["late"] else ""), href="/okr", link_text="Công việc & OKR"):
+                   + (f" · {len(k['late'])} trễ hạn" if k["late"] else "")
+                   + (f" · {len(k.get('waiting') or [])} đang chờ bên ngoài" if k.get("waiting") else ""), href="/okr", link_text="Công việc & OKR"):
         with ui.element("div").classes("w-full").style(
                 "display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px"):
             for title, items, icon, color in ((f"Hoàn thành trong {unit}", p["done"], "task_alt", T.GREEN),

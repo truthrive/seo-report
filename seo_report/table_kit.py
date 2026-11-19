@@ -311,11 +311,14 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                     st["sel"] = set()
                     view.refresh()
                 ui.button("Bỏ chọn", on_click=clear).props("flat dense no-caps color=primary")
-                ui.space()
-                for a in actions or []:
+                ui.element("span").classes("sr-tk-sep")
+                # việc chính (nút đầu) nền đậm, việc phụ viền mảnh: không để hai nút đen cạnh nhau
+                for i, a in enumerate(actions or []):
                     lab = a["label"](sel) if callable(a["label"]) else a["label"]
                     ui.button(lab, icon=a.get("icon"), on_click=lambda _, a=a, sel=sel: a["on"](sel)).props(
-                        "unelevated dense no-caps")
+                        "unelevated dense no-caps" if i == 0 else "outline dense no-caps color=grey-9").classes(
+                        "sr-tk-act")
+                ui.space()
                 ui.button("Sao chép", icon="content_copy", on_click=lambda: do_copy(sel)).props(
                     "flat dense no-caps color=primary").tooltip("Chép đủ thông tin, dán vào Google Sheets / Excel")
                 if export:

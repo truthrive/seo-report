@@ -75,6 +75,14 @@ def _okr(con, today: date) -> list[dict]:
         out.append(_n("okr", "medium", f"okr-due:{i['uid']}:{i['end']}",
                       f"{i['code']} {'đến hạn hôm nay' if not left else f'còn {left} ngày'}: {i['title']}",
                       f"hạn {_vn(i['end'])} · {i['pic'] or 'chưa có PIC'}", "/okr", i["end"]))
+    for i in a.get("waiting") or []:  # chờ bên ngoài lâu: nhắc người phụ trách đi hỏi (không phải trễ hạn)
+        w = i.get("wait") or {}
+        if w.get("days", 0) < O.WAIT_REMIND_DAYS:
+            continue
+        out.append(_n("okr", "medium", f"okr-wait:{i['uid']}:{w.get('start')}:{w['days'] // 7}",
+                      f"{i['code']} đã chờ {w['who_label']} {w['days']} ngày: nên nhắc · {i['title']}",
+                      " · ".join(x for x in (w.get("note") or "", i["pic"] or "chưa có PIC",
+                                             "không tính trễ hạn trong lúc chờ") if x), "/okr", w.get("start")))
     for i in a["not_started"]:
         out.append(_n("okr", "info", f"okr-idle:{i['uid']}:{i['start']}", f"{i['code']} tới ngày mà chưa bắt đầu: "
                       f"{i['title']}", f"bắt đầu {_vn(i['start'])} · {i['pic'] or 'chưa có PIC'}", "/okr", i["start"]))

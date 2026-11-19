@@ -19,7 +19,8 @@ from .projects import domain
 
 ITERATIONS = 600_000
 GREEN, LIME, INK, MUTED, RED, AMBER, BLUE = "#1E7C31", "#B8D332", "#1F221E", "#6B6A5E", "#C2410C", "#B7791F", "#2563EB"
-STATUS_COLOR = {"done": GREEN, "doing": BLUE, "todo": "#B8B6A8", "other": AMBER}
+STATUS_COLOR = {"done": GREEN, "doing": BLUE, "wait": "#D9A441", "pause": "#8B5CF6", "todo": "#B8B6A8",
+                "other": AMBER}
 ECHARTS = "https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"
 
 
@@ -198,7 +199,9 @@ def _okr(ov: dict, today: date, charts: Charts) -> str:
            f'<div class="sub">Từ Google Sheet của team · đồng bộ {synced:%H:%M %d/%m}</div></div>']
     tiles = (_kpi("Hoàn thành OKR", f"{cnt[O.DONE] / total * 100:.0f}%", hint=f"{cnt[O.DONE]} / {ov['total']} hạng mục")
              + _kpi("Đang làm", str(cnt[O.DOING]), tone=BLUE) + _kpi("Chưa bắt đầu", str(cnt[O.TODO]), tone="#B8B6A8")
-             + _kpi("Trễ hạn", str(len(ov["late"])), tone=RED if ov["late"] else GREEN, hint="tính đến hôm nay"))
+             + _kpi("Trễ hạn", str(len(ov["late"])), tone=RED if ov["late"] else GREEN,
+                    hint="tính đến hôm nay" + (f" · {len(ov['waiting'])} đang chờ bên ngoài (không tính)"
+                                               if ov.get("waiting") else "")))
     out.append(f'<div class="grid4">{tiles}</div>')
 
     cards = ""
@@ -231,7 +234,8 @@ def _okr(ov: dict, today: date, charts: Charts) -> str:
                 {"type": "bar", "stack": "g", "barWidth": 12,
                  "data": [{"value": (date.fromisoformat(i["end"]) - date.fromisoformat(i["start"])).days + 1,
                            "name": f"{i['code']} {i['title']} · {_vn(i['start'])} – {_vn(i['end'])} · "
-                                   f"{O.STATUS_LABEL[i['status']]}",
+                                   + (O.wait_text(i.get("wait")) if i["status"] == O.WAIT
+                                      else O.STATUS_LABEL[i["status"]]),
                            "itemStyle": {"color": RED if O.is_late(i, today) else STATUS_COLOR[i["status"]],
                                          "borderRadius": 4}} for i in rows],
                  "markLine": {"silent": True, "symbol": "none", "lineStyle": {"color": RED, "type": "solid"},
@@ -241,10 +245,14 @@ def _okr(ov: dict, today: date, charts: Charts) -> str:
 
     p, (ws, we) = ov["period"], ov["week"]
     lists = ""
-    for name, its in [("Đến hạn", p["due"]), ("Hoàn thành", p["done"]), ("Trễ hạn", ov["late"]),
-                      ("Tuần sau", p["next"])]:
+    groups = [("Đến hạn", p["due"]), ("Hoàn thành", p["done"]), ("Trễ hạn", ov["late"]), ("Tuần sau", p["next"])]
+    if ov.get("waiting"):  # việc kẹt ở bên ngoài (khách duyệt, bên thứ ba…): không tính trễ
+        groups.insert(3, ("Đang chờ bên ngoài", ov["waiting"]))
+    for name, its in groups:
         li = "".join(f'<li><span class="dot" style="background:{STATUS_COLOR[i["status"]]}"></span>'
-                     f'<span class="muted">{e(i["code"])}</span> {e(i["title"])}</li>' for i in its[:8])
+                     f'<span class="muted">{e(i["code"])}</span> {e(i["title"])}'
+                     + (f' <span class="muted">· {e(O.wait_text(i.get("wait")))}</span>' if i["status"] == O.WAIT
+                        else "") + '</li>' for i in its[:8])
         lists += (f'<div class="tile"><div class="tl"><b>{name}</b> <span class="muted">{len(its)}</span></div>'
                   f'<ul class="list">{li or "<li class=muted>Không có</li>"}</ul></div>')
     week_tasks = [t for t in ov["tasks"] if t["week"] == ws.isoformat()]

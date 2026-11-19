@@ -12,8 +12,10 @@ from . import ui_theme as T
 SEG = "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
 STATUS = {O.TODO: ("Chưa bắt đầu", "grey", "radio_button_unchecked"),
           O.DOING: ("Đang làm", "blue", "timelapse"),
+          O.WAIT: ("Đang chờ", "amber", "hourglass_empty"),
+          O.PAUSE: ("Tạm hoãn", "purple", "pause_circle"),
           O.DONE: ("Hoàn thành", "green", "check_circle")}
-BAR = {O.TODO: "#B8B6A8", O.DOING: "#2563EB", O.DONE: "#1E7C31"}
+BAR = {O.TODO: "#B8B6A8", O.DOING: "#2563EB", O.WAIT: "#D9A441", O.PAUSE: "#8B5CF6", O.DONE: "#1E7C31"}
 QUICK_HINT = ("Mỗi dòng một mục tiêu; hạng mục bắt đầu bằng dấu - ngay dưới mục tiêu của nó. "
               "Thêm “| người phụ trách” ở cuối dòng nếu muốn.\n\n"
               "Ví dụ:\nAudit & nền tảng SEO\n- Audit kỹ thuật | SEO, DEV\n- Audit nội dung | CONTENT\n"
@@ -297,7 +299,8 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
                 f["qty"] = ui.input("Số lượng", value=it["qty"]).props("outlined dense").classes("col")
                 f["unit"] = ui.input("Đơn vị", value=it["unit"]).props("outlined dense").classes("col")
                 f["grp"] = ui.input("Nhóm", value=it["grp"]).props("outlined dense").classes("col")
-            f["link"] = ui.input("Link / bằng chứng", value=it["link"]).props("outlined dense").classes("w-full")
+            f["link"] = ui.textarea("Link bằng chứng (mỗi dòng một link)", value=it["link"]).props(
+                "outlined dense autogrow").classes("w-full")
             f["note"] = ui.input("Ghi chú", value=it["note"]).props("outlined dense").classes("w-full")
 
             def save():
@@ -314,14 +317,17 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
     def status_pill(it: dict) -> None:
         label, tone, icon = STATUS.get(it["status"], STATUS[O.TODO])
         bg, fg = T.TONES[tone]
+        w = it.get("wait")
         with ui.button().props(f'flat dense no-caps aria-label="Trạng thái {it["code"]}: {label}. Bấm để đổi"').classes(
-                "sr-oe-pill").style(f"background:{bg}; color:{fg}"):
+                "sr-oe-pill").style(f"background:{bg}; color:{fg}") as b:
+            if w:
+                b.tooltip(O.wait_text(w))
             ui.icon(icon, size="15px").props('aria-hidden="true"')
             ui.label(label)
             with ui.menu():
                 for s, (lb, tn, ic) in STATUS.items():
-                    with ui.menu_item(on_click=lambda _, s=s: run(O.update_item, it["uid"], refresh=True,
-                                                                  status=s)).classes("items-center gap-2"):
+                    pick = (lambda _, s=s: change_status(ui, connect, user, [it["uid"]], s, body.refresh))
+                    with ui.menu_item(on_click=pick).classes("items-center gap-2"):
                         ui.icon(ic, size="16px").style(f"color:{T.TONES[tn][1]}")
                         ui.label(lb).classes("text-sm")
 
@@ -343,6 +349,9 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
                              "Chưa có ngày").classes("sr-oe-time-text")
                     if state["ext"].get(it["uid"]):
                         ui.label(f"gia hạn ×{state['ext'][it['uid']]}").classes("sr-oe-ext")
+                    if it.get("wait"):
+                        ui.label(f"chờ {it['wait']['who_label']} {it['wait']['days']} ngày").classes(
+                            "sr-oe-ext wait")
                 color = "#C2410C" if late else BAR.get(it["status"], BAR[O.TODO])
                 ui.html('<div class="sr-oe-track" aria-hidden="true">'
                         + (f'<i style="left:{left * 100:.1f}%;width:{width * 100:.1f}%;background:{color}"></i>'
@@ -468,8 +477,8 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
             with ui.button("Đổi trạng thái", icon="swap_horiz").props("outline no-caps dense color=white"):
                 with ui.menu():
                     for s_, (lb, _, _) in STATUS.items():
-                        ui.menu_item(lb, on_click=lambda _, s_=s_: (run(O.set_status_many, list(state["sel"]), s_),
-                                                                    body.refresh()))
+                        ui.menu_item(lb + ("…" if s_ in (O.WAIT, O.PAUSE) else ""), on_click=lambda _, s_=s_:
+                                     change_status(ui, connect, user, list(state["sel"]), s_, body.refresh))
             extend_menu(ui, connect, user, lambda: list(state["sel"]), body.refresh)
             ui.button("Xóa", icon="delete_outline", on_click=lambda: confirm(
                 f"Xóa {n} hạng mục đã chọn?", "Không hoàn tác được.",
@@ -483,7 +492,7 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
     def body() -> None:
         with connect() as c:
             cs = O.cycle_list(c)
-            every = O.items(c)
+            every = O.items(c, date.today())
             state["ext"] = O.extension_counts(c)
         if not cs:
             with ui.element("div").classes("sr-card sr-oe-start"):
@@ -566,7 +575,123 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
 # ================================================================ thông báo OKR (dùng ở trang Sửa OKR và Công việc & OKR)
 ALERT_GROUPS = (("late", "Trễ hạn", "red", "event_busy"),
                 ("due_soon", f"Đến hạn trong {O.DUE_SOON_DAYS} ngày tới", "amber", "schedule"),
+                ("waiting", "Đang chờ bên ngoài (không tính trễ)", "grey", "hourglass_empty"),
                 ("not_started", "Đã tới ngày bắt đầu, chưa bắt đầu", "blue", "play_circle_outline"))
+
+
+def change_status(ui, connect, user, uids: list[str], status: str, on_done) -> None:
+    """Đổi trạng thái (dùng chung cho mọi chỗ): "Đang chờ" hỏi chờ ai; "Tạm hoãn" hỏi lý do (ghi nhật ký cập nhật);
+    mở lại hạng mục đang tạm hoãn thì hỏi hạn mới; còn lại đổi ngay."""
+    if not uids:
+        return
+    with connect() as c:
+        its = {i["uid"]: i for i in O.items(c, date.today()) if i["uid"] in set(uids)}
+    if status == O.WAIT:
+        cur = next((i.get("wait") for i in its.values() if i.get("wait")), None) if len(uids) == 1 else None
+        wait_dialog(ui, connect, user, uids, on_done, cur)
+        return
+    if status == O.PAUSE:
+        pause_dialog(ui, connect, user, [u for u in uids if its.get(u, {}).get("status") != O.PAUSE], on_done)
+        return
+    paused = [u for u in uids if its.get(u, {}).get("status") == O.PAUSE]
+    if paused:
+        resume_dialog(ui, connect, user, uids, paused, status, on_done)
+        return
+    try:
+        with connect() as c:
+            O.set_status_many(c, uids, status, by=str(user))
+    except ValueError as e:
+        ui.notify(str(e), type="warning", position="bottom-right", classes="sr-toast")
+        return
+    on_done()
+
+
+def pause_dialog(ui, connect, user, uids: list[str], on_done) -> None:
+    if not uids:
+        return
+    with ui.dialog() as dlg, ui.card().style("width: 440px; max-width: 94vw; border-radius: 14px"):
+        ui.label("Tạm hoãn" + (f" {len(uids)} hạng mục" if len(uids) > 1 else "")).classes("text-lg font-semibold")
+        ui.label("Chủ động dừng hoặc để sau (đổi ưu tiên, khách chưa triển khai…). Trong lúc tạm hoãn: không tính trễ, "
+                 "không nhắc, không tính vào % hoàn thành của đợt. Mở lại thì chọn hạn mới.").classes("text-xs muted")
+        r = ui.input("Lý do", placeholder="Ví dụ: khách dời sang quý sau").props("outlined dense").classes("w-full")
+
+        def save():
+            with connect() as c:
+                for u in uids:
+                    O.update_item(c, u, by=str(user), status=O.PAUSE)
+                    O.add_update(c, u, "Tạm hoãn" + (f": {r.value.strip()}" if (r.value or "").strip() else ""),
+                                 by=str(user))
+            dlg.close()
+            ui.notify(f"Đã tạm hoãn {len(uids)} hạng mục", type="positive", position="bottom-right", classes="sr-toast")
+            on_done()
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+            ui.button("Tạm hoãn", icon="pause_circle", on_click=save).props("unelevated no-caps color=primary")
+    dlg.on("hide", lambda: dlg.delete())
+    dlg.open()
+
+
+def resume_dialog(ui, connect, user, uids: list[str], paused: list[str], status: str, on_done) -> None:
+    """Mở lại hạng mục đang tạm hoãn: chọn hạn mới (ghi nhật ký gia hạn)."""
+    with ui.dialog() as dlg, ui.card().style("width: 420px; max-width: 94vw; border-radius: 14px"):
+        ui.label("Mở lại hạng mục tạm hoãn").classes("text-lg font-semibold")
+        ui.label(f"{len(paused)} hạng mục đang tạm hoãn sẽ chuyển sang {O.STATUS_LABEL[status]}. Chọn hạn mới."
+                 ).classes("text-xs muted")
+        d = ui.input("Hạn mới", value=(date.today() + timedelta(days=14)).isoformat()).props(
+            "outlined dense type=date stack-label").classes("w-full")
+
+        def save():
+            try:
+                with connect() as c:
+                    O.extend(c, paused, new_end=d.value, by=str(user), reason="Mở lại sau tạm hoãn")
+                    O.set_status_many(c, uids, status, by=str(user))
+            except ValueError as e:
+                ui.notify(str(e), type="warning", position="bottom-right", classes="sr-toast")
+                return
+            dlg.close()
+            on_done()
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+            ui.button("Mở lại", icon="play_arrow", on_click=save).props("unelevated no-caps color=primary")
+    dlg.on("hide", lambda: dlg.delete())
+    dlg.open()
+
+
+def wait_dialog(ui, connect, user, uids: list[str], on_done, cur: dict | None = None) -> None:
+    """Chuyển sang "Đang chờ": chờ ai + ghi chú. Trong lúc chờ không tính trễ hạn; hết chờ (đổi sang trạng thái khác)
+    thì hạn tự dời thêm đúng số ngày đã chờ."""
+    if not uids:
+        return
+    with ui.dialog() as dlg, ui.card().style("width: 460px; max-width: 94vw; border-radius: 14px"):
+        ui.label("Đang chờ bên ngoài" + (f" · {len(uids)} hạng mục" if len(uids) > 1 else "")).classes(
+            "text-lg font-semibold")
+        ui.label("Việc kẹt vì lý do ngoài chuyên môn. Trong lúc chờ, tool không tính trễ hạn và nhắc người phụ trách "
+                 f"đi hỏi sau {O.WAIT_REMIND_DAYS} ngày. Hết chờ (đổi sang Đang làm / Hoàn thành), hạn tự dời thêm "
+                 "đúng số ngày đã chờ.").classes("text-xs muted")
+        who = ui.toggle({k: v.capitalize() for k, v in O.WAIT_WHO.items()},
+                        value=(cur or {}).get("who") or "client").props(
+            "unelevated no-caps toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
+        note = ui.input("Ghi chú", value=(cur or {}).get("note") or "",
+                        placeholder="Ví dụ: đã gửi bài 12/11, chờ anh A duyệt").props("outlined dense").classes(
+            "w-full")
+
+        def save():
+            try:
+                with connect() as c:
+                    n = O.start_wait(c, uids, who.value, note.value or "", by=str(user))
+            except ValueError as e:
+                ui.notify(str(e), type="warning", position="bottom-right", classes="sr-toast")
+                return
+            dlg.close()
+            ui.notify(f"Đã chuyển {n} hạng mục sang Đang chờ {O.WAIT_WHO[who.value]}" if n else
+                      "Không có hạng mục nào đổi (hạng mục đã xong thì không chuyển sang chờ)",
+                      type="positive" if n else "info", position="bottom-right", classes="sr-toast")
+            on_done()
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Hủy", on_click=dlg.close).props("flat no-caps")
+            ui.button("Lưu", icon="hourglass_empty", on_click=save).props("unelevated no-caps color=primary")
+    dlg.on("hide", lambda: dlg.delete())
+    dlg.open()
 
 
 def extend_dialog(ui, connect, user, uids: list[str], on_done, label: str = "") -> None:
@@ -613,7 +738,7 @@ def extend_menu(ui, connect, user, uids_fn, on_done, label: str = "Gia hạn", d
 
 
 def alerts_panel(ui, connect, user, ed: bool, on_change, cycle: str | None = None, limit: int = 8,
-                 tasks: list[dict] | None = None, note: str = "") -> None:
+                 tasks: list[dict] | None = None, note: str = "", on_open=None) -> None:
     """Thông báo của đợt: trễ hạn, sắp đến hạn, tới ngày mà chưa bắt đầu (+ task tuần quá deadline nếu truyền `tasks`);
     người được sửa gia hạn / đánh dấu ngay. Mỗi nhóm hiện `limit` dòng, còn lại mở bằng "Xem tất cả"."""
     with connect() as c:
@@ -631,7 +756,7 @@ def alerts_panel(ui, connect, user, ed: bool, on_change, cycle: str | None = Non
             ui.label("Thông báo OKR").classes("text-base font-semibold")
             for key, label, tone, _ in ALERT_GROUPS:
                 if a[key]:
-                    T.pill(ui, f"{label.split(',')[0]} {len(a[key])}", tone)
+                    T.pill(ui, f"{label.split(',')[0].split(' (')[0]} {len(a[key])}", tone)
             if tasks:
                 T.pill(ui, f"Task tuần {len(tasks)}", "red")
             ui.space()
@@ -660,11 +785,18 @@ def alerts_panel(ui, connect, user, ed: bool, on_change, cycle: str | None = Non
                     with ui.element("div").classes("sr-oa-row" + (" more" if n >= limit else "")):
                         ui.label(it["code"]).classes("sr-oe-code")
                         with ui.column().classes("gap-0 col").style("min-width:0"):
-                            ui.label(it["title"]).classes("text-sm ellipsis").tooltip(it["title"])
+                            t_ = ui.label(it["title"]).classes("text-sm ellipsis" + (" sr-oi-open" if on_open else ""))
+                            t_.tooltip("Bấm để cập nhật: trạng thái, ghi chú, link" if on_open else it["title"])
+                            if on_open:
+                                t_.on("click", lambda _, u=it["uid"]: on_open(u))
                             days = (date.fromisoformat(it["end"]) - today).days if it["end"] else None
                             when = ("" if days is None else
                                     f"trễ {-days} ngày" if days < 0 else "hạn hôm nay" if days == 0 else
                                     f"còn {days} ngày")
+                            if key == "waiting":  # chờ ai, bao lâu; hạn chưa tính (sẽ dời khi hết chờ)
+                                w = it.get("wait") or {}
+                                when = O.wait_text(w) + (" · nên nhắc" if w.get("days", 0) >= O.WAIT_REMIND_DAYS
+                                                         else "")
                             meta = " · ".join(x for x in (
                                 f"hạn {_vn(it['end'])}" if it["end"] else "", when, it["pic"] or "",
                                 f"đã gia hạn {it['extended']} lần" if it.get("extended") else "") if x)
@@ -673,12 +805,18 @@ def alerts_panel(ui, connect, user, ed: bool, on_change, cycle: str | None = Non
                             with ui.row().classes("items-center gap-1 no-wrap"):
                                 if key == "not_started":
                                     ui.button("Bắt đầu", icon="play_arrow", on_click=lambda _, u=it["uid"]: (
-                                        _set(connect, [u], O.DOING), on_change())).props(
+                                        _set(connect, [u], O.DOING, user), on_change())).props(
                                         "flat no-caps dense color=primary")
+                                elif key == "waiting":
+                                    ui.button("Hết chờ", icon="play_arrow", on_click=lambda _, u=it["uid"]: (
+                                        _set(connect, [u], O.DOING, user), on_change())).props(
+                                        "flat no-caps dense color=primary").tooltip(
+                                        "Chuyển sang Đang làm; hạn tự dời thêm số ngày đã chờ")
                                 else:
                                     extend_menu(ui, connect, user, lambda u=it["uid"]: [u], on_change)
                                 ui.button("Xong", icon="check", on_click=lambda _, u=it["uid"]: (
-                                    _set(connect, [u], O.DONE), on_change())).props("flat no-caps dense color=positive")
+                                    _set(connect, [u], O.DONE, user), on_change())).props(
+                                    "flat no-caps dense color=positive")
         if tasks:
             head("event_note", "red", f"Task tuần cần cập nhật trên sheet · {len(tasks)}")
             with ui.element("div").classes("sr-oa-list"):
@@ -702,6 +840,6 @@ def alerts_panel(ui, connect, user, ed: bool, on_change, cycle: str | None = Non
             btn.on_click(toggle)
 
 
-def _set(connect, uids: list[str], status: str) -> None:
+def _set(connect, uids: list[str], status: str, user="") -> None:
     with connect() as c:
-        O.set_status_many(c, uids, status)
+        O.set_status_many(c, uids, status, by=str(user))

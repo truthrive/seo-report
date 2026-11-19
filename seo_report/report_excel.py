@@ -274,7 +274,8 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
         p, cnt = kk["period"], kk["counts"]
         s.section(f"Công việc · OKR hiện có {cnt[O.DONE] / kk['total'] * 100 if kk['total'] else 0:.0f}% hạng mục "
                   "đã hoàn thành"
-                  + (f" · {len(kk['late'])} trễ hạn" if kk["late"] else ""))
+                  + (f" · {len(kk['late'])} trễ hạn" if kk["late"] else "")
+                  + (f" · {len(kk.get('waiting') or [])} đang chờ bên ngoài" if kk.get("waiting") else ""))
         rows, colors = [], []
         for title, its, color in ((f"Hoàn thành trong {unit}", p["done"], GREEN), (f"Kế hoạch {unit} sau", p["next"], None)):
             for it in its:

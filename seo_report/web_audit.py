@@ -297,11 +297,11 @@ def build_audit_page(ui, cfg, connect, user, start: str = "", area: str = "") ->
         kit = state["kits"].setdefault(ch["code"] + ("-ign" if ignored else ""), TK.new_state())
         acts = []
         if ed and not ignored:
-            acts.append({"label": lambda sel: f"Đã xử lý, kiểm tra lại · {len(sel)}", "icon": "task_alt",
+            acts.append({"label": "Đã xử lý, kiểm tra lại", "icon": "task_alt",
                          "on": lambda sel, code=ch["code"]: recheck_rows(code, sel)})
         if ed:
-            acts.append({"label": (lambda sel: f"Tính lại là lỗi · {len(sel)}") if ignored else
-                         (lambda sel: f"Cố ý, bỏ qua · {len(sel)}"), "icon": "undo" if ignored else "block",
+            acts.append({"label": "Tính lại là lỗi" if ignored else
+                         "Cố ý, bỏ qua", "icon": "undo" if ignored else "block",
                          "on": lambda sel, code=ch["code"]: mark(code, sel, not ignored)})
         TK.table(ui, columns=[
             {"name": "path", "label": "Trang" if not ch.get("site") else "URL", "field": "path", "align": "left",
@@ -858,7 +858,7 @@ def build_audit_page(ui, cfg, connect, user, start: str = "", area: str = "") ->
                   for k in SA.LEVELS],
                 {"name": "names", "label": "Các lỗi", "field": "names", "align": "left",
                  "classes": "sr-ta-ncol", "headerClasses": "sr-ta-ncol"}]
-        acts = [{"label": lambda sel: f"Đã xử lý, kiểm tra lại · {len(sel)} trang", "icon": "task_alt",
+        acts = [{"label": "Đã xử lý, kiểm tra lại", "icon": "task_alt",
                  "on": lambda sel: recheck_items([(c_, r["url"]) for r in sel for c_ in r["codes"]])}] if ed else None
         TK.table(ui, columns=cols, rows=rows, row_key="url", st=state["kit"], noun="trang", page_size=25,
                  filters=[("text", "Trang", ["path"]), ("num", "Click 28 ngày", "clicks"),
