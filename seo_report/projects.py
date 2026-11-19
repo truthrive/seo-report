@@ -81,7 +81,8 @@ def valid_site_url(site_url: str) -> bool:
     """Đúng cách Search Console ghi property: 'sc-domain:abc.com' hoặc 'https://abc.com/' (có / cuối)."""
     s = site_url.strip()
     return bool(re.fullmatch(r"sc-domain:[a-z0-9.-]+\.[a-z]{2,}", s)
-                or re.fullmatch(r"https?://[^\s/]+\.[^\s/]+/(\S*/)?", s))
+                # không nhận dấu nháy, ngoặc nhọn, dấu huyền, gạch chéo ngược: chuỗi này từng được ghép vào mã JavaScript
+                or re.fullmatch(r"https?://[^\s/\"'<>`\\]+\.[^\s/\"'<>`\\]+/([^\s\"'<>`\\]*/)?", s))
 
 
 def _row(r: sqlite3.Row | tuple, cols: list[str]) -> dict:

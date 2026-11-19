@@ -28,6 +28,14 @@ def e(v) -> str:
     return html.escape("" if v is None else str(v))
 
 
+def gantt_name(i: dict) -> str:
+    """Tên thanh Gantt. Trang xuất dùng tooltip dạng chuỗi (ECharts chèn như HTML: tooltip.formatter = p => p.name), nên
+    toàn bộ chữ do người dùng nhập (mã, tên hạng mục) được thoát ký tự ở đây."""
+    from . import okr as O
+    status = O.wait_text(i.get("wait")) if i["status"] == O.WAIT else O.STATUS_LABEL[i["status"]]
+    return e(f"{i['code']} {i['title']} · {_vn(i['start'])} – {_vn(i['end'])} · {status}")
+
+
 def _vn(iso) -> str:
     return f"{iso[8:10]}/{iso[5:7]}" if iso else "–"
 
@@ -233,9 +241,7 @@ def _okr(ov: dict, today: date, charts: Charts) -> str:
                  "data": [(date.fromisoformat(i["start"]) - d0).days for i in rows], "tooltip": {"show": False}},
                 {"type": "bar", "stack": "g", "barWidth": 12,
                  "data": [{"value": (date.fromisoformat(i["end"]) - date.fromisoformat(i["start"])).days + 1,
-                           "name": f"{i['code']} {i['title']} · {_vn(i['start'])} – {_vn(i['end'])} · "
-                                   + (O.wait_text(i.get("wait")) if i["status"] == O.WAIT
-                                      else O.STATUS_LABEL[i["status"]]),
+                           "name": gantt_name(i),
                            "itemStyle": {"color": RED if O.is_late(i, today) else STATUS_COLOR[i["status"]],
                                          "borderRadius": 4}} for i in rows],
                  "markLine": {"silent": True, "symbol": "none", "lineStyle": {"color": RED, "type": "solid"},

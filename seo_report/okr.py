@@ -483,22 +483,38 @@ def update_counts(con) -> dict[str, int]:
     return dict(con.execute("SELECT uid, COUNT(*) FROM okr_updates GROUP BY uid"))
 
 
+# Link bằng chứng đi vào thuộc tính của thẻ <a>: chỉ nhận http(s), không dấu nháy, ngoặc nhọn, dấu huyền, gạch chéo ngược
+# hay khoảng trắng (đã có lỗi chèn thuộc tính qua dấu nháy kép).
+_SAFE_LINK = re.compile(r"^https?://[^\s\"'<>`\\]+$", re.I)
+MAX_LINK = 2000
+
+
+def safe_link(u: str) -> bool:
+    return bool(u) and len(u) <= MAX_LINK and bool(_SAFE_LINK.match(u))
+
+
 def links(it: dict) -> list[str]:
-    """Các link bằng chứng của hạng mục (lưu mỗi dòng một link trong cột link)."""
-    return [x.strip() for x in re.split(r"[\r\n]+", it.get("link") or "") if x.strip()]
+    """Các link bằng chứng của hạng mục (lưu mỗi dòng một link trong cột link). Link không an toàn (có thể do
+    đồng bộ từ Sheet hoặc dữ liệu cũ) bị bỏ khi đọc, nên không bao giờ tới giao diện."""
+    return [x for x in (y.strip() for y in re.split(r"[\r\n]+", it.get("link") or "")) if safe_link(x)]
 
 
-def set_links(con, uid: str, urls: list[str]) -> None:
+def _clean_links(urls: list[str]) -> list[str]:
     clean = []
     for u in urls:
         u = (u or "").strip()
         if not u:
             continue
-        if not re.match(r"^https?://", u, re.I):
-            raise ValueError(f"Link phải bắt đầu bằng http:// hoặc https:// ({u[:40]})")
+        if not safe_link(u):
+            raise ValueError("Link phải bắt đầu bằng http:// hoặc https://, không có khoảng trắng hay dấu nháy "
+                             f"({u[:40]})")
         if u not in clean:
             clean.append(u)
-    update_item(con, uid, link="\n".join(clean))
+    return clean
+
+
+def set_links(con, uid: str, urls: list[str]) -> None:
+    update_item(con, uid, link="\n".join(_clean_links(urls)))
 
 
 def wait_log(con, uid: str) -> list[dict]:
@@ -801,6 +817,8 @@ def update_item(con, uid: str, today: date | None = None, by: str = "", **fields
     fields = {k: v for k, v in fields.items() if k in FIELDS}
     if "title" in fields and not (fields["title"] or "").strip():
         raise ValueError("Tên không được để trống")
+    if "link" in fields:  # mọi đường ghi link (hộp thêm link, hộp chi tiết) đều qua cùng một bộ kiểm tra
+        fields["link"] = "\n".join(_clean_links(re.split(r"[\r\n]+", fields["link"] or "")))
     if fields.get("start") and fields.get("end") and fields["start"] > fields["end"]:
         raise ValueError("Ngày bắt đầu sau ngày kết thúc")
     if "status" in fields:

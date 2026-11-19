@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS site_labels (
 );
 """
 _COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_BAD_NAME = re.compile(r"[\"'<>`\\{}\[\]\x00-\x1f]")  # tên nhãn đi vào bảng, biểu đồ và file xuất: không nhận ký tự dựng mã
 
 
 def ensure(con: sqlite3.Connection) -> None:
@@ -71,6 +72,8 @@ def add_def(con, name: str, color: str = "", user: str = "") -> dict:
     name = " ".join(str(name or "").split())[:MAX_NAME]
     if not name:
         raise ValueError("Tên nhãn trống")
+    if _BAD_NAME.search(name):
+        raise ValueError("Tên nhãn không được chứa dấu nháy, ngoặc nhọn, gạch chéo ngược hay dấu huyền")
     have = {d["name"].lower(): d for d in defs(con)}
     if name.lower() in have:
         return have[name.lower()]

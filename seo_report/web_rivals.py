@@ -11,6 +11,18 @@ from . import rank_overview as RO
 
 DASHES = ["solid", "dashed", "dotted"]  # đường của mình liền; đối thủ khác nhau cả kiểu nét, không chỉ màu
 
+# Tooltip biểu đồ GAP: ECharts chèn kết quả như HTML, nên tên đối thủ (Member đặt) phải thoát ký tự trước khi ghép.
+TIP_JS = ("p => { const esc = s => String(s).replace(/[&<>\"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "
+          "'\"': '&quot;', \"'\": '&#39;'})[c]); return esc(p.name) + ': ' + p.value.toLocaleString('vi-VN') + "
+          "' website trỏ về đối thủ mà chưa trỏ về mình'; }")
+
+
+def sort_js(i: int) -> str:
+    """Hàm sắp xếp cột nhãn. NiceGUI chạy thuộc tính ':sort' như JavaScript, nên chỉ dùng số thứ tự cột (int), tuyệt
+    đối không ghép tên nhãn do người dùng đặt."""
+    i = int(i)
+    return f"(a, b, ra, rb) => (ra['_{i}'] || 0) - (rb['_{i}'] || 0)"
+
 
 def _vn(iso: str | None) -> str:
     return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else ""
@@ -493,8 +505,8 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             ui.echart({
                 "animation": False,
                 "grid": {"left": 8, "right": 48, "top": 8, "bottom": 8, "containLabel": True},
-                "tooltip": {"trigger": "item", ":formatter": "p => p.name + ': ' + p.value.toLocaleString('vi-VN') + "
-                                                            "' website trỏ về đối thủ mà chưa trỏ về mình'"},
+                # tooltip dạng chuỗi được ECharts chèn như HTML: tên đối thủ do Member đặt nên phải thoát ký tự
+                "tooltip": {"trigger": "item", ":formatter": TIP_JS},
                 "xAxis": {"type": "value", "show": False},
                 "yAxis": {"type": "category", "data": [r["name"] for r in rows], "axisTick": {"show": False},
                           "axisLine": {"show": False}, "axisLabel": {"color": "#4A4A40", "fontSize": 12}},
@@ -531,11 +543,11 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
         rows = []
         for rv in sorted(split, key=lambda r: -sum(x[0] for x in split[r].values())):
             row = {"rival": rv, "total": len(pr.get(rv) or {})}
-            for d in used:
+            for i, d in enumerate(used):
                 w_, l_ = split[rv].get(d["name"], [0, 0])
                 row[d["name"]] = ("–" if not w_ else f"{w_} website" + (f" · {l_:,} link".replace(",", ".")
                                                                         if l_ else ""))
-                row["_" + d["name"]] = w_
+                row[f"_{i}"] = w_  # khóa sắp xếp theo số thứ tự cột, không dùng tên nhãn
             rows.append(row)
         ui.label("Theo nhãn website").classes("sr-rai-h q-mt-md")
         ui.label("Số website đã gắn nhãn (ở bảng Backlink) trong các website trỏ về từng đối thủ mà chưa trỏ về mình. "
@@ -543,7 +555,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
         cols = [{"name": "rival", "label": "Đối thủ", "field": "rival", "align": "left"},
                 {"name": "total", "label": "Website GAP", "field": "total", "align": "right", "sortable": True}]
         cols += [{"name": d["name"], "label": d["name"], "field": d["name"], "align": "right", "sortable": True,
-                  ":sort": f"(a, b, ra, rb) => (ra['_{d['name']}'] || 0) - (rb['_{d['name']}'] || 0)"} for d in used]
+                  ":sort": sort_js(i)} for i, d in enumerate(used)]
         with ui.element("div").classes("w-full").style("overflow-x:auto"):
             ui.table(columns=cols, rows=rows, row_key="rival").props("flat dense").classes("w-full sr-bl-table")
 

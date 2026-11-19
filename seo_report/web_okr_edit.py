@@ -299,7 +299,7 @@ def build_okr_edit_page(ui, cfg, connect, user, app_connect=None) -> None:
                 f["qty"] = ui.input("Số lượng", value=it["qty"]).props("outlined dense").classes("col")
                 f["unit"] = ui.input("Đơn vị", value=it["unit"]).props("outlined dense").classes("col")
                 f["grp"] = ui.input("Nhóm", value=it["grp"]).props("outlined dense").classes("col")
-            f["link"] = ui.textarea("Link bằng chứng (mỗi dòng một link)", value=it["link"]).props(
+            f["link"] = ui.textarea("Link bằng chứng (mỗi dòng một link)", value="\n".join(O.links(it))).props(
                 "outlined dense autogrow").classes("w-full")
             f["note"] = ui.input("Ghi chú", value=it["note"]).props("outlined dense").classes("w-full")
 

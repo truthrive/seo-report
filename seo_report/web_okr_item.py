@@ -217,13 +217,17 @@ def open_item(ui, connect, user, uid: str, on_change, ed: bool) -> None:
                             with ui.row().classes("w-full items-center no-wrap gap-2 sr-oi-link"):
                                 ui.icon("description" if "docs.google" in u else "public", size="18px").classes(
                                     "muted").props('aria-hidden="true"')
-                                with ui.element("a").props(f'href="{u}" target="_blank" rel="noopener" title="{u}"'
-                                                           ).classes("col sr-oi-a"):
+                                a = ui.element("a").classes("col sr-oi-a")
+                                # gán từng thuộc tính dạng giá trị, không ghép vào chuỗi props (link có dấu nháy sẽ
+                                # không thoát được khỏi chuỗi để chèn thuộc tính khác)
+                                a._props.update({"href": u, "target": "_blank", "rel": "noopener", "title": u})
+                                with a:
                                     ui.label(_link_label(u)).classes("text-sm ellipsis")
                                 if ed:
-                                    ui.button(icon="close", on_click=lambda _, u=u: act(
+                                    rm = ui.button(icon="close", on_click=lambda _, u=u: act(
                                         O.set_links, uid, [x for x in urls if x != u])).props(
-                                        f'flat round dense size=sm color=grey-7 aria-label="Bỏ link {_link_label(u)}"')
+                                        "flat round dense size=sm color=grey-7")
+                                    rm._props["aria-label"] = f"Bỏ link {_link_label(u)}"
                     if ed:
                         with ui.row().classes("w-full items-center no-wrap gap-2 q-mt-xs"):
                             nl = ui.input(placeholder="Dán link (Google Doc, Sheet, bài đã đăng…)").props(

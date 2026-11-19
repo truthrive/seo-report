@@ -72,6 +72,13 @@ def _col(name, label, align="left", number=False, sortable=True):
     return col
 
 
+def url_format_js(site: str) -> str:
+    """Hàm định dạng cột URL. NiceGUI chạy thuộc tính ':format' như JavaScript, nên chuỗi website của dự án được đưa
+    vào bằng json.dumps (đúng cú pháp chuỗi JS, thoát nháy và gạch chéo ngược), không ghép thẳng."""
+    import json
+    return f"val => (val || '').replace({json.dumps(str(site).rstrip('/'))}, '') || '/'"
+
+
 def _storage_secret(cfg: Config) -> str:
     """Khóa ký cookie lưu lựa chọn (tuần, nhóm) của từng trình duyệt; tạo một lần, lưu cạnh file dữ liệu."""
     import secrets
@@ -1322,7 +1329,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     def url_col(site, name="url", label="URL"):
         """Cột URL chỉ hiện đường dẫn (bỏ tên miền), cắt "…" khi dài."""
         col = _col(name, label)
-        col[":format"] = f"val => (val || '').replace('{site.rstrip('/')}', '') || '/'"
+        col[":format"] = url_format_js(site)
         col.update({"classes": "ellipsis", "style": "max-width: 420px", "headerStyle": "max-width: 420px"})
         return col
 
