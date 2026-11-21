@@ -331,11 +331,10 @@ def fetch_logo(site_url: str, timeout: int = 10) -> str | None:
 
     home = f"https://{domain(site_url)}/"
     headers = {"User-Agent": "Mozilla/5.0 (SEO Report logo fetch)"}
-    # Chỉ HTTP(S): trang chủ của website (do khách kiểm soát) không được khiến tool đọc file trên máy (file:) hay FTP
-    opener = urllib.request.OpenerDirector()
-    for h in (urllib.request.HTTPHandler, urllib.request.HTTPSHandler, urllib.request.HTTPRedirectHandler,
-              urllib.request.HTTPDefaultErrorHandler, urllib.request.HTTPErrorProcessor):
-        opener.add_handler(h())
+    # Chỉ http(s) tới địa chỉ công khai: trang chủ và domain đối thủ (do người khác chọn) không được khiến tool đọc
+    # file trên máy (file:), FTP hay dò mạng nội bộ qua chuyển hướng / icon (xem safe_fetch)
+    from . import safe_fetch as SF
+    opener = SF.OPEN
 
     def get(url: str) -> tuple[bytes, str]:
         if urlsplit(url).scheme not in ("http", "https"):

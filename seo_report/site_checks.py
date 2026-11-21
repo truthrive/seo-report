@@ -97,18 +97,35 @@ def parse_robots(text: str) -> list[dict]:
             last_ua = True
         elif k in ("allow", "disallow"):
             last_ua = False
-            if cur is not None and (v or k == "allow"):
-                cur["rules"].append((k == "allow", v))
+            if cur is not None and (v or k == "allow") and len(cur["rules"]) < MAX_RULES:
+                cur["rules"].append((k == "allow", v[:500]))
         else:  # Sitemap, Crawl-delay…: không thuộc nhóm nào
             last_ua = False
     return groups
 
 
-def _rx(pattern: str) -> re.Pattern:
-    """Mẫu robots.txt → regex: `*` là chuỗi bất kỳ, `$` ở cuối là hết URL."""
+MAX_RULES = 2000  # trần số dòng Allow/Disallow đọc từ một robots.txt
+
+
+def _robots_match(pattern: str, path: str) -> bool:
+    """Mẫu robots.txt khớp đầu đường dẫn: `*` là chuỗi bất kỳ, `$` ở cuối là hết URL. Khớp tuyến tính bằng find(), không
+    dùng regex nên một robots.txt nhiều dấu `*` không thể làm treo tiến trình (backtracking)."""
     end = pattern.endswith("$")
-    body = re.escape(pattern[:-1] if end else pattern).replace(r"\*", ".*")
-    return re.compile(body + ("$" if end else ""))
+    parts = (pattern[:-1] if end else pattern).split("*")
+    if not path.startswith(parts[0]):
+        return False
+    pos = len(parts[0])
+    if len(parts) == 1:
+        return path == parts[0] if end else True
+    for mid in parts[1:-1]:
+        i = path.find(mid, pos)
+        if i < 0:
+            return False
+        pos = i + len(mid)
+    last = parts[-1]
+    if end:
+        return len(path) - len(last) >= pos and path.endswith(last)
+    return path.find(last, pos) >= 0
 
 
 def robots_rule(groups: list[dict], agent: str, url: str) -> tuple[bool, str]:
@@ -121,7 +138,7 @@ def robots_rule(groups: list[dict], agent: str, url: str) -> tuple[bool, str]:
     best = None  # (độ dài mẫu, cho phép?, dòng)
     for g in sel:
         for allow, pat in g["rules"]:
-            if pat and _rx(pat).match(path):
+            if pat and _robots_match(pat, path):
                 cand = (len(pat), allow, f"{'Allow' if allow else 'Disallow'}: {pat}")
                 if best is None or cand[:2] > best[:2]:
                     best = cand
@@ -186,13 +203,10 @@ def follow(url: str, opener=head, max_hops: int = MAX_HOPS) -> dict:
 
 def get_text(url: str, timeout: int = TIMEOUT) -> dict:
     """Nội dung chữ của một URL (robots.txt): {"status", "text", "error"}, theo chuyển hướng."""
-    from urllib.request import urlopen
-    try:
-        with urlopen(Request(url, headers={**HEADERS, "Accept": "text/plain,*/*"}), timeout=timeout) as r:
-            body = r.read(500_000)
-            if r.headers.get("Content-Encoding") == "gzip":
-                import gzip
-                body = gzip.decompress(body)
+    from . import safe_fetch as SF
+    try:  # theo chuyển hướng nhưng mỗi chặng chỉ tới địa chỉ công khai, trần 500 KB kể cả sau khi giải nén
+        with SF.OPEN.open(Request(url, headers={**HEADERS, "Accept": "text/plain,*/*"}), timeout=timeout) as r:
+            body = SF.read_body(r, 500_000)
             return {"status": r.status, "text": body.decode("utf-8", "ignore"), "error": None}
     except HTTPError as e:
         return {"status": e.code, "text": "", "error": None}

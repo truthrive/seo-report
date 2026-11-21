@@ -14,7 +14,8 @@ import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import Request
 
 from googleapiclient.errors import HttpError
 
@@ -71,14 +72,28 @@ def _now() -> str:
 
 # ---- Sitemap ----
 
+MAX_CHILD_SITEMAPS = 50
+MAX_SITEMAP_BYTES = 10_000_000
+
+
+def _fetch_sitemap(u: str) -> str:
+    from . import safe_fetch as SF
+    req = Request(u, headers={"User-Agent": "SEOReportBot/1.0", "Accept-Encoding": "gzip"})
+    with SF.OPEN.open(req, timeout=60) as r:  # chỉ http(s) tới địa chỉ công khai, đọc và giải nén có trần
+        return SF.read_body(r, MAX_SITEMAP_BYTES).decode("utf-8", "ignore")
+
+
 def read_sitemap(url: str, fetch=None, depth: int = 0) -> list[str]:
     """Đọc sitemap, kể cả sitemap index (sitemap chứa các sitemap con)."""
-    fetch = fetch or (lambda u: urlopen(Request(u, headers={"User-Agent": "SEOReportBot/1.0", "Accept-Encoding": "identity"}),
-                                         timeout=60).read().decode("utf-8", "ignore"))
+    fetch = fetch or _fetch_sitemap
     xml = fetch(url)
     locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml)
     if "<sitemapindex" in xml and depth < 2:
-        return [u for sub in locs for u in read_sitemap(sub, fetch, depth + 1)]
+        # sitemap con chỉ nhận http(s) cùng website với sitemap cha (không để sitemap trỏ tool sang host khác)
+        base = urlsplit(url).netloc.lower().removeprefix("www.")
+        kids = [u for u in locs if urlsplit(u).scheme in ("http", "https")
+                and urlsplit(u).netloc.lower().removeprefix("www.") == base][:MAX_CHILD_SITEMAPS]
+        return [u for sub in kids for u in read_sitemap(sub, fetch, depth + 1)]
     return locs
 
 

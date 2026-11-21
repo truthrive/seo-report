@@ -15,7 +15,9 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from . import safe_fetch as SF
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS backlink_built (
@@ -239,7 +241,7 @@ def check_link(url_from: str, url_to: str, anchor: str | None = None, opener=Non
                 "detail": "Địa chỉ không công khai, tool không tải"}
     req = Request(url_from, headers={"User-Agent": UA, "Accept": "text/html,*/*;q=0.5"})
     try:
-        with (opener or urlopen)(req, timeout=20) as r:
+        with (opener or SF.OPEN.open)(req, timeout=20) as r:  # mặc định: chỉ tới địa chỉ công khai, mọi chặng chuyển hướng
             status = getattr(r, "status", 200)
             raw = r.read(MAX_BYTES)
             ctype = r.headers.get("Content-Type", "") if hasattr(r, "headers") else ""

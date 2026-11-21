@@ -8,7 +8,6 @@
 - Danh sách việc nên làm để thực thể mạnh hơn (hiện Knowledge Panel, được AI nhắc đúng tên).
 
 Kiểm tra mỗi tuần (lịch hằng ngày) hoặc bấm Kiểm tra ngay."""
-import gzip
 import json
 import re
 import sqlite3
@@ -194,11 +193,9 @@ def org_schema(html: str) -> dict:
 
 
 def fetch_home(url: str, timeout: int = 25) -> str:
-    resp = urlopen(Request(url, headers=HEADERS), timeout=timeout)
-    body = resp.read()
-    if resp.headers.get("Content-Encoding") == "gzip":
-        body = gzip.decompress(body)
-    return body.decode("utf-8", "ignore")
+    from . import safe_fetch as SF
+    resp = SF.OPEN.open(Request(url, headers=HEADERS), timeout=timeout)  # chỉ tới địa chỉ công khai, đọc có trần
+    return SF.read_body(resp, 5_000_000).decode("utf-8", "ignore")
 
 
 def social(same_as: list[str]) -> list[str]:

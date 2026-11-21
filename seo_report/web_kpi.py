@@ -1927,6 +1927,13 @@ def _edit_form(ui, cfg, connect, user, sid: str, loaded: dict, create: dict | No
         from . import ai_kpi as AK
         from . import ai_settings as AIS
         from . import points as PT
+        # Sheet đọc bằng token Google chung của chủ: Member chỉ đọc được sheet đã gắn vào dự án này; sheet khác (của khách
+        # khác, nội bộ) chỉ Owner / Admin. Kiểm ở đây (phía máy chủ), không chỉ ở hộp nhập.
+        with connect() as c:
+            bound = KP.sheet_id(c)
+        if target != bound and not A.is_admin(user):
+            ui.notify("Chỉ Owner / Admin được đọc sheet khác sheet đã gắn vào dự án này", type="warning")
+            return
         try:
             prov = AW_provider()
         except Exception as e:  # noqa: BLE001

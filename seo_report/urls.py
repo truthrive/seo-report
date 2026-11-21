@@ -193,6 +193,15 @@ def _match_existing(con: sqlite3.Connection, site: str, url: str) -> int | None:
     return None
 
 
+def same_site(url: str, site: str) -> bool:
+    """URL thuộc website (property Search Console)? So host, bỏ www. và cổng mặc định."""
+    from .projects import domain
+    try:
+        return domain(url) == domain(site)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def add_to_group(con: sqlite3.Connection, site: str, group_id: int, text: str, user: str) -> dict:
     """Thêm các link dán vào (mỗi dòng hoặc cách nhau bởi khoảng trắng) vào nhóm."""
     result = {"added": [], "already": [], "no_data": [], "invalid": []}
@@ -205,6 +214,9 @@ def add_to_group(con: sqlite3.Connection, site: str, group_id: int, text: str, u
                 result["invalid"].append(raw)
                 continue
             url = normalize(raw)
+            if not same_site(url, site):  # nhóm URL chỉ nhận trang của chính website (audit sẽ tải các URL này)
+                result["invalid"].append(raw)
+                continue
             url_id = _match_existing(con, site, url)
             if url_id is None:
                 url_id = _get_or_create_url(con, site, url)

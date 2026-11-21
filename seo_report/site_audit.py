@@ -2,7 +2,6 @@
 nhất 90 ngày qua, mọi trang không phải sản phẩm trong sitemap; không tính URL biến thể có tham số: pick_pages) rồi kiểm tra mã trả về, chuyển hướng, noindex, canonical, tiêu đề, mô tả, H1,
 ảnh thiếu alt, nội dung mỏng, tốc độ phản hồi; kèm kiểm tra từ dữ liệu Search Console (tiêu đề không chứa từ khóa
 chính, CTR thấp so với vị trí). Mỗi tuần quét một lần (lịch hằng ngày), hoặc bấm Quét ngay."""
-import gzip
 import json
 import re
 import sqlite3
@@ -12,9 +11,10 @@ from html.parser import HTMLParser
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import Request
 
 from . import keywords as K
+from . import safe_fetch as SF
 from .crawl import HEADERS
 
 REFRESH_DAYS = 7
@@ -347,12 +347,10 @@ def parse(html: str, url: str) -> dict:
 
 # ---- Mở trang ----
 
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):
-        return None
+MAX_PAGE_BYTES = 5_000_000  # trần dung lượng một trang (cả sau khi giải nén)
 
-
-_opener = build_opener(_NoRedirect)
+# Chỉ tới địa chỉ công khai, không tự theo chuyển hướng (xem safe_fetch)
+_opener = SF.OPEN_NO_REDIRECT
 
 
 # Dấu hiệu trang chặn / thử thách của tường lửa (Cloudflare, Sucuri, Imperva…): server trả trang này thay cho trang thật
@@ -372,9 +370,7 @@ def fetch(url: str, timeout: int = TIMEOUT) -> dict:
     t = time.monotonic()
     try:
         resp = _opener.open(Request(url, headers=HEADERS), timeout=timeout)
-        body = resp.read()
-        if resp.headers.get("Content-Encoding") == "gzip":
-            body = gzip.decompress(body)
+        body = SF.read_body(resp, MAX_PAGE_BYTES)
         ctype = resp.headers.get("Content-Type", "")
         html = body.decode("utf-8", "ignore") if "html" in ctype or not ctype else ""
         if html and _block_mark(html):  # trang thử thách trả 200: không phải nội dung thật
@@ -388,9 +384,7 @@ def fetch(url: str, timeout: int = TIMEOUT) -> dict:
         blocked = e.code == 429
         if e.code in BLOCK_STATUS and not blocked:
             try:
-                raw = e.read(40000)
-                if e.headers.get("Content-Encoding") == "gzip":
-                    raw = gzip.decompress(raw)
+                raw = SF.read_body(e, 40000)
                 blocked = _block_mark(raw.decode("utf-8", "ignore"))
             except Exception:  # noqa: BLE001
                 pass
