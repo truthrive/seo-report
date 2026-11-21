@@ -41,6 +41,13 @@ def build_projects_page(ui, base, app_connect, user) -> None:
         except (Exception, SystemExit) as e:  # noqa: BLE001  (không lấy được danh sách thì cho gõ tay)
             return {}, {}, f"Không lấy được danh sách từ Google ({e}). Gõ tay property."
 
+    def set_paid(slug: str, on: bool) -> None:
+        from . import user_google as UG
+        with app_connect() as c:
+            UG.set_paid(c, slug, on, str(user))
+        LIVE.kick(project=slug, keep=ui.context.client.id)  # trang đang mở website này dựng lại theo quyền mới
+        ui.notify("Đã bật tính năng tốn phí cho website này" if on else "Đã tắt tính năng tốn phí", type="positive")
+
     ga4_state: dict[str, dict] = {}  # property → kết quả đối chiếu luồng dữ liệu (cho danh sách dự án)
 
     async def check_ga4(prop: str, site_url: str) -> dict | None:
@@ -416,6 +423,14 @@ def build_projects_page(ui, base, app_connect, user) -> None:
                                                   else "GA4 lẫn website khác" if chk["status"] == "mixed"
                                                   else "GA4 chưa có luồng web", "red" if chk["status"] == "mismatch"
                                                   else "amber", "report")
+                            if p["settings"].get("google_owner"):  # website người dùng tự thêm bằng Google của họ
+                                T.status_chip(ui, "của " + p["settings"]["google_owner"], "blue", "person").tooltip(
+                                    "Người này tự thêm bằng tài khoản Google của họ: tool lấy số bằng quyền của họ. "
+                                    "Chỉ người đó và Owner / Admin thấy.")
+                                paid_sw = ui.switch("Tốn phí", value=bool(p["settings"].get("paid_ok"))).props(
+                                    "dense size=xs").classes("text-xs")
+                                paid_sw.tooltip("Cho website này dùng check rank, AI… (tốn tiền, trừ credit người dùng)")
+                                paid_sw.on_value_change(lambda e, slug=p["slug"]: set_paid(slug, e.value))
                             if todo:  # status_chip không trả về phần tử: bọc để gắn chú thích
                                 with ui.element("span").tooltip("Còn thiếu: " + ", ".join(todo)):
                                     T.status_chip(ui, f"Cài đặt {len(steps) - len(todo)}/{len(steps)}", "amber",

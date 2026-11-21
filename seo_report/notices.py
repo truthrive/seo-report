@@ -158,6 +158,23 @@ def _ai_block(user) -> list[dict]:
                re.sub(r"Model “[^”]*”", "Model chính", b.get("error", "")), "/quan-tri-ai", b["at"])]
 
 
+def _requests(user) -> list[dict]:
+    """Người đăng nhập Google nhưng chưa có quyền, đang chờ duyệt: báo Owner / Admin (dữ liệu ở file dữ liệu chính)."""
+    if not A.is_admin(user):
+        return []
+    from . import points as PT
+    try:
+        with PT._connect() as c:
+            reqs = A.pending_requests(c)
+    except Exception:  # noqa: BLE001
+        return []
+    if not reqs:
+        return []
+    names = ", ".join(r["email"] for r in reqs[:3]) + (f" và {len(reqs) - 3} người khác" if len(reqs) > 3 else "")
+    return [_n("system", "high", "access_req:" + ",".join(sorted(r["email"] for r in reqs)),
+               f"{len(reqs)} người xin quyền vào tool", names, "/access", reqs[0]["at"])]
+
+
 def _backlink(con, cfg) -> list[dict]:
     """Mất link từ website mạnh, link spam mới tăng, link đã xây bị mất / đổi: từ dữ liệu đã lưu, không gọi API."""
     from . import backlink_build as BB
@@ -316,13 +333,17 @@ def _local(con, today: date) -> list[dict]:
     """Đánh giá Google Maps 1–3 sao chưa trả lời (30 ngày gần nhất)."""
     if not _has(con, "gbp_reviews"):
         return []
+    from . import gbp_reviews as GR
     since = (today - timedelta(days=REVIEW_DAYS)).isoformat()
+    titles = dict(con.execute("SELECT name, title FROM gbp_locations")) if _has(con, "gbp_locations") else {}
     out = []
-    for rid, author, rating, comment, created in con.execute(
-            "SELECT review_id, author, rating, comment, created FROM gbp_reviews WHERE rating BETWEEN 1 AND 3 AND "
-            "(reply IS NULL OR reply = '') AND created >= ? ORDER BY created DESC LIMIT 10", (since,)):
-        out.append(_n("local", "high", f"review:{rid}", f"Đánh giá {rating}★ chưa trả lời: {author or 'khách'}",
-                      (comment or "(không có chữ)")[:140], "/local?tab=reviews", (created or "")[:10]))
+    for rid, loc, author, rating, comment, created in con.execute(
+            "SELECT review_id, location, author, rating, comment, created FROM gbp_reviews WHERE rating BETWEEN 1 "
+            "AND 3 AND (reply IS NULL OR reply = '') AND created >= ? ORDER BY created DESC LIMIT 10", (since,)):
+        where = f" · {titles[loc]}" if titles.get(loc) else ""
+        out.append(_n("local", "high", f"review:{rid}", f"Đánh giá {rating}★ chưa trả lời{where}: {author or 'khách'}",
+                      (GR.clean(comment) or "(không có chữ)")[:140] + " · trả lời hàng loạt ở Local SEO › Đánh giá",
+                      "/local?tab=reviews", (created or "")[:10]))
     return out
 
 
@@ -340,6 +361,7 @@ def collect(con, cfg, user, end: date | None = None, today: date | None = None) 
     if not A.is_client(user):  # khách hàng chỉ nhận câu trả lời cho yêu cầu của mình
         for src in (lambda: _okr(con, today), lambda: _rank(con, cfg, end, today),
                     lambda: _seo(con, cfg), lambda: _backlink(con, cfg), lambda: _ai_block(user),
+                    lambda: _requests(user),
                     lambda: _traffic(con, cfg), lambda: _links(con, cfg), lambda: _local(con, today),
                     lambda: _system(con, cfg, user, today)):
             try:

@@ -124,6 +124,20 @@ class OkrAlertsTest(unittest.TestCase):
         self.assertEqual(O.norm_status("Pending"), O.PAUSE)
         self.assertEqual(O.norm_status("Chờ khách"), O.WAIT)
 
+    def test_week_history(self):
+        O.extend(self.con, [self.late], days=7, today=self.today)  # gia hạn sau: tuần cũ vẫn tính theo hạn lúc đó
+        hist = O.week_history(self.con, self.today)
+        self.assertEqual(hist[0]["start"], date(2026, 11, 2))  # tuần này đứng đầu
+        self.assertTrue(hist[0]["current"])
+        self.assertEqual(hist[-1]["start"], date(2026, 9, 28))  # tuần chứa ngày bắt đầu đợt
+        wk = next(h for h in hist if h["start"] == date(2026, 10, 26))  # 26/10 – 01/11: hạng mục hạn 01/11 chưa xong
+        self.assertIn(self.late, [i["uid"] for i in wk["late"]])
+        self.assertIn(self.late, [i["uid"] for i in wk["due"]] + [i["uid"] for i in wk["late"]])
+        early = next(h for h in hist if h["start"] == date(2026, 10, 5))
+        self.assertEqual(early["late"], [])
+        self.assertEqual(O.end_as_of([{"old_end": "2026-11-01", "new_end": "2026-11-14", "at": "2026-11-07T01:00"}],
+                                     "2026-11-14", date(2026, 11, 1)), "2026-11-01")
+
     def test_sheet_status_wait(self):
         self.assertEqual(O.norm_status("Đang chờ duyệt"), O.WAIT)
         self.assertEqual(O.norm_status("Đang làm"), O.DOING)

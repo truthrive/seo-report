@@ -7,6 +7,8 @@ Backlink.
     ("num", "Uy tín", "rank")             → nút Khoảng số (từ – đến)
     ("enum", "Loại link", "follow")       → nút Loại & trạng thái (chọn nhiều; trường là danh sách thì khớp bất kỳ)
     ("date", "Thấy lần đầu", "first_iso") → nút Khoảng ngày (trường dạng YYYY-MM-DD…)
+    ("pick", "Số sao", "stars_l")         → nút riêng mang tên bộ lọc, tick chọn từng giá trị như bộ lọc Excel
+                                            (giá trị xếp giảm dần: "5 sao" trước "1 sao")
 - Sao chép: các cột `copy` [(tiêu đề, trường)], cách nhau bằng Tab, có dòng tiêu đề: dán vào Google Sheets / Excel là
   ra đúng cột. Chưa chọn dòng nào thì chép mọi dòng đang lọc.
 - Trạng thái lọc / chọn lưu trong `st` (dict của người gọi) để vẽ lại bảng không mất bộ lọc.
@@ -132,7 +134,7 @@ def fixed_columns(columns: list[dict]) -> list[dict]:
 
 def _active(filters: list[tuple], st: dict) -> list[tuple[str, dict]]:
     """[(chữ trên chip, phần cần xóa)] của các bộ lọc đang bật."""
-    labels = {f: l for kind, l, f in filters if kind in ("num", "enum", "date")}
+    labels = {f: l for kind, l, f in filters if kind in ("num", "enum", "date", "pick")}
     out = []
     if st["inc"]:
         out.append(("Bao gồm: " + ", ".join(st["inc"]), {"inc": []}))
@@ -247,6 +249,28 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                             ui.button("Bỏ", on_click=lambda m=m: (st.update(num={}), m.close(), changed())).props(
                                 "flat dense no-caps")
                             ui.button("Áp dụng", on_click=lambda m=m, f_=apply_nums: f_(m)).props("unelevated dense no-caps")
+            for l, f in [(l, f) for k, l, f in filters if k == "pick"]:
+                opts = sorted({str(r.get(f)) for r in rows if r.get(f) not in (None, "")}, reverse=True)
+                cur = st["enum"].get(f, set())
+                b = drop_btn(l, ", ".join(o for o in opts if o in cur))
+                with b, ui.menu().classes("sr-kr-fmenu") as m:
+                    with ui.column().classes("q-pa-sm gap-0").style("width: 220px"):
+                        boxes = {o: ui.checkbox(f"{o} · {sum(1 for r in rows if str(r.get(f)) == o)}",
+                                                value=o in cur).props("dense").classes("q-py-xs") for o in opts}
+
+                        def apply_pick(m, f=f, boxes=boxes):
+                            on = {o for o, c in boxes.items() if c.value}
+                            if on and len(on) < len(boxes):
+                                st["enum"][f] = on
+                            else:
+                                st["enum"].pop(f, None)
+                            m.close()
+                            changed()
+                        with ui.row().classes("w-full justify-between q-mt-xs"):
+                            ui.button("Bỏ", on_click=lambda m=m, f=f: (st["enum"].pop(f, None), m.close(),
+                                                                         changed())).props("flat dense no-caps")
+                            ui.button("Áp dụng", on_click=lambda m=m, f_=apply_pick: f_(m)).props(
+                                "unelevated dense no-caps")
             enums = [(l, f) for k, l, f in filters if k == "enum"]
             if enums:
                 on_ = [l for l, f in enums if st["enum"].get(f)]
@@ -322,7 +346,7 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                 ui.button("Sao chép", icon="content_copy", on_click=lambda: do_copy(sel)).props(
                     "flat dense no-caps color=primary").tooltip("Chép đủ thông tin, dán vào Google Sheets / Excel")
                 if export:
-                    ui.button("Xuất Excel", icon="download", on_click=lambda: do_export(sel)).props(
+                    T.team_button(ui, "Xuất Excel", icon="download", on_click=lambda: do_export(sel)).props(
                         "flat dense no-caps color=primary").tooltip("Tải file Excel các dòng đã chọn")
             else:
                 ui.label(f"{len(shown):,} / {len(rows):,} {noun}".replace(",", ".") if len(shown) != len(rows)
@@ -333,7 +357,7 @@ def table(ui, *, columns: list[dict], rows: list[dict], row_key: str, filters: l
                           on_click=lambda: do_copy(shown)).props("flat dense no-caps color=primary").tooltip(
                     "Chép mọi dòng đang lọc, dán vào Google Sheets / Excel")
                 if export:
-                    ui.button("Xuất Excel", icon="download", on_click=lambda: do_export(shown)).props(
+                    T.team_button(ui, "Xuất Excel", icon="download", on_click=lambda: do_export(shown)).props(
                         "flat dense no-caps color=primary").tooltip("Tải file Excel mọi dòng đang lọc")
 
     def do_export(rs: list[dict]) -> None:

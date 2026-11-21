@@ -100,6 +100,21 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     assets = Path(__file__).parent / "assets"
     app.add_static_files("/assets", assets)  # biểu tượng của tool (logo từng website lưu trong bảng dự án)
 
+    from . import gbp_posts as _GP
+    _GP.MEDIA["base"] = cfg.db_path.parent  # ảnh bài đăng GBP: một thư mục chung trong thư mục dữ liệu chính
+
+    @app.get("/gbp-media/{name}")
+    def gbp_media(name: str):
+        """Ảnh bài đăng Google Business Profile: link công khai cho Google tải (tên ngẫu nhiên, chỉ JPG / PNG)."""
+        from fastapi.responses import FileResponse, Response
+
+        from . import gbp_posts as GP
+        p = GP.image_file(None, name)
+        if not p:
+            return Response(status_code=404)
+        return FileResponse(p, media_type="image/png" if name.endswith(".png") else "image/jpeg",
+                            headers={"Cache-Control": "public, max-age=86400"})
+
     base = cfg  # cấu hình chung (config.toml); số liệu theo dự án lấy qua project_scope()
     # Người ngồi ở máy chạy tool là Chủ tool: dùng email Chủ tool (config.toml) để nhật ký / avatar chỉ có một tên
     owners = [e.strip().lower() for e in base.access.editors if e.strip()]
@@ -126,7 +141,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         with app_connect() as c:
             active = PJ.list_projects(c)
             first = active[0]["slug"] if active else None
-            allowed = [(p, r) for p in active if (r := A.project_role(c, base.access, acct, p["slug"], first))]
+            allowed = [(p, r) for p in active if (r := A.project_role(c, base.access, acct, p["slug"], first,
+                                                                    bool(p["settings"].get("google_owner"))))]
         if not allowed:
             return None
         want = app.storage.user.get("project")
@@ -144,7 +160,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         PR.connect(who, client.id)
 
         def gone():
-            if PR.leave(who, client.id) and getattr(acct, "via", "") == "password":
+            if PR.leave(who, client.id) and getattr(acct, "via", "") in ("password", "google"):
                 with app_connect() as c:
                     A.mark_seen(c, who)
         client.on_delete(gone)
@@ -162,7 +178,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             ui.label("Tài khoản chưa được gắn dự án nào").classes("text-lg font-semibold")
             ui.label(f"{acct} đăng nhập được nhưng chưa được cấp xem website nào. Liên hệ người quản lý tool.").classes(
                 "text-sm muted")
-            if getattr(acct, "via", "") == "password":
+            if getattr(acct, "via", "") in ("password", "google"):
                 ui.button("Đăng xuất", on_click=lambda: (app.storage.user.pop("auth", None),
                                                          ui.navigate.to("/login"))).props("flat no-caps")
 
@@ -243,7 +259,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         def render():
             with app_connect() as c:
                 first = PJ.list_projects(c)[0]["slug"]
-                people = A.people_in_project(c, base.access, P.project["slug"], first)
+                people = A.people_in_project(c, base.access, P.project["slug"], first,
+                                             bool(P.project["settings"].get("google_owner")))
                 seen = {u["email"]: u.get("last_seen") for u in A.users(c, base.access)}
                 profs = A.profiles(c)
             me = str(user).strip().lower()
@@ -369,7 +386,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         with app_connect() as c:
             prof = A.profiles(c).get(str(user), {})
         name, photo = A.display_name(prof, user), prof.get("avatar", "")
-        role_text = ("Owner · trên máy chạy tool" if user.role == A.LOCAL else A.GROUPS[A.group(user)])
+        role_text = ("Owner · trên máy chạy tool" if user.role == A.LOCAL else "Khách hàng" if A.is_client(user) else A.GROUPS[A.group(user)])
 
         def logout():
             app.storage.user.pop("auth", None)
@@ -429,7 +446,14 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                             ui.icon("toll", size="18px")
                             ui.label("Credit của tôi").classes("text-sm col")
                             ui.label("Lịch sử trừ credit").classes("text-xs muted")
-                if user.via == "password":
+                        from . import google_login as GL
+                        if GL.ready(base):
+                            with ui.menu_item(on_click=lambda: ui.navigate.to("/google-cua-toi")).classes(
+                                    "items-center gap-3"):
+                                ui.icon("add_link", size="18px")
+                                ui.label("Google của tôi").classes("text-sm col")
+                                ui.label("Thêm website của bạn").classes("text-xs muted")
+                if user.via in ("password", "google"):
                     with ui.element("div").classes("sr-acct-foot"):
                         with ui.menu_item(on_click=logout).classes("items-center gap-3 sr-acct-logout"):
                             ui.icon("logout", size="18px")
@@ -449,6 +473,101 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 except Exception:  # noqa: BLE001 — bảng chưa có / lỗi đọc: coi như chưa gắn
                     out.add(href)
         return out
+
+    def nav_groups(user, skip=frozenset()) -> list:
+        """Các nhóm menu người này được thấy: [(tên nhóm | None, [(nhãn, đường dẫn, icon)])] (menu trái + popup Thêm)."""
+        out = []
+        for group_name, items in NAV:
+            if A.is_client(user):
+                items = [("Nguồn traffic", "/nguon", "travel_explore") if h == "/url" else (lb, h, ic)
+                         for lb, h, ic in items if h not in skip]
+            items = [(label, href, icon) for label, href, icon in items
+                     if (href != "/yeu-cau" or A.is_client(user))  # trang yêu cầu của khách: chỉ khách
+                     and (not A.is_client(user) or href.split("?")[0] in A.CLIENT_PAGES)
+                     and (href not in ADMIN_PAGES or A.is_admin(user))
+                     and (href not in OWNER_PAGES or A.is_owner(user))
+                     and (href not in EDIT_PAGES or A.can_edit(user))]
+            if items:
+                out.append((group_name, items))
+        return out
+
+    def more_popup(user, P):
+        """Nút Thêm dưới đáy (điện thoại): mọi mục menu trong một popup dạng lưới (icon + chữ), nhóm theo menu;
+        nền phía sau tối và mờ. Trả về hộp thoại để mở."""
+        skip = client_unlinked(P) if A.is_client(user) else set()
+        try:
+            path = ui.context.client.page.path
+        except Exception:  # noqa: BLE001
+            path = ""
+        in_bar = {"/", "/report", "/yeu-cau"} if A.is_client(user) else {"/", "/rank"}  # đã có trên thanh dưới
+        with ui.dialog().props('position=bottom transition-show=slide-up transition-hide=slide-down') as dlg,                 ui.card().classes("sr-more-pop"):
+            ui.element("div").classes("sr-more-handle").props('aria-hidden="true"')
+            with ui.row().classes("w-full items-center no-wrap"):
+                ui.label("Tất cả mục").classes("sr-more-title col")
+                ui.button(icon="close", on_click=dlg.close).props('flat round dense size=sm aria-label="Đóng"')
+            for group_name, items in nav_groups(user, skip):
+                items = [x for x in items if x[1] not in in_bar]
+                if not items:
+                    continue
+                if group_name:
+                    ui.label(group_name).classes("sr-more-group")
+                with ui.element("div").classes("sr-more-grid"):
+                    for label, href, icon in items:
+                        a = ui.element("a").classes("sr-more-item").props(
+                            f'href="{href}"' + (' aria-current="page"' if path == href else ""))
+                        with a:
+                            with ui.element("span").classes("sr-more-ico"):
+                                ui.icon(icon, size="19px").props('aria-hidden="true"')
+                            ui.label(label).classes("sr-more-lab")
+        return dlg
+
+    def bottom_nav(user, P, drawer) -> None:
+        """Điện thoại (< 768px): thanh điều hướng cố định dưới đáy, 4 mục icon + chữ. Team: Tổng quan · Thứ hạng ·
+        Thông báo (mở chuông, có số chưa xem) · Thêm (mở menu đầy đủ). Khách hàng: Tổng quan · Báo cáo · Yêu cầu (số
+        câu trả lời mới) · Thêm. Mục đang mở tô màu, có aria-current="page"; chừa vùng thanh Home của iPhone."""
+        from . import notices as N
+        cl = A.is_client(user)
+        try:
+            with P.connect() as c:
+                unseen = N.unseen(N.cached(c, P.cfg, user, P.project["slug"]))
+        except Exception:  # noqa: BLE001
+            unseen = 0
+        try:
+            path = ui.context.client.page.path
+        except Exception:  # noqa: BLE001
+            path = ""
+        items = ([("Tổng quan", "space_dashboard", "/"), ("Báo cáo", "article", "/report"),
+                  ("Yêu cầu", "forum", "/yeu-cau"), ("Thêm", "menu", "more")] if cl else
+                 [("Tổng quan", "space_dashboard", "/"), ("Thứ hạng", "leaderboard", "/rank"),
+                  ("Thông báo", "notifications", "bell"), ("Thêm", "menu", "more")])
+        ui.add_head_html("<script>(() => { const m = document.querySelector('meta[name=viewport]');"
+                         " if (m && !m.content.includes('viewport-fit')) m.content += ', viewport-fit=cover'; })();"
+                         "</script>")
+        with ui.element("nav").classes("sr-bnav").props('aria-label="Điều hướng chính"'):
+            for label, icon, target in items:
+                badge = unseen if (target == "bell" or (cl and target == "/yeu-cau")) else 0
+                if target.startswith("/"):
+                    on = path == target
+                    el = ui.element("a").props(f'href="{target}"' + (' aria-current="page"' if on else ""))
+                else:
+                    on = False
+                    el = ui.element("button").props('type="button"')
+                    if target == "more":  # mọi mục menu trong một popup lưới (không mở menu trượt)
+                        el.props('aria-haspopup="dialog"')
+                        more = more_popup(user, P)
+                        el.on("click", more.open)
+                    else:  # mở cửa sổ thông báo của chuông (chuông trên thanh trên cùng ẩn ở điện thoại)
+                        # chạy ngay trên trình duyệt, chờ cú chạm kết thúc (tránh menu tự đóng vì "bấm ra ngoài")
+                        el.on("click", js_handler="() => setTimeout(() => "
+                                                  "document.querySelector('.sr-bell')?.click(), 80)")
+                if badge:
+                    el.props(f'aria-label="{label}, {badge} chưa xem"')
+                with el:
+                    ui.icon(icon if on else f"o_{icon}", size="26px").props('aria-hidden="true"')  # iOS: chọn = đặc
+                    ui.label(label)
+                    if badge:
+                        ui.label(str(badge) if badge < 100 else "99+").classes("sr-bnav-badge").props(
+                            'aria-hidden="true"')
 
     def float_group(user, P, active: str) -> None:
         """Nhóm nút nổi góc dưới phải: nút + mở thao tác nhanh theo vai trò, nút về đầu trang (cuộn quá 400px).
@@ -612,8 +731,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
     def sub_nav(user, P) -> dict[str, list[tuple[str, str]]]:
         """Tab con của từng mục menu (đúng tab có trên trang, theo quyền): mục → [(tên tab, địa chỉ)].
         Tab đầu là tab mặc định của trang nên không cần ?tab=."""
-        from . import web_audit as WAU, web_backlink as WB, web_cwv as WC, web_local as WL, web_merchant as WM, \
-            web_opps as WO
+        from . import web_audit as WAU, web_backlink as WB, web_cwv as WC, web_kpi as WK, web_local as WL, \
+            web_merchant as WM, web_opps as WO, web_rivals as WR
         cl = A.is_client(user)
 
         def q(path, tabs):
@@ -623,11 +742,14 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                      and (not cl or h in A.CLIENT_PAGES)],
             "/tu-khoa": list(RESEARCH_TABS),
             "/projects": [(t, h) for t, h in ADMIN_TABS if h not in OWNER_PAGES or A.is_owner(user)],
-            "/toc-do": q("/toc-do", WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS), "/audit": q("/audit", WAU.TABS),
-            "/backlink": q("/backlink", [t for t in WB.PAGE_TABS if not (cl and t[0] in WB.TEAM_TABS)]), "/local": q("/local", WL.TABS),
+            "/toc-do": q("/toc-do", [] if cl else WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS), "/audit": q("/audit", WAU.TABS),
+            "/backlink": q("/backlink", [t for t in WB.PAGE_TABS if not (cl and t[0] in WB.TEAM_TABS)]), "/local": q("/local", [] if cl else WL.TABS),
             "/merchant": q("/merchant", WM.TABS),
-            "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"), ("trang-dich", "Trang đích"),
-                             ("ai-google", "AI trên Google"), *([] if cl else [("co-hoi", "Cơ hội SEO/GEO")])]),
+            "/kpi": q("/kpi", [t for t in WK.TABS if not (cl and t[0] == "lich-su")]),
+            "/doi-thu": q("/doi-thu", WR.TABS),
+            "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"),
+                             *([] if cl else [("trang-dich", "Trang đích"), ("ai-google", "AI trên Google"),
+                                              ("co-hoi", "Cơ hội SEO/GEO")])]),
             "/aio": q("/aio", [("tong-quan", "Tổng quan"), *([] if cl else [("viec", "Việc nên làm")]),
                                ("tu-khoa", "Từ khóa"), *([] if cl else [("ban-ai", "Bản AI")])]),
         }
@@ -644,6 +766,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         ui.add_body_html(T.BODY)
         # Nút chính màu đen (phong cách viên thuốc); xanh thương hiệu dùng cho số tốt và thông báo thành công.
         ui.colors(primary=T.INK, secondary=T.LIME, positive=PRIMARY, negative=T.RED, warning=T.AMBER)
+        if app.storage.user.pop("ask_connect", None):  # vừa đăng nhập Google lần đầu: hỏi kết nối GSC / GA4
+            from .web_my_google import connect_prompt
+            connect_prompt(ui, base, app_connect, user)
         # Menu trái thu gọn được (chỉ còn icon); lựa chọn nhớ theo trình duyệt.
         mini = bool(app.storage.user.get("nav_mini"))
         # Màn rộng: menu mở sẵn, nằm cạnh thanh trên (không bị che logo). Điện thoại / màn hẹp: menu đóng, bấm ☰ để mở.
@@ -670,18 +795,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     with P.connect() as c:
                         fb_new = FB.count_new(c)
                 subs_of = sub_nav(user, P)
-                for group_name, items in NAV:
-                    if A.is_client(user):
-                        items = [("Nguồn traffic", "/nguon", "travel_explore") if h == "/url" else (lb, h, ic)
-                                 for lb, h, ic in items if h not in skip]
-                    items = [(label, href, icon) for label, href, icon in items
-                             if (href != "/yeu-cau" or A.is_client(user))  # trang yêu cầu của khách: chỉ khách
-                             and (not A.is_client(user) or href.split("?")[0] in A.CLIENT_PAGES)
-                             and (href not in ADMIN_PAGES or A.is_admin(user))
-                             and (href not in OWNER_PAGES or A.is_owner(user))
-                             and (href not in EDIT_PAGES or A.can_edit(user))]
-                    if not items:
-                        continue
+                for group_name, items in nav_groups(user, skip):
                     if group_name:
                         ui.label(group_name).classes("sr-nav-group")
                     elif group_name is None and href_first(items) == "/projects":
@@ -762,6 +876,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 drawer.props(remove="mini")
 
         float_group(user, P, active)
+        bottom_nav(user, P, drawer)
 
         # Thanh trên gọn, tự ẩn khi cuộn xuống và hiện lại khi cuộn lên (reveal).
         with ui.header().props("reveal reveal-offset=120").classes("sr-top q-px-md q-py-xs items-center gap-2"):
@@ -822,65 +937,108 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     T.project_icon(ui, P.project, 22)
                     ui.label(PJ.domain(P.site)).classes("text-sm font-medium")
             ui.space()
-            if ctx and (period or group):
+            if ctx and (period or (group and not A.is_client(user))):
                 def pick(key, value):
                     app.storage.user[group_key(P) if key == "group" else key] = value
                     ui.navigate.reload()
 
-                if period == "days":  # Tổng quan: 7 / 28 / 90 ngày gần nhất
-                    def pick_days(e):
-                        app.storage.user["dash_days"] = e.value
-                        ui.navigate.reload()
-                    cur_days = app.storage.user.get("dash_days") if app.storage.user.get("dash_days") in (7, 28, 90)                         else 28
-                    ui.toggle({7: "7 ngày", 28: "28 ngày", 90: "90 ngày"}, value=cur_days, on_change=pick_days).props(
-                        "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
-                    ).classes("sr-seg")
-                elif period == "report":  # màn Báo cáo: Tuần | Tháng, kỳ báo cáo, kỳ so sánh
-                    def pick_kind(e):
-                        app.storage.user["report_kind"] = e.value
-                        app.storage.user["report_compare"] = "prev"  # kỳ tự chọn của tuần không dùng cho tháng
-                        ui.navigate.reload()
+                def pick_days(e):
+                    app.storage.user["dash_days"] = e.value
+                    ui.navigate.reload()
 
-                    def pick_period(e):
-                        app.storage.user["week" if ctx["kind"] == "week" else "month"] = e.value
-                        app.storage.user["report_compare"] = (app.storage.user.get("report_compare")
-                                                              if app.storage.user.get("report_compare") in ("prev", "yoy")
-                                                              else "prev")
-                        ui.navigate.reload()
+                def pick_kind(e):
+                    app.storage.user["report_kind"] = e.value
+                    app.storage.user["report_compare"] = "prev"  # kỳ tự chọn của tuần không dùng cho tháng
+                    ui.navigate.reload()
 
-                    ui.toggle({"week": "Tuần", "month": "Tháng"}, value=ctx["kind"], on_change=pick_kind).props(
-                        "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
-                    ).classes("sr-seg")
-                    if ctx["kind"] == "month":
-                        periods, idx = ctx["months"], ctx["month"]
-                        fmt = lambda p_: f"Tháng {p_[0]:%m/%Y}"  # noqa: E731
-                    else:
-                        periods, idx = ctx["weeks"], ctx["week"]
-                        fmt = lambda p_: f"Tuần {p_[0]:%d/%m} – {p_[1]:%d/%m/%Y}"  # noqa: E731
-                    ui.select({p_[0].isoformat(): fmt(p_) for p_ in periods}, value=periods[idx][0].isoformat(),
-                              on_change=pick_period).props("dense outlined options-dense").classes("w-56")
-                    options = {"prev": "So với kỳ trước", "yoy": "So với cùng kỳ năm trước"}
-                    options.update({p_[0].isoformat(): "So với " + fmt(p_).lower() for p_ in periods[idx + 2:]})
-                    cmp_value = ctx["compare"] if ctx["compare"] in options else "prev"
+                def pick_period(e):
+                    app.storage.user["week" if ctx["kind"] == "week" else "month"] = e.value
+                    app.storage.user["report_compare"] = (app.storage.user.get("report_compare")
+                                                          if app.storage.user.get("report_compare") in ("prev", "yoy")
+                                                          else "prev")
+                    ui.navigate.reload()
 
-                    def pick_compare(e):
-                        app.storage.user["report_compare"] = e.value
-                        ui.navigate.reload()
-                    ui.select(options, value=cmp_value, on_change=pick_compare).props(
-                        "dense outlined options-dense").classes("w-64").tooltip("Kỳ so sánh")
+                def pick_compare(e):
+                    app.storage.user["report_compare"] = e.value
+                    ui.navigate.reload()
+
+                cur_days = app.storage.user.get("dash_days") if app.storage.user.get("dash_days") in (7, 28, 90) \
+                    else 28
+                seg = "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
+                show_group = group and not A.is_client(user)  # nhóm URL là khái niệm nội bộ, khách hàng không cần
+
+                def controls(sheet: bool) -> None:
+                    """Các ô chọn kỳ / nhóm. sheet=False: trên thanh trên (màn rộng). sheet=True: trong khung trượt từ
+                    đáy trên điện thoại, mỗi ô rộng hết khung và có nhãn."""
+                    def sel(options, value, on_change, width, label, tip=None):
+                        el = ui.select(options, value=value, on_change=on_change, label=label if sheet else None)
+                        el.props("outlined options-dense" + ("" if sheet else " dense")).classes(
+                            "w-full" if sheet else width)
+                        if tip and not sheet:
+                            el.tooltip(tip)
+                        return el
+
+                    if period == "days":  # Tổng quan: 7 / 28 / 90 ngày gần nhất
+                        ui.toggle({7: "7 ngày", 28: "28 ngày", 90: "90 ngày"}, value=cur_days,
+                                  on_change=pick_days).props(seg).classes("sr-seg")
+                    elif period == "report":  # màn Báo cáo: Tuần | Tháng, kỳ báo cáo, kỳ so sánh
+                        ui.toggle({"week": "Tuần", "month": "Tháng"}, value=ctx["kind"], on_change=pick_kind).props(
+                            seg).classes("sr-seg")
+                        if ctx["kind"] == "month":
+                            periods, idx = ctx["months"], ctx["month"]
+                            fmt = lambda p_: f"Tháng {p_[0]:%m/%Y}"  # noqa: E731
+                        else:
+                            periods, idx = ctx["weeks"], ctx["week"]
+                            fmt = lambda p_: f"Tuần {p_[0]:%d/%m} – {p_[1]:%d/%m/%Y}"  # noqa: E731
+                        sel({p_[0].isoformat(): fmt(p_) for p_ in periods}, periods[idx][0].isoformat(), pick_period,
+                            "w-56", "Kỳ báo cáo")
+                        options = {"prev": "So với kỳ trước", "yoy": "So với cùng kỳ năm trước"}
+                        options.update({p_[0].isoformat(): "So với " + fmt(p_).lower() for p_ in periods[idx + 2:]})
+                        sel(options, ctx["compare"] if ctx["compare"] in options else "prev", pick_compare, "w-64",
+                            "Kỳ so sánh", "Kỳ so sánh")
+                    elif period == "month":
+                        sel({m[0].isoformat(): f"Tháng {m[0]:%m/%Y}" for m in ctx["months"]},
+                            ctx["months"][ctx["month"]][0].isoformat(), lambda e: pick("month", e.value), "w-64",
+                            "Tháng")
+                    elif period:
+                        sel({w[0].isoformat(): f"Tuần {w[0]:%d/%m} – {w[1]:%d/%m/%Y}" for w in ctx["weeks"]},
+                            ctx["weeks"][ctx["week"]][0].isoformat(), lambda e: pick("week", e.value), "w-64", "Tuần")
+                    if show_group:
+                        sel(ctx["groups"], ctx["group"], lambda e: pick("group", e.value), "w-44", "Nhóm URL")
+
+                # Màn rộng: các ô chọn nằm thẳng trên thanh trên.
+                with ui.row().classes("items-center gap-2 no-wrap sr-top-ctrls"):
+                    controls(False)
+                # Điện thoại: một nút tóm tắt kỳ đang xem ("Tuần 09/11 · SEO chủ lực"), bấm mở khung trượt từ đáy có đủ
+                # các ô chọn. Thanh trên chỉ còn một dòng.
+                if period == "days":
+                    summary = f"{cur_days} ngày"
+                elif period == "report":
+                    summary = (f"Tháng {ctx['months'][ctx['month']][0]:%m/%Y}" if ctx["kind"] == "month"
+                               else f"Tuần {ctx['weeks'][ctx['week']][0]:%d/%m}")
                 elif period == "month":
-                    ui.select({m[0].isoformat(): f"Tháng {m[0]:%m/%Y}" for m in ctx["months"]},
-                              value=ctx["months"][ctx["month"]][0].isoformat(),
-                              on_change=lambda e: pick("month", e.value)).props(
-                        "dense outlined options-dense").classes("w-64")
+                    summary = f"Tháng {ctx['months'][ctx['month']][0]:%m/%Y}"
                 elif period:
-                    ui.select({w[0].isoformat(): f"Tuần {w[0]:%d/%m} – {w[1]:%d/%m/%Y}" for w in ctx["weeks"]},
-                              value=ctx["weeks"][ctx["week"]][0].isoformat(),
-                              on_change=lambda e: pick("week", e.value)).props(
-                        "dense outlined options-dense").classes("w-64")
-                if group and not A.is_client(user):  # nhóm URL là khái niệm nội bộ, khách hàng không cần
-                    ui.select(ctx["groups"], value=ctx["group"], on_change=lambda e: pick("group", e.value)).props(
-                        "dense outlined options-dense").classes("w-44")
+                    summary = f"Tuần {ctx['weeks'][ctx['week']][0]:%d/%m}"
+                else:
+                    summary = ""
+                if show_group:
+                    gname = (ctx["groups"] or {}).get(ctx["group"], "") if isinstance(ctx["groups"], dict) else ""
+                    summary = " · ".join(x for x in (summary, gname) if x)
+                with ui.dialog().props("position=bottom transition-show=slide-up transition-hide=slide-down") as \
+                        period_dlg, ui.card().classes("sr-more-pop sr-period-pop"):
+                    ui.element("div").classes("sr-more-handle").props('aria-hidden="true"')
+                    with ui.row().classes("w-full items-center no-wrap"):
+                        ui.label("Kỳ dữ liệu" if not (show_group and not period) else "Nhóm URL").classes(
+                            "sr-more-title col")
+                        ui.button(icon="close", on_click=period_dlg.close).props(
+                            'flat round dense size=sm aria-label="Đóng"')
+                    with ui.column().classes("w-full gap-3 q-mt-sm"):
+                        controls(True)
+                chip = ui.button(summary or "Kỳ", icon="event", on_click=period_dlg.open).props(
+                    "outline no-caps dense color=grey-9 icon-right=expand_more").classes("sr-top-chip")
+                chip.props["aria-label"] = f"Đổi kỳ dữ liệu, đang xem: {summary}"
+                chip.props["aria-haspopup"] = "dialog"
             from .web_notices import bell
             bell(ui, P.cfg, P.connect, user, P.project["slug"])
             if not A.is_client(user):  # khách hàng không thấy ai khác có quyền (tránh lộ email team / khách khác)
@@ -955,6 +1113,17 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         tabs_ = [(t, h) for t, h in URL_TABS if (h not in EDIT_PAGES or A.can_edit(user))
                  and (not A.is_client(user) or h in A.CLIENT_PAGES)]
         if len(tabs_) < 2:  # khách hàng: chỉ còn một màn, không cần thanh tab
+            return
+        with ui.tabs(value=current, on_change=lambda e: ui.navigate.to(e.value) if e.value != current else None).props(
+                "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs q-mb-sm"):
+            for title, href in tabs_:
+                ui.tab(href, title)
+
+    def admin_tabs(user, current: str) -> None:
+        """Các màn của mục Quản trị (Dự án · Ngân sách & chi phí · Phân quyền · Cài đặt tích hợp · AI) gom thành một thanh
+        tab ở đầu màn; Cài đặt tích hợp và AI chỉ Owner thấy."""
+        tabs_ = [(t, h) for t, h in ADMIN_TABS if h not in OWNER_PAGES or A.is_owner(user)]
+        if len(tabs_) < 2:
             return
         with ui.tabs(value=current, on_change=lambda e: ui.navigate.to(e.value) if e.value != current else None).props(
                 "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs q-mb-sm"):
@@ -1038,7 +1207,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         ctx = page_ctx(P)
-        shell("Công việc & OKR", user, P, ctx, group=False)
+        shell("Công việc & OKR", user, P, ctx, group=False, period=not A.is_client(user))
         build_okr_page(ui, P.cfg, P.connect, user, ctx, app_connect=app_connect, project=P.project)
 
     @ui.page("/kpi")
@@ -1047,7 +1216,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("KPI cam kết", user, P, page_ctx(P), period=False, group=False)
-        build_kpi_page(ui, P.cfg, P.connect, user, app_connect, P.project)
+        build_kpi_page(ui, P.cfg, P.connect, user, app_connect, P.project, request.query_params.get("tab", ""))
 
     @ui.page("/kpi/sua")
     def kpi_edit_page(request: Request):
@@ -1059,14 +1228,103 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         build_kpi_edit_page(ui, P.cfg, P.connect, user)
 
     @ui.page("/login")
-    def login_page(request: Request, next: str = "/"):
+    def login_page(request: Request, next: str = "/", xem: str = ""):
         from .web_login import build_login_page, safe_next
         host = request.client.host if request.client else None
-        if A.is_local(host, request.headers):  # trên máy chạy tool không cần đăng nhập
+        if A.is_local(host, request.headers) and not xem:  # trên máy chạy tool không cần đăng nhập (?xem=1: xem thử)
             ui.navigate.to(safe_next(next))
             return
         ui.colors(primary=T.INK, secondary=T.LIME, positive=PRIMARY, negative=T.RED, warning=T.AMBER)
-        build_login_page(ui, base, app_connect, next, A.client_ip(host, request.headers))
+        build_login_page(ui, base, app_connect, next, A.client_ip(host, request.headers),
+                         error=app.storage.user.pop("login_error", ""))
+
+    @ui.page("/cho-duyet")
+    def request_page():
+        """Đăng nhập Google được nhưng chưa có quyền: báo đã gửi yêu cầu cho Owner / Admin duyệt."""
+        from .web_login import build_request_page
+        req = app.storage.user.get("request") or {}
+        if not req.get("email"):
+            ui.navigate.to("/login")
+            return
+        ui.colors(primary=T.INK, secondary=T.LIME, positive=PRIMARY, negative=T.RED, warning=T.AMBER)
+
+        def approved() -> bool:
+            """Đã được duyệt: mở phiên luôn (Google đã xác minh email này trên chính trình duyệt này, trong 24 giờ)."""
+            import time as _t
+            if _t.time() - float(req.get("at") or 0) > 24 * 3600:
+                return False
+            with app_connect() as c:
+                who, _, sess = A.google_login(c, A.effective(c, base.access), req["email"])
+            if not who:
+                return False
+            app.storage.user["auth"] = sess
+            app.storage.user.pop("request", None)
+            return True
+        build_request_page(ui, req["email"], req.get("status", "pending"),
+                           approved if req.get("status") == "pending" else None)
+
+    @ui.page("/login/google")
+    def google_login_start(next: str = "/"):
+        """Nút "Đăng nhập bằng Google": tạo phiên chờ (state, nonce, PKCE) trong trình duyệt này rồi sang Google."""
+        from . import google_login as GL
+        from .web_access import _setting
+        from .web_login import safe_next
+        try:
+            url, pending = GL.start(base, _setting(app_connect, "public_url"), safe_next(next))
+        except ValueError as e:
+            app.storage.user["login_error"] = str(e)
+            ui.navigate.to("/login")
+            return
+        app.storage.user["google_pending"] = pending
+        ui.navigate.to(url)
+
+    @ui.page("/auth/google")
+    async def google_login_back(request: Request):
+        """Google gọi về sau khi chọn tài khoản: kiểm tra (google_login.finish) rồi mở phiên đăng nhập."""
+        from nicegui import run as nrun
+
+        from . import google_login as GL
+        from .web_access import _setting
+        from .web_login import safe_next
+        pending = app.storage.user.pop("google_pending", None)
+        query = dict(request.query_params)
+        email = ""
+        try:
+            email = await nrun.io_bound(GL.finish, base, _setting(app_connect, "public_url"), pending, query)
+            with app_connect() as c:
+                who, why, sess = A.google_login(c, A.effective(c, base.access), email)
+        except ValueError as e:
+            who, why = None, str(e)
+        if not who and email:  # Google xác minh được email nhưng chưa có quyền: gửi yêu cầu cho Owner / Admin duyệt
+            with app_connect() as c:
+                st = A.add_request(c, email)
+                admins = [u["email"] for u in A.users(c, A.effective(c, base.access))
+                          if u["role"] in (A.EDITOR, A.ADMIN_ACCT)]
+            import time as _t
+            app.storage.user["request"] = {"email": email, "status": "pending" if st == "new" else st,
+                                           "at": _t.time()}
+            if st == "new":  # báo ngay Owner / Admin đang mở tool (chưa mở thì hiện ở trang kế tiếp họ mở)
+                from . import notices as N
+                N.forget()
+                for e in admins:
+                    LIVE.notify(e, f"{email} xin quyền vào tool", caption="Duyệt ở Quản trị › Phân quyền",
+                                type="info", icon="person_add", position="bottom-right", timeout=15000,
+                                close_button="Đóng")  # vẫn còn trong chuông thông báo sau khi tự tắt
+            ui.navigate.to("/cho-duyet")
+            return
+        if not who:
+            app.storage.user["login_error"] = why
+            ui.navigate.to("/login")
+            return
+        app.storage.user["auth"] = sess
+        try:  # lần đăng nhập Google đầu: hỏi có muốn kết nối Google (GSC / GA4) của họ không (hiện ở trang kế)
+            from .web_my_google import should_ask
+            with app_connect() as c:
+                if should_ask(c, base, who):
+                    app.storage.user["ask_connect"] = 1
+        except Exception:  # noqa: BLE001
+            pass
+        ui.navigate.to(safe_next((pending or {}).get("next")))
 
     @ui.page("/doi-mat-khau")
     def change_password_page(request: Request, next: str = "/"):
@@ -1085,6 +1343,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Phân quyền", user, P, page_ctx(P), period=False, group=False)
+        admin_tabs(user, "/access")
         build_access_page(ui, base, app_connect, user, P.project["slug"], request.query_params.get("project"))
 
     @ui.page("/diem")
@@ -1113,6 +1372,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Ngân sách & chi phí", user, P, page_ctx(P), period=False, group=False)
+        admin_tabs(user, "/budget")
         build_budget_page(ui, base, app_connect, user)
 
     @ui.page("/projects")
@@ -1122,6 +1382,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Dự án", user, P, page_ctx(P), period=False, group=False)
+        admin_tabs(user, "/projects")
         build_projects_page(ui, base, app_connect, user)
 
     @ui.page("/cai-dat")
@@ -1131,20 +1392,28 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("Cài đặt tích hợp", user, P, page_ctx(P), period=False, group=False)
+        admin_tabs(user, "/cai-dat")
         local = A.is_local(request.client.host if request.client else None, request.headers)
+        from . import google_login as GL
+        from .web_access import _setting
+        public = _setting(app_connect, "public_url").rstrip("/")
+        remote_ok = bool(public) and GL.ready(base)  # mở qua tên miền: dùng OAuth client Web của Đăng nhập Google
         build_settings_page(ui, base, app_connect, user, base.config_path, local,
-                            google_origin=f"http://{request.headers.get('host')}" if local else None,
+                            google_origin=(f"http://{request.headers.get('host')}" if local else
+                                           public if remote_ok else None),
                             google_notice=request.query_params.get("google"))
 
-    @app.get("/oauth/google")
+    @ui.page("/oauth/google")
     def google_callback(request: Request):
-        """Google gọi về sau khi Chủ tool đồng ý cấp quyền (nút Kết nối Google ở màn Dự án). Chỉ nhận trên máy chạy
-        tool; mã state phải khớp phiên vừa tạo (auth.web_login_finish kiểm tra)."""
-        from fastapi.responses import RedirectResponse
-
+        """Google gọi về sau khi Chủ tool đồng ý cấp quyền (nút Kết nối Google ở Cài đặt tích hợp). Trên máy chạy tool,
+        hoặc qua tên miền khi người mở là Owner; mã state phải khớp phiên vừa tạo (auth.web_login_finish kiểm tra)."""
         from . import auth
         if not A.is_local(request.client.host if request.client else None, request.headers):
-            return RedirectResponse("/cai-dat", status_code=303)
+            if not (who := gate(request)):
+                return
+            if not A.is_owner(who):
+                ui.navigate.to("/")
+                return
         q = request.query_params
         if q.get("error"):
             result = "cancel" if q["error"] == "access_denied" else "fail"
@@ -1161,7 +1430,42 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                 print(f"Kết nối Google không thành công: {e}")
                 result = "expired" if isinstance(e, ValueError) else "fail"
         # chỉ mã ngắn, không đưa chữ từ đường dẫn lên trang
-        return RedirectResponse(f"/cai-dat?google={result}", status_code=303)
+        ui.navigate.to(f"/cai-dat?google={result}")
+
+    @ui.page("/google-cua-toi")
+    def my_google_page(request: Request):
+        """Google của tôi: Member trở lên kết nối Google riêng để thêm website của họ."""
+        from .web_my_google import build_my_google_page
+        if not (acct := gate(request)):
+            return
+        if not (opened := open_page(request)):
+            return
+        user, P = opened
+        shell("Google của tôi", user, P, page_ctx(P), period=False, group=False)
+        build_my_google_page(ui, base, app_connect, acct, request.query_params.get("google", ""))
+
+    @ui.page("/oauth/google/me")
+    async def my_google_callback(request: Request):
+        """Google gọi về sau khi một người kết nối Google của họ (user_google.finish kiểm state + đúng người)."""
+        from nicegui import run as nrun
+
+        from . import user_google as UG
+        if not (acct := gate(request)):
+            return
+        q = request.query_params
+        if q.get("error"):
+            result = "cancel" if q["error"] == "access_denied" else "fail"
+        else:
+            def work():
+                with app_connect() as c:
+                    return UG.finish(c, base, str(acct), q.get("state", ""), str(request.url))
+            try:
+                await nrun.io_bound(work)
+                result = "ok"
+            except Exception as e:  # noqa: BLE001
+                print(f"Kết nối Google của người dùng không thành công: {e}")
+                result = "expired" if isinstance(e, ValueError) else "fail"
+        ui.navigate.to(f"/google-cua-toi?google={result}")
 
     @ui.page("/toc-do")
     def speed_page(request: Request):
@@ -1239,6 +1543,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             return
         user, P = opened
         shell("AI", user, P, page_ctx(P), period=False, group=False)
+        admin_tabs(user, "/quan-tri-ai")
         from .web_ai_admin import build_ai_admin
         build_ai_admin(ui, base, app_connect, user,
                        A.is_local(request.client.host if request.client else None, request.headers),
@@ -1306,7 +1611,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         T.page_header(ui, "groups", "Đối thủ", "Ai đang cạnh tranh với bạn trên Google và AI Overview, ai đang vượt lên.")
         from .web_rivals import build_rivals_panel
         build_rivals_panel(ui, P.cfg, P.connect, user,
-                           lambda i, f=None: ui.navigate.to(f"/rank?bo={i}" if i else "/rank"))
+                           lambda i, f=None: ui.navigate.to(f"/rank?bo={i}" if i else "/rank"),
+                           start_tab=request.query_params.get("tab", ""))
 
     @ui.page("/rank")
     def rank_page(request: Request):
@@ -1539,6 +1845,8 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
         background_tasks.create(auto_loop(base), name="ai-auto")  # AI tự chạy theo lịch ở Quản trị › AI
         from .web_audit import schedule_loop as audit_loop
         background_tasks.create(audit_loop(base), name="audit-schedule")  # Technical Audit theo lịch thứ + giờ
+        from .web_local import post_loop
+        background_tasks.create(post_loop(base), name="gbp-post-schedule")  # bài đăng GBP đã lên lịch
     app.on_startup(start_schedule)
     ui.run(host="127.0.0.1", port=port, title="SEO Report", reload=False, show=show, language="vi",
            storage_secret=_storage_secret(base), favicon=assets / "app-icon.svg")

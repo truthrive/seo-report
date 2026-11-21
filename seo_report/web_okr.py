@@ -219,7 +219,7 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
 
     cur_week = (today - timedelta(days=today.weekday()), today - timedelta(days=today.weekday()) + timedelta(days=6))
     # obj: mục tiêu đang chọn (bấm thẻ ở "Theo mục tiêu" để lọc lịch); open: mục tiêu đang mở rộng trên lịch
-    view = {"gantt": "all", "cycle": None, "obj": None, "open": set(),
+    view = {"gantt": "all", "cycle": None, "obj": None, "open": set(), "tab": "muctieu", "wk": None,
             "f_pic": None, "f_status": None, "f_obj": None, "q": "", "closed": {"later", "nodate", "pause", "done"}}
     STARTED = "#D99A2B"  # tới ngày bắt đầu mà chưa bắt đầu
 
@@ -228,6 +228,9 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
         open_item(ui, connect, user, uid, render.refresh, ed and owned)
 
     def go_alerts() -> None:
+        if view["tab"] != "viec":
+            view["tab"] = "viec"
+            render.refresh()
         ui.run_javascript("document.getElementById('okr-alerts')?.scrollIntoView({behavior:'smooth',block:'start'})")
 
     @ui.refreshable
@@ -258,40 +261,63 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
 
         issues = [] if cl else _sheet_issues([] if owned else ov["items"], tasks, today)
         overdue_tasks = sum(1 for x in issues if x["kind"] == "task" and x["reason"] == "Quá deadline")
+        if cl:  # khách hàng: một câu kết luận + danh sách mục tiêu; task tuần xem trong Báo cáo tuần / tháng
+            client_summary(ov)
+            client_plan(ov)
+            return
         progress_block(ov, overdue_tasks, bool(issues) or bool(ov["late"]))
 
-        # ---- Thông báo (trễ hạn / sắp đến hạn / chưa bắt đầu + task tuần cần cập nhật) ----
-        if owned and not cl:
-            from .web_okr_edit import alerts_panel
-            alerts_panel(ui, connect, user, ed, render.refresh, ov["cycle"], limit=3,
-                         tasks=[x for x in issues if x["kind"] == "task"], on_open=open_it,
-                         note="" if ed else "Người phụ trách (PIC) và quản lý dự án cập nhật các việc này; "
-                                            "bạn đang ở chế độ chỉ xem.")
-        elif issues:
-            sheet_issues_block(issues)
-
-        track_block(ov)
-
-        plan_block(ov)
-
-        # ---- Tuần ----
-        week_block(tasks, ov["late"], info)
-
-        # ---- Task tuần (đọc từ sheet; hạng mục OKR đã ở bảng "Theo dõi hạng mục") ----
-        if tasks:
-            with ui.expansion(f"Task tuần · {len(tasks)}", icon="list",
-                              caption="Đọc từ tab Weekly Task Tracker trên sheet dự án").classes("w-full sr-card"):
-                ui.table(columns=[
-                    {"name": "week", "label": "Tuần", "field": "wk", "align": "left"},
-                    {"name": "okr", "label": "Mã OKR", "field": "okr_code", "align": "left"},
-                    {"name": "task", "label": "Việc", "field": "task", "align": "left",
-                     "style": "white-space: normal; min-width: 260px"},
-                    {"name": "pic", "label": "PIC", "field": "pic", "align": "left"},
-                    {"name": "dl", "label": "Deadline", "field": "dl", "align": "center"},
-                    {"name": "st", "label": "Trạng thái", "field": "st", "align": "left"},
-                ], rows=[{**t, "wk": _vn(t["week"]), "dl": _vn(t["deadline"]), "st": O.STATUS_LABEL[t["status"]]}
-                         for t in sorted(tasks, key=lambda t: t["week"] or "", reverse=True)],
-                    row_key="row", pagination=50).classes("w-full").props("flat dense")
+        # ---- 4 tab: OKRs · Việc cần làm · Tuần · Task tuần (tiến độ đợt luôn ở trên; mở trang vào OKRs) ----
+        tabs_def = (("muctieu", "OKRs"), ("viec", "Việc cần làm"), ("tuan", f"Tuần {ws:%d/%m}"),
+                    ("task", "Task tuần"))
+        if view["tab"] not in dict(tabs_def):
+            view["tab"] = "muctieu"
+        n_late = len(ov["late"])
+        with ui.tabs(value=view["tab"], on_change=lambda e: view.update(tab=e.value)).props(
+                "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
+            for k, name in tabs_def:
+                with ui.tab(k, name):
+                    if k == "viec" and n_late:
+                        T.count_badge(ui, n_late, f"{n_late} hạng mục trễ hạn").classes("sr-tab-badge")
+                    if k == "task" and tasks:
+                        T.count_badge(ui, len(tasks), f"{len(tasks)} task tuần", "grey").classes("sr-tab-badge")
+        with ui.tab_panels(tabs, value=view["tab"]).classes("w-full").props("animated=false"):
+            with ui.tab_panel("viec").classes("q-px-none column gap-4"):
+                # Thông báo (trễ hạn / sắp đến hạn / chưa bắt đầu + task tuần cần cập nhật) + bảng theo dõi
+                if owned and not cl:
+                    from .web_okr_edit import alerts_panel
+                    alerts_panel(ui, connect, user, ed, render.refresh, ov["cycle"], limit=3,
+                                 tasks=[x for x in issues if x["kind"] == "task"], on_open=open_it,
+                                 note="" if ed else "Người phụ trách (PIC) và quản lý dự án cập nhật các việc này; "
+                                                    "bạn đang ở chế độ chỉ xem.")
+                elif issues:
+                    sheet_issues_block(issues)
+                track_block(ov)
+            with ui.tab_panel("muctieu").classes("q-px-none"):
+                plan_block(ov)
+            with ui.tab_panel("tuan").classes("q-px-none"):
+                week_block(tasks, ov["late"], info)
+            with ui.tab_panel("task").classes("q-px-none"):
+                if not tasks:
+                    T.empty_state(ui, "event_note", "Chưa có task tuần",
+                                  "Task tuần đọc từ tab Weekly Task Tracker trên sheet dự án." if has_sheet else
+                                  "Dự án chưa gắn sheet nên chưa có task tuần.")
+                else:
+                    with ui.element("div").classes("sr-card q-pa-md w-full"):
+                        ui.label("Đọc từ tab Weekly Task Tracker trên sheet dự án (cập nhật trên sheet).").classes(
+                            "text-xs muted q-mb-xs")
+                        ui.table(columns=[
+                            {"name": "week", "label": "Tuần", "field": "wk", "align": "left"},
+                            {"name": "okr", "label": "Mã OKR", "field": "okr_code", "align": "left"},
+                            {"name": "task", "label": "Việc", "field": "task", "align": "left",
+                             "style": "white-space: normal; min-width: 260px"},
+                            {"name": "pic", "label": "PIC", "field": "pic", "align": "left"},
+                            {"name": "dl", "label": "Deadline", "field": "dl", "align": "center"},
+                            {"name": "st", "label": "Trạng thái", "field": "st", "align": "left"},
+                        ], rows=[{**t, "wk": _vn(t["week"]), "dl": _vn(t["deadline"]),
+                                  "st": O.STATUS_LABEL[t["status"]]}
+                                 for t in sorted(tasks, key=lambda t: t["week"] or "", reverse=True)],
+                            row_key="row", pagination=50).classes("w-full").props("flat dense")
 
     # ------------------------------------------------------------ bảng theo dõi hạng mục (thao tác tại chỗ)
     @ui.refreshable
@@ -540,6 +566,95 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                         ui.icon("check_circle", size="16px").style(f"color:{T.GREEN}").props('aria-hidden="true"')
                         ui.label(text).classes("text-sm muted")
 
+    def client_summary(ov: dict) -> None:
+        """Khách hàng: kế hoạch 3 tháng đang nhanh / đúng / chậm, nói bằng một câu, kèm thanh tiến độ và chú thích."""
+        cnt, n = ov["counts"], ov["total"]
+        cyc = next((c for c in ov["cycles"] if c["name"] == ov["cycle"]), None) or {}
+        done_pct = cnt[O.DONE] / n * 100 if n else 0
+        verdict, tone, detail = "", "grey", ""
+        if cyc.get("start") and cyc.get("end"):
+            d0, d1 = date.fromisoformat(cyc["start"]), date.fromisoformat(cyc["end"])
+            span = (d1 - d0).days + 1
+            time_pct = min(max((today - d0).days + 1, 0), span) / span * 100
+            if today < d0:
+                verdict, detail = "Kế hoạch sắp bắt đầu", f"Bắt đầu {_vn(cyc['start'])}, kết thúc {_vn(cyc['end'])}"
+            elif today > d1:
+                verdict, tone = "Kế hoạch đã kết thúc", "green" if done_pct >= 100 else "amber"
+                detail = f"Kết thúc {_vn(cyc['end'])}"
+            else:
+                if done_pct + 10 < time_pct:
+                    verdict, tone = "Chậm hơn kế hoạch", "amber"
+                elif done_pct > time_pct + 10:
+                    verdict, tone = "Nhanh hơn kế hoạch", "green"
+                else:
+                    verdict, tone = "Đúng tiến độ", "green"
+                detail = f"Đã qua {time_pct:.0f}% thời gian ({_vn(cyc['start'])} – {_vn(cyc['end'])})"
+        with ui.element("section").classes("sr-card q-pa-md w-full").props('aria-label="Tiến độ kế hoạch"'):
+            with ui.row().classes("w-full items-center justify-between gap-2"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Kế hoạch SEO 3 tháng").classes("text-xs muted font-medium")
+                    with ui.row().classes("items-baseline gap-2"):
+                        ui.label(f"{done_pct:.0f}%").classes("sr-bento-hero num")
+                        ui.label(f"đã hoàn thành · {cnt[O.DONE]}/{n} việc").classes("text-sm muted")
+                if verdict:
+                    with ui.column().classes("items-end gap-0"):
+                        T.status_chip(ui, verdict, tone, "trending_up" if tone == "green" else "schedule")
+                        ui.label(detail).classes("text-xs muted q-mt-xs")
+            seg = "".join(
+                f'<div title="{O.STATUS_LABEL[s_]}: {cnt[s_]}" style="flex:{cnt[s_]};background:{STATUS_COLOR[s_]}">'
+                f"</div>" for s_ in (O.DONE, O.DOING, O.WAIT, O.PAUSE, O.TODO, O.OTHER) if cnt[s_])
+            ui.html(f'<div style="display:flex;gap:3px;height:10px;border-radius:5px;overflow:hidden;'
+                    f'background:#EEECE4;margin-top:10px">{seg}</div>').classes("w-full")
+            with ui.row().classes("items-center gap-x-4 gap-y-1 w-full q-mt-xs"):
+                for s_ in (O.DONE, O.DOING, O.WAIT, O.TODO):
+                    if cnt[s_]:
+                        with ui.row().classes("items-center gap-1 no-wrap"):
+                            ui.element("span").classes("sr-dot").style(f"background:{STATUS_COLOR[s_]}")
+                            ui.label(f"{O.STATUS_LABEL[s_]} {cnt[s_]}").classes("text-sm")
+
+    def client_plan(ov: dict) -> None:
+        """Khách hàng: mục tiêu theo thời gian; mỗi dòng có nhãn trạng thái rõ (không hiện 0% cho mục chưa bắt đầu),
+        bấm để xem các việc bên trong."""
+        objs = sorted(ov["objectives"], key=lambda o: (o["start"] or "", o["end"] or ""))
+        with T.section(ui, "Các mục tiêu", "flag", "Bấm một mục tiêu để xem các việc bên trong",
+                       href="/report", link_text="Báo cáo tuần / tháng"):
+            for o in objs:
+                pct = o["pct"] or 0
+                kids = [i for i in ov["items"] if i["objective"] == o["uid"]]
+                not_started = bool(o["start"]) and o["start"] > today.isoformat()
+                if pct >= 1:
+                    label, tone = "Hoàn thành", "green"
+                elif not_started:
+                    label, tone = f"Sắp bắt đầu {_vn(o['start'])}", "grey"
+                else:
+                    label, tone = f"Đang làm · {o['done']}/{o['total']} việc xong", "blue"
+                exp = ui.expansion().props("dense switch-toggle-side=false").classes("w-full sr-card q-mb-sm").style(
+                    "border-radius:12px")
+                with exp.add_slot("header"):
+                    with ui.column().classes("w-full gap-1 q-py-xs"):
+                        with ui.row().classes("items-center gap-2 no-wrap w-full"):
+                            ui.label(o["title"]).classes("text-sm font-semibold col").style(
+                                "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden")
+                            T.status_chip(ui, label, tone)
+                        if not not_started:
+                            ui.linear_progress(pct, show_value=False, size="6px",
+                                               color="positive").classes("rounded-borders")
+                        with ui.row().classes("items-center gap-2"):
+                            ui.label(f"{_vn(o['start'])} – {_vn(o['end'])}").classes("text-xs muted")
+                            if o["late"]:
+                                T.status_chip(ui, f"{o['late']} việc trễ hạn", "red", "warning")
+                            if o.get("waiting"):
+                                T.status_chip(ui, f"{o['waiting']} việc chờ phản hồi", "amber", "hourglass_empty")
+                with exp:
+                    for i in kids:
+                        late = O.is_late(i, today)
+                        with ui.row().classes("items-center gap-2 no-wrap w-full q-py-xs"):
+                            ui.element("span").classes("sr-dot").style(
+                                f"background:{T.RED if late else STATUS_COLOR[i['status']]}")
+                            ui.label(i["title"] or i["code"]).classes("text-sm col ellipsis").tooltip(i["title"] or "")
+                            ui.label("Trễ hạn" if late else O.STATUS_LABEL[i["status"]]).classes("text-xs muted")
+                            ui.label(_vn(i["end"]) if i["end"] else "").classes("text-xs muted num")
+
     def sheet_issues_block(issues: list[dict]) -> None:
         """OKR còn trên sheet: dòng cần người phụ trách sửa trên sheet (3 dòng đầu, còn lại trong danh sách)."""
         with ui.element("div").classes("q-pa-md w-full").props('id="okr-alerts"').style(
@@ -778,13 +893,26 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
 
     @ui.refreshable
     def week_block(tasks, late, info):
-        # tuần = tuần đang chọn ở thanh trên cùng (đổi tuần ở đó), giống mọi màn khác
-        ps, pe = ws, we
+        # tuần đang xem: mặc định tuần chọn ở thanh trên cùng; bấm một dòng ở "Các tuần của đợt" để xem lại tuần cũ
         with connect() as c:
-            p = O.overview(c, today, (ps, pe), cycle=view["cycle"])["period"]
+            hist = O.week_history(c, today, cycle=view["cycle"])
+        ps, pe = view["wk"] or (ws, we)
+        h = next((x for x in hist if x["start"] == ps), None)
+        if h:
+            p, late_ = h, h["late"]
+        else:
+            with connect() as c:
+                p = O.overview(c, today, (ps, pe), cycle=view["cycle"])["period"]
+            late_ = late
         week_tasks = [t for t in tasks if t["week"] == ps.isoformat()]
-        sub = "Đổi tuần ở thanh chọn tuần phía trên" + (" · đang là tuần này" if (ps, pe) == cur_week else "")
+        sub = ("Đang xem lại tuần cũ · trễ hạn tính đến cuối tuần đó" if view["wk"] and pe < today else
+               "Đổi tuần ở thanh chọn tuần phía trên hoặc bấm một tuần ở bảng bên dưới") + (
+            " · đang là tuần này" if (ps, pe) == cur_week else "")
         with T.section(ui, f"Tuần {ps:%d/%m} – {pe:%d/%m}", "date_range", sub):
+            if view["wk"]:
+                ui.button("Về tuần đang chọn ở thanh trên", icon="undo", on_click=lambda: (
+                    view.update(wk=None), week_block.refresh(tasks, late, info))).props(
+                    "flat no-caps dense color=primary").classes("q-mb-xs")
             if info and not cl:
                 synced = datetime.fromisoformat(info["at"]).astimezone()
                 with ui.row().classes("items-center gap-2 q-mb-sm"):
@@ -796,26 +924,59 @@ def build_okr_page(ui, cfg, connect, user: str, ctx: dict, app_connect=None, pro
                         with ui.element("div"):
                             T.status_chip(ui, "Đang đọc qua link công khai", "amber", "public")
                             ui.tooltip("Sheet đang công khai cho ai có link. Nên tắt chia sẻ công khai.")
-            period_lists(ui, p, late, "tuần")
+            period_lists(ui, p, late_, "tuần", past=bool(h) and pe < today)
             if has_sheet:
                 task_table(ui, week_tasks, today, "tuần")
             elif not cl:
                 ui.label("Dự án chưa gắn sheet nên chưa có task tuần.").classes(
                     "text-sm muted q-mt-md")
+        # ---- lịch sử: các tuần của đợt
+        if hist:
+            with T.section(ui, "Các tuần của đợt", "history", "Bấm một tuần để xem lại số liệu tuần đó"):
+                rows = [{"id": x["start"].isoformat(), "wk": f"{x['start']:%d/%m} – {x['end']:%d/%m}"
+                         + (" (tuần này)" if x["current"] else ""), "due": len(x["due"]), "done": len(x["done"]),
+                         "late": len(x["late"]), "tasks": x["tasks"],
+                         "on": "Đang xem" if x["start"] == ps else ""} for x in hist]
+                tb = ui.table(columns=[
+                    {"name": "wk", "label": "Tuần", "field": "wk", "align": "left"},
+                    {"name": "due", "label": "Đến hạn", "field": "due", "align": "right"},
+                    {"name": "done", "label": "Hoàn thành", "field": "done", "align": "right"},
+                    {"name": "late", "label": "Trễ cuối tuần", "field": "late", "align": "right"},
+                    {"name": "tasks", "label": "Task tuần", "field": "tasks", "align": "right"},
+                    {"name": "on", "label": "", "field": "on", "align": "left"},
+                ], rows=rows, row_key="id", pagination=0).props("flat dense hide-bottom").classes(
+                    "w-full sr-bl-table sr-oi-rows")
+                tb.add_slot("body-cell-late", """
+                    <q-td :props="props"><span :style="props.value ? 'color:#C2410C;font-weight:600' : ''">
+                    {{ props.value }}</span></q-td>""")
+                tb.add_slot("body-cell-on", """
+                    <q-td :props="props"><span v-if="props.value" class="sr-status"
+                      style="background:#E7F3EA;color:#1E7C31">{{ props.value }}</span></q-td>""")
+
+                def pick_week(e):
+                    r = e.args[1] if len(e.args) > 1 else None
+                    if not r:
+                        return
+                    s_ = date.fromisoformat(r["id"])
+                    view["wk"] = None if s_ == ws else (s_, s_ + timedelta(days=6))
+                    week_block.refresh(tasks, late, info)
+                    ui.run_javascript("window.scrollTo({top: 0, behavior: 'smooth'})")
+                tb.on("rowClick", pick_week)
 
 
     with body:
         render()
 
 
-def period_lists(ui, p: dict, late: list[dict], unit: str) -> None:
+def period_lists(ui, p: dict, late: list[dict], unit: str, past: bool = False) -> None:
     """Bốn ô: đến hạn / hoàn thành trong kỳ, trễ hạn, kế hoạch kỳ sau (dùng ở màn OKR và báo cáo tuần/tháng)."""
     with ui.element("div").classes("w-full").style(
             "display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px"):
         note = (f"Sheet không có cột ngày hoàn thành: tính theo ngày tool thấy trạng thái đổi sang Hoàn thành "
                 f"(theo dõi từ {_vn(p['tracking_since'])}).") if p["tracking_since"] else ""
         lists = [("Đến hạn", p["due"], "event", ""), ("Hoàn thành", p["done"], "task_alt", note),
-                 ("Trễ hạn", late, "warning", "Quá ngày kết thúc, chưa Hoàn thành (tính đến hôm nay)"),
+                 ("Trễ hạn", late, "warning", "Quá ngày kết thúc, chưa Hoàn thành "
+                  + ("(tính đến cuối tuần đó, theo hạn lúc đó)" if past else "(tính đến hôm nay)")),
                  (f"{unit.capitalize()} sau", p["next"], "east", "")]
         for title, its, icon, tip in lists:
             with ui.element("div").classes("sr-card q-pa-md").style("border-radius:12px"):

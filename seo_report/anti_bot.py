@@ -33,6 +33,7 @@ AI_BOTS += (
 )
 
 BLOCKED_BODY = b"Forbidden"
+PUBLIC_MEDIA = "/gbp-media/"  # ảnh bài đăng GBP: Google tải qua link công khai
 ROBOT_TAGS = "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai"
 
 ROBOTS_TXT = (
@@ -64,7 +65,8 @@ class AIBotBlocker:
             if k == b"user-agent":
                 ua = v.decode("latin-1")
                 break
-        if is_ai_bot(ua):
+        # Ảnh bài đăng Google Business Profile: Google phải tải được (tên tệp ngẫu nhiên, chỉ có ảnh), nên không chặn
+        if is_ai_bot(ua) and not (scope["type"] == "http" and scope.get("path", "").startswith(PUBLIC_MEDIA)):
             if scope["type"] == "websocket":
                 return await send({"type": "websocket.close", "code": 1008})
             await send({"type": "http.response.start", "status": 403, "headers": [

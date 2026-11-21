@@ -261,7 +261,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
         W.group_head(ui, "Thứ hạng từ khóa", "leaderboard", sub, "/rank", "Thứ hạng")
         if not rank["checked"]:
             with W.card(ui, "Thứ hạng", "leaderboard"):
-                ui.label("Thêm từ khóa và đặt lịch check ở màn Từ khóa & Thứ hạng.").classes("text-sm muted")
+                ui.label("Đội SEO đang chuẩn bị số liệu này." if T.client_view() else
+                         "Thêm từ khóa và đặt lịch check ở màn Từ khóa & Thứ hạng.").classes("text-sm muted")
             return
         n = rank["total"]
         with ui.element("div").classes("sr-db-rank3"):
@@ -375,7 +376,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                                 if aio.get("until") else "Phần lượt hiển thị nằm trong câu trả lời AI"),
                            href="/ai")
                 else:
-                    W.stat(ui, "Tỷ lệ hiện trong AI", "–", "lightbulb", sub="Cần nhập file Generative AI từ GSC",
+                    W.stat(ui, "Tỷ lệ hiện trong AI", "–", "lightbulb", sub="Chưa có số" if T.client_view() else "Cần nhập file Generative AI từ GSC",
                            href="/ai", loading=state["loading"], tone="purple")
             with W.card(ui, "Click theo ngày", "show_chart", extra="sr-db-chartcard"):
                 ev_marks = EV.mark_line(EV.marks(events["list"], bks, labels)) if not cl else None
@@ -460,6 +461,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                 ui.label("Tạo bộ cam kết để tool tự chấm tiến độ mỗi ngày.").classes("text-sm muted")
 
     if cl:
+        client_hero(ui, cfg, connect, cur)
         kpi_placeholder()
     groups: dict[str, object] = {}
     with ui.element("div").classes("sr-db w-full q-mt-sm"):
@@ -477,7 +479,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
 
     # ================= Tốc độ · Backlink · Index · OKR =================
     with ui.element("div").classes("sr-db sr-db-eq w-full q-mt-sm"):
-        with ui.element("div").classes("sr-db-group sr-db-4" + (" hidden" if cl else "")):
+        with ui.element("div").classes("sr-db-group sr-db-4"):
             at = lh.get("at")
             sub = (f"Trung bình {lh['n']} trang quan trọng · điện thoại · đo {at[8:10]}/{at[5:7]}"
                    if lh.get("n") and at else "Chưa đo tốc độ")
@@ -491,7 +493,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                         ui.label("–" if v is None else "Tốt" if v >= 90 else "Cần cải thiện" if v >= 50
                                  else "Kém").classes("sr-db-note text-center")
 
-        with ui.element("div").classes("sr-db-group " + ("sr-db-12" if cl else "sr-db-8")):
+        with ui.element("div").classes("sr-db-group sr-db-8"):
             now_bl = (bl or {}).get("now")
             sub = (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m}" if cl and now_bl else
                    (f"Lần lấy mới nhất {date.fromisoformat(now_bl['day']):%d/%m} · "
@@ -502,7 +504,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
             W.group_head(ui, "Backlink", "link", sub, "/backlink", "Backlink")
             if not now_bl:
                 with W.card(ui, "Backlink", "link"):
-                    ui.label("Chưa có số backlink. Lấy số ở trang Backlink.").classes("text-sm muted")
+                    ui.label("Đội SEO đang chuẩn bị số liệu này." if T.client_view() else
+                             "Chưa có số backlink. Lấy số ở trang Backlink.").classes("text-sm muted")
             else:
                 pv = bl["prev"] or {}
                 hist = [h for h in bl["history"] if h["referring_domains"] is not None]
@@ -520,8 +523,7 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                     W.stat(ui, "Uy tín", f"{now_bl['rank'] if now_bl['rank'] is not None else '–'}/1000", "verified",
                            (f"{'+' if d > 0 else '−'}{abs(d)}" if d else ""), T.good_of(d), tone="amber",
                            ratio=(now_bl["rank"] or 0) / 1000, sub="Thang điểm 0–1000",
-                           info=("Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link "
-                                 "trỏ về.",))
+                           info=("Điểm uy tín của website (0–1000), tính từ số và chất lượng link trỏ về.",))
                     d = d_of("backlinks")
                     W.stat(ui, "Backlink", F.n(now_bl["backlinks"] or 0), "link",
                            (f"{'+' if d > 0 else '−'}{F.n(abs(d))}" if d else ""), T.good_of(d), tone="green",
@@ -556,7 +558,8 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                                 ui.label(F.n(n_)).classes("text-xs muted num")
                     else:
                         ui.label("Chưa kiểm tra index lần nào.").classes("text-sm muted")
-        with ui.element("div").classes("sr-db-group " + ("sr-db-6" if idx is not None else "sr-db-12")):
+        with ui.element("div").classes("sr-db-group " + ("sr-db-6" if idx is not None else "sr-db-12")
+                                       + (" hidden" if cl else "")):  # khách hàng: đã có ở đầu trang
             W.group_head(ui, "Công việc & OKR", "task_alt", (f"Đợt {okr['cycle']} · tính đến hôm nay" if okr
                                                              else "Chưa có sheet OKR"), "/okr", "Công việc & OKR")
             with W.card(ui, "Tiến độ", "checklist"):
@@ -567,21 +570,20 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
                             ui.label("Hoàn thành").classes("text-xs muted")
                             ui.html(f'<div class="sr-mini-num num">{done / okr["total"] * 100:.0f}%'
                                     f'<span> · {done}/{okr["total"]}</span></div>')
-                        with ui.column().classes("gap-0"):
-                            ui.label("Trễ hạn").classes("text-xs muted")
-                            n_late = len(okr["late"])
-                            ui.html(f'<div class="sr-mini-num num" style="color:{T.RED if n_late else T.INK}">'
-                                    f'{n_late}</div>')
+                        n_late = len(okr["late"])
+                        if n_late:  # nhãn nhỏ, không số đỏ to
+                            T.status_chip(ui, f"{n_late} việc trễ hạn", "red", "warning")
                     for o in okr["objectives"][:3]:
                         pct = o["pct"] or 0
                         with ui.column().classes("w-full gap-0 q-mt-xs"):
                             with ui.row().classes("w-full justify-between no-wrap"):
                                 ui.label(o["title"]).classes("text-xs ellipsis")
                                 ui.label(f"{pct * 100:.0f}%").classes("text-xs muted num")
-                            ui.linear_progress(pct, show_value=False, size="5px", color="primary").classes(
+                            ui.linear_progress(pct, show_value=False, size="6px", color="positive").classes(
                                 "rounded-borders")
                 else:
-                    ui.label("Gắn link sheet OKR ở màn Dự án để theo dõi tiến độ công việc.").classes(
+                    ui.label("Đội SEO đang chuẩn bị kế hoạch công việc." if T.client_view() else
+                             "Gắn link sheet OKR ở màn Dự án để theo dõi tiến độ công việc.").classes(
                         "text-sm muted")
 
     async def load():
@@ -707,3 +709,106 @@ def build_dashboard_page(ui, cfg, connect, user, ctx: dict, days: int) -> None:
 
     background_tasks.create(load())
     background_tasks.create(load_kpi())
+
+
+HERO_CSS = """
+.sr-ch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; width: 100%; }
+.sr-ch-card { background: #fff; border: 1px solid #E7E5DC; border-radius: 16px; padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 6px; }
+.sr-ch-eyebrow { font-size: 12px; font-weight: 600; color: #6B6A5E; letter-spacing: .02em; }
+.sr-ch-big { font-size: 30px; font-weight: 700; line-height: 1.1; }
+.sr-ch-big small { font-size: 14px; font-weight: 500; color: #6B6A5E; margin-left: 6px; }
+.sr-ch-item { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; line-height: 1.4; }
+.sr-ch-item .q-icon { margin-top: 2px; flex: none; }
+.sr-ch-more.q-btn { font-size: 13px; color: #6B6A5E; padding: 0 4px; min-height: 28px; align-self: flex-start; }
+.sr-ch-note { font-size: 14px; line-height: 1.5; color: #2B2E28; }
+.sr-ch-note li { margin: 0 0 4px 0; }
+.sr-ch-note ul { margin: 0; padding-left: 18px; }
+"""
+
+
+def _note_points(text: str, n: int = 2, width: int = 150) -> list[str]:
+    """Nhận xét báo cáo → vài ý đầu, bỏ dấu đầu dòng, cắt ở ranh giới từ (không cắt giữa chữ)."""
+    import re
+    lines = [re.sub(r"^\s*([-•*+]|\d+[.)])\s*", "", x).strip() for x in (text or "").splitlines()]
+    out = []
+    for x in [x for x in lines if x][:n]:
+        if len(x) > width:
+            x = x[:width].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+        out.append(x)
+    return out
+
+
+def client_hero(ui, cfg, connect, cur) -> None:
+    """Đầu Tổng quan của khách hàng: việc đội SEO đã xong trong kỳ, đang làm / sắp bắt đầu, nhận xét báo cáo mới nhất.
+    Chỉ đọc dữ liệu đã có (OKR đã đồng bộ, nhận xét báo cáo đã lưu)."""
+    from datetime import date as _d
+    from datetime import timedelta as _td
+    from html import escape
+
+    from . import okr as OK
+    from .report import NOTES_SCHEMA
+    today = _d.today()
+    days = (cur[1] - cur[0]).days + 1
+    done, doing, soon = [], [], []
+    with connect() as c:
+        try:
+            ov = OK.overview(c, today, (cur[0], cur[1]))
+            done = ov.get("period", {}).get("done", [])
+            leaf = ov.get("items", [])
+            doing = [i for i in leaf if i["status"] == OK.DOING]
+            soon_end = (today + _td(days=14)).isoformat()
+            soon = [i for i in leaf if i["status"] == OK.TODO and i["start"]
+                    and today.isoformat() <= i["start"] <= soon_end]
+        except Exception:  # noqa: BLE001  (chưa có OKR)
+            pass
+        c.executescript(NOTES_SCHEMA)
+        note = c.execute("SELECT week_start, text FROM report_notes WHERE site = ? AND trim(text) != '' "
+                         "ORDER BY week_start DESC LIMIT 1", (cfg.site_url,)).fetchone()
+    ui.add_css(HERO_CSS)
+
+    def titles(rows: list[dict], icon: str, color: str, more_text: str) -> None:
+        for i in rows[:3]:
+            with ui.element("div").classes("sr-ch-item"):
+                ui.icon(icon, size="16px").style(f"color:{color}").props('aria-hidden="true"')
+                ui.label(i.get("title") or i.get("code") or "").style(
+                    "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden")
+        if len(rows) > 3:
+            ui.button(more_text.format(n=len(rows) - 3), on_click=lambda: ui.navigate.to("/okr")).props(
+                "flat no-caps dense").classes("sr-ch-more")
+
+    with ui.element("div").classes("sr-ch-grid q-mt-sm"):
+        with ui.element("div").classes("sr-ch-card"):
+            ui.label("Đã hoàn thành").classes("sr-ch-eyebrow")
+            ui.html(f'<div class="sr-ch-big">{len(done)} việc<small>trong {days} ngày qua</small></div>')
+            if done:
+                titles(done, "check_circle", T.GREEN, "và {n} việc khác")
+            else:
+                ui.label("Chưa có việc hoàn thành trong kỳ này.").classes("text-sm muted")
+        with ui.element("div").classes("sr-ch-card"):
+            ui.label("Đội SEO đang làm").classes("sr-ch-eyebrow")
+            ui.html(f'<div class="sr-ch-big">{len(doing)} việc</div>')
+            if doing:
+                titles(doing, "autorenew", T.BLUE, "và {n} việc khác")
+            else:
+                ui.label("Chưa có việc đang làm.").classes("text-sm muted")
+            if soon:
+                with ui.element("div").classes("sr-ch-item q-mt-xs").style("color:#6B6A5E"):
+                    ui.icon("event", size="16px").props('aria-hidden="true"')
+                    ui.label(f"Sắp bắt đầu {len(soon)} việc trong 2 tuần tới")
+        with ui.element("div").classes("sr-ch-card"):
+            ui.label("Nhận xét mới nhất của đội SEO").classes("sr-ch-eyebrow")
+            if note:
+                k = note[0]
+                ui.label(f"Báo cáo tuần {k[8:10]}/{k[5:7]}" if len(k) == 10 else f"Báo cáo tháng {k[5:7]}/{k[:4]}"
+                         ).classes("text-xs muted")
+                pts = _note_points(note[1])
+                ui.html('<ul class="sr-ch-note">' + "".join(f"<li>{escape(x)}</li>" for x in pts) + "</ul>")
+            else:
+                ui.label("Nhận xét sẽ có trong báo cáo tuần / tháng.").classes("text-sm muted")
+            ui.space()
+            with ui.row().classes("w-full gap-2 q-mt-xs"):
+                ui.button("Xem báo cáo", icon="article", on_click=lambda: ui.navigate.to("/report")).props(
+                    "unelevated no-caps dense")
+                ui.button("Gửi yêu cầu", icon="chat", on_click=lambda: ui.navigate.to("/yeu-cau")).props(
+                    "outline no-caps dense")

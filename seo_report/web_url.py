@@ -140,9 +140,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             state["url"] = rows[0]["id"] if rows else None
 
     # Cột danh sách dính trên màn và tự cuộn bên trong: danh sách dài không kéo cả trang, cột chi tiết luôn ở cạnh.
-    with ui.row().classes("w-full no-wrap items-start gap-4"):
-        with ui.column().classes("sr-card q-pa-md gap-2 no-wrap").style(
-                "width: 360px; min-width: 300px; position: sticky; top: 60px; height: calc(100vh - 80px)"):
+    # Điện thoại (< 768px): một cột kiểu danh sách → chi tiết. Bấm một URL thì danh sách ẩn, chi tiết hiện kèm nút
+    # "Danh sách URL" để quay lại (CSS .sr-url-split trong ui_theme).
+    split = ui.row().classes("w-full no-wrap items-start gap-4 sr-url-split")
+    with split:
+        with ui.column().classes("sr-card q-pa-md gap-2 no-wrap sr-url-listcol"):
             with ui.row().classes("w-full items-baseline justify-between"):
                 ui.label("URL").classes("text-xl font-semibold")
                 count_label = ui.label().classes("text-sm muted")
@@ -160,7 +162,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                             lambda: export(), "Xuất dữ liệu", user=user, category="url")
             url_list = ui.column().classes("w-full gap-1 no-wrap").style(
                 "flex: 1 1 auto; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 6px")
-        detail = ui.column().classes("col gap-4").style("min-width: 0")
+        detail = ui.column().classes("col gap-4 sr-url-detailcol").style("min-width: 0")
 
     @ui.refreshable
     def render_list():
@@ -211,6 +213,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         if not row:
             ui.label("Chọn một URL ở cột bên trái.").classes("muted")
             return
+        ui.button("Danh sách URL", icon="arrow_back", on_click=lambda: split.classes(remove="show-detail")).props(
+            "flat no-caps dense color=grey-9").classes("sr-url-back")
         a = state["analysis"][rid]
         s, e = wks[state["week"]]
         has_prev = state["week"] + 1 < len(wks)
@@ -608,6 +612,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         state["url"] = rid
         render_list.refresh()
         render_detail.refresh()
+        split.classes(add="show-detail")  # điện thoại: chuyển sang màn chi tiết
+        ui.run_javascript("if (innerWidth < 768) scrollTo({top: 0})")
 
     def on_group(e):
         state["group"] = e.value

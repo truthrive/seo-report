@@ -79,7 +79,8 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
     @ui.refreshable
     def cards() -> None:
         sm = summary(state["data"])
-        with ui.element("div").classes("sr-op-nav").props('role="tablist" aria-label="Loại cơ hội"'):
+        with ui.element("div").classes("sr-op-nav").props('role="tablist" aria-label="Loại cơ hội"').style(
+                f"--n:{len(TABS)}"):
             for k, name in TABS:
                 n, sub, tone = sm[k]
                 on = k == state["tab"]

@@ -995,7 +995,11 @@ def full_table(ui, p: dict) -> None:
                  + " · tăng thêm = phiên tháng − baseline, cộng dồn qua các tháng").classes("text-xs muted q-mt-sm")
 
 
-def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | None = None) -> None:
+TABS = (("tien-do", "Tiến độ"), ("lo-trinh", "Lộ trình"), ("tu-khoa", "Từ khóa cam kết"),
+        ("lich-su", "Lịch sử phiên bản"))  # lich-su: chỉ team (khách hàng không thấy)
+
+
+def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | None = None, tab: str = "") -> None:
     from nicegui import run
 
     from .access import can_edit, is_client
@@ -1161,29 +1165,55 @@ def build_kpi_page(ui, cfg, connect, user, app_connect=None, project: dict | Non
             return
         box.clear()
         T.busy(box, False)
+
+        def history() -> None:
+            for v in reversed(vs):
+                d = v["data"]
+                ui.label(f"Từ {_vn(v['day'])}/{v['day'][:4]} · {len(d['months'])} tháng · {len(d['lines'])} cam "
+                         f"kết · {len(d.get('keywords', []))} từ khóa · bắt đầu {d['start'] or 'chưa nhập'}"
+                         ).classes("text-sm")
+            ui.label("Tháng đã qua được chấm theo phiên bản có hiệu lực cuối tháng đó.").classes("text-xs muted")
+
         with box:
-            if p and not p.get("start"):
-                kpi_block(ui, p, compact=False)
-            elif p:
-                page_view(ui, p, ed and not cl, {"cfg": cfg, "connect": connect, "user": user}
-                          if ed and not cl else None)
-            if p and p.get("start"):
-                with ui.expansion(f"Lộ trình {len(p['months'])} tháng", icon="timeline",
-                                  caption="Tháng nào đạt, tháng nào cần bao nhiêu, đang tiến tới đâu",
-                                  value=True).classes("w-full sr-card"):
+            if not (p and p.get("start")):  # chưa có ngày bắt đầu: giữ một màn như cũ
+                if p:
+                    kpi_block(ui, p, compact=False)
+                with ui.expansion(f"Lịch sử phiên bản KPI ({len(vs)})", icon="history").classes(
+                        "w-full sr-card" + (" hidden" if cl else "")):
+                    history()
+                return
+            tabs_def = [(k, f"Lộ trình {len(p['months'])} tháng" if k == "lo-trinh" else name)
+                        for k, name in TABS if not (cl and k == "lich-su")]
+            keys = [k for k, _ in tabs_def]
+            first = keys[0]
+
+            def pick(e) -> None:
+                v = e.value
+                ui.run_javascript(f"history.replaceState(null, '', '/kpi' + ('{v}' === '{first}' ? '' : '?tab={v}'))")
+
+            with ui.tabs(value=tab if tab in keys else first, on_change=pick).props(
+                    "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs") as tabs:
+                for k, name in tabs_def:
+                    ui.tab(k, name)
+            with ui.tab_panels(tabs, value=tab if tab in keys else first).classes("w-full").props("animated=false"):
+                with ui.tab_panel("tien-do").classes("q-px-none"):
+                    page_view(ui, p, ed and not cl, {"cfg": cfg, "connect": connect, "user": user}
+                              if ed and not cl else None)
+                with ui.tab_panel("lo-trinh").classes("q-px-none"):
+                    ui.label("Tháng nào đạt, tháng nào cần bao nhiêu, đang tiến tới đâu").classes("text-sm muted")
                     full_table(ui, p)
-                cur = next((m for m in p["months"] if m["status"] == "running"), None) or \
-                    next((m for m in reversed(p["months"]) if m["status"] == "closed"), None)
-                if cur or p.get("pre"):
-                    keyword_table(ui, cur or p["pre"], cfg.site_url, p.get("lines"))
-            with ui.expansion(f"Lịch sử phiên bản KPI ({len(vs)})", icon="history").classes(
-                    "w-full sr-card" + (" hidden" if cl else "")):
-                for v in reversed(vs):
-                    d = v["data"]
-                    ui.label(f"Từ {_vn(v['day'])}/{v['day'][:4]} · {len(d['months'])} tháng · {len(d['lines'])} cam "
-                             f"kết · {len(d.get('keywords', []))} từ khóa · bắt đầu {d['start'] or 'chưa nhập'}"
-                             ).classes("text-sm")
-                ui.label("Tháng đã qua được chấm theo phiên bản có hiệu lực cuối tháng đó.").classes("text-xs muted")
+                with ui.tab_panel("tu-khoa").classes("q-px-none"):
+                    cur = next((m for m in p["months"] if m["status"] == "running"), None) or \
+                        next((m for m in reversed(p["months"]) if m["status"] == "closed"), None)
+                    if cur or p.get("pre"):
+                        keyword_table(ui, cur or p["pre"], cfg.site_url, p.get("lines"))
+                    else:
+                        T.empty_state(ui, "key", "Chưa có từ khóa cam kết",
+                                      "Từ khóa cam kết sẽ hiện ở đây khi KPI có tháng đang chạy.")
+                if not cl:
+                    with ui.tab_panel("lich-su").classes("q-px-none"):
+                        ui.label(f"Lịch sử phiên bản KPI ({len(vs)})").classes("text-base font-semibold")
+                        history()
 
     from nicegui import background_tasks
     background_tasks.create(load())

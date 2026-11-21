@@ -79,6 +79,12 @@ def signals(con, cfg, user, rep=None, todo: list | None = None, today: date | No
                 out.append(_sig("Thứ hạng", "medium",
                                 f"{len(down)} từ khóa {'cam kết ' if rs['committed'] else ''}rớt mạnh nhất: "
                                 + "; ".join(parts), "/rank"))
+    try:  # Local SEO: chi nhánh cần chú ý, hồ sơ cần sửa, tín hiệu chéo Maps ↔ Search Console / thứ hạng / GA4
+        from . import local_signals as LS
+        for area, lvl, fact, href in LS.brief_signals(con, cfg.site_url, today, rep):
+            out.append(_sig(area, lvl, fact, href))
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from . import aio as AO
         a = AO.audit(con, cfg)
@@ -90,7 +96,19 @@ def signals(con, cfg, user, rep=None, todo: list | None = None, today: date | No
     except Exception:  # noqa: BLE001
         pass
     out.sort(key=lambda s: RANK[s["level"]])
-    out = out[:MAX_SIGNALS]
+    # Đủ chỗ thì giữ hết; quá MAX_SIGNALS thì giữ mọi tín hiệu nặng / vừa trước, phần còn lại chia lượt cho từng nhóm
+    # (không để một nhóm nhiều tín hiệu nhẹ như thông báo audit đẩy mất tín hiệu của nhóm khác, vd Local SEO).
+    if len(out) > MAX_SIGNALS:
+        keep = [s for s in out if s["level"] != "low"][:MAX_SIGNALS]
+        lows: dict[str, list] = {}
+        for s in out:
+            if s["level"] == "low":
+                lows.setdefault(s["area"], []).append(s)
+        while len(keep) < MAX_SIGNALS and any(lows.values()):
+            for area in list(lows):
+                if lows[area] and len(keep) < MAX_SIGNALS:
+                    keep.append(lows[area].pop(0))
+        out = keep
     for i, s in enumerate(out, 1):
         s["id"] = f"S{i}"
     return out

@@ -98,6 +98,9 @@ def bell(ui, cfg, connect, user, key) -> None:
             panel()
         menu.on("show", lambda: (state.update(open=True), panel.refresh()))
         menu.on("hide", lambda: state.update(open=False))
+        # nền phía sau tối + mờ khi mở thông báo (giống nút nổi), làm ngay trên trình duyệt
+        menu.on("before-show", js_handler="() => document.body.classList.add('sr-dim')")
+        menu.on("before-hide", js_handler="() => document.body.classList.remove('sr-dim')")
         ui.tooltip("Thông báo")
 
     def daily_popup() -> None:

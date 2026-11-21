@@ -45,6 +45,8 @@ COSTS = {
     "backlink_gap_links": ("Xem link cụ thể trong Backlink GAP", 25),
     "backlink_gap_multi": ("Backlink GAP nhanh (website trỏ về từ 2 đối thủ)", 30),
     "ai_review_reply": ("AI nháp trả lời đánh giá Google Maps", 2),
+    "ai_gbp_post": ("AI viết nháp bài đăng Google Business Profile", 3),
+    "ai_review_insight": ("AI phân tích đánh giá Google Maps", 10),
     "ai_bl_insight": ("AI nhận định hồ sơ backlink", 5),
     "ai_bl_classify": ("AI phân loại website trỏ về", 8),
     "ai_bl_disavow": ("AI duyệt danh sách disavow", 8),
@@ -212,6 +214,11 @@ def _project(cfg) -> str:
 def take(ui, user, cfg, action: str, points: int | None = None, n: int = 1, detail: str = "") -> int | None | bool:
     """Trừ credit trước khi chạy tác vụ: trả id (hoặc None nếu không tính credit) để hoàn khi lỗi; False khi Member
     không đủ credit (đã báo trên màn hình, không chạy tác vụ)."""
+    from .user_google import blocked
+    if blocked(cfg, action):  # website người dùng tự thêm: tính năng tốn tiền chờ Owner / Admin cho phép
+        ui.notify(f"{COSTS[action][0]}: website này chưa được bật tính năng tốn phí. Nhờ Owner / Admin bật ở màn Dự "
+                  "án.", type="warning", position="bottom-right", multi_line=True)
+        return False
     pts = cost(action, n) if points is None else int(points)
     try:
         with _connect() as con:

@@ -15,6 +15,9 @@ GOOGLE_NOTICES = {"ok": ("positive", "Đã kết nối Google với đủ quyề
                   "fail": ("negative", "Kết nối Google không thành công: thử lại sau ít phút")}
 
 
+RECENT_GOOGLE = 30 * 60  # giây: đăng nhập Google gần đây thì lưu mã API không hỏi lại
+
+
 def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
     """Các khối dùng chung của màn cài đặt: hỏi lại mật khẩu, nhật ký, một dòng cài đặt, thẻ tích hợp (nhập / kiểm tra /
     lưu mã). on_saved(it): gọi sau khi lưu xong một tích hợp."""
@@ -27,10 +30,32 @@ def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
         if local:
             return True
         import asyncio
+        from datetime import datetime, timezone
+
+        from nicegui import app
+        sess = app.storage.user.get("auth") or {}
+        via_google = getattr(user, "via", "") == "google"
+        if via_google and sess.get("at"):  # vừa đăng nhập Google (trong 30 phút): Google đã xác minh, không hỏi lại
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(sess["at"])).total_seconds()
+            except ValueError:
+                age = 1e9
+            if age < RECENT_GOOGLE:
+                return True
         done: asyncio.Future = asyncio.get_running_loop().create_future()
         with ui.dialog() as d, ui.card().style("min-width: 400px; border-radius: 14px"):
-            ui.label("Xác nhận mật khẩu").classes("text-lg font-semibold")
-            ui.label("Nhập mật khẩu đăng nhập tool của bạn để lưu mã API.").classes("text-sm muted")
+            ui.label("Xác nhận lại là bạn").classes("text-lg font-semibold")
+            if via_google:
+                from urllib.parse import quote
+                path = ui.context.client.page.path if ui.context.client.page else "/cai-dat"
+                ui.label("Đăng nhập Google lại để lưu mã API (lần đăng nhập trước đã quá 30 phút).").classes(
+                    "text-sm muted")
+                ui.button("Đăng nhập Google lại", icon="login",
+                          on_click=lambda: ui.navigate.to("/login/google?next=" + quote(path, safe=""))).props(
+                    "unelevated no-caps").classes("w-full")
+                ui.label("Hoặc nhập mật khẩu Owner:").classes("text-xs muted q-mt-sm")
+            else:
+                ui.label("Nhập mật khẩu đăng nhập tool của bạn để lưu mã API.").classes("text-sm muted")
             pw = ui.input("Mật khẩu", password=True, password_toggle_button=True).props(
                 "outlined dense autofocus autocomplete=current-password").classes("w-full")
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
@@ -63,14 +88,14 @@ def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
     def setting_row(icon: str, tone: str, title: str):
         """Trả (ô tóm tắt, chỗ trạng thái, chỗ nút, phần sửa ẩn sẵn)."""
         with ui.element("div").classes("sr-card sr-set-row w-full"):
-            with ui.row().classes("w-full items-center gap-3 no-wrap"):
+            with ui.row().classes("w-full items-center gap-3 no-wrap sr-set-top"):
                 with ui.element("div").classes("sr-icon-bubble").style(f"background:{T.TONES[tone][0]}"):
                     ui.icon(icon, size="18px").style(f"color:{T.TONES[tone][1]}")
                 with ui.column().classes("gap-0 col").style("min-width:0"):
                     ui.label(title).classes("text-sm font-semibold")
                     summary = ui.label().classes("text-xs muted ellipsis")
-                status = ui.row().classes("items-center no-wrap")
-                actions = ui.row().classes("items-center gap-1 no-wrap")
+                status = ui.row().classes("items-center no-wrap sr-set-status")
+                actions = ui.row().classes("items-center gap-1 no-wrap sr-set-acts")
             editor = ui.column().classes("w-full gap-2 sr-set-editor")
             editor.set_visibility(False)
         return summary, status, actions, editor
@@ -95,6 +120,9 @@ def _kit(ui, base, app_connect, user, local: bool, on_saved=None):
         if it.key == "google_api":
             return (f"key {v['api_key']} · PageSpeed Insights, Chrome UX Report" if v.get("api_key")
                     else "Chưa có: trang Tốc độ & Core Web Vitals chưa lấy được số")
+        if it.key == "google_login":
+            return (f"Client ID …{v['client_id'][-30:]}" if v.get("client_id")
+                    else "Chưa cài: mọi người đăng nhập bằng mật khẩu")
         if I.is_gateway(it.key):
             return (f"{v.get('base_url') or '–'} · khóa {v['api_key']}" if v.get("api_key")
                     else "Chưa cấu hình: nhập Base URL và khóa")
@@ -284,6 +312,105 @@ def ai_provider_cards(ui, base, app_connect, user, local: bool, on_saved=None, o
     ui.label("Mã được lưu an toàn trên máy chạy tool, trang chỉ hiện 4 ký tự cuối.").classes("text-xs muted q-mt-xs")
 
 
+def login_section(ui, base, app_connect, user, k):
+    """Đăng nhập bằng Google: Client ID / secret, địa chỉ quay về để dán vào Google Cloud, công tắc "chỉ Google".
+    Trả hàm vẽ lại (gọi sau khi lưu Client ID)."""
+    from . import google_login as GL
+    from . import live as LIVE
+    from .web_access import _setting
+    k.integration_card(I.BY_KEY["google_login"])
+
+    @ui.refreshable
+    def body():
+        public = _setting(app_connect, "public_url")
+        with app_connect() as c:
+            only = A.google_only(c)
+            us = A.users(c, base.access)
+        ready = GL.ready(base) and bool(public)
+        with ui.element("div").classes("sr-card sr-set-row w-full"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                link = ui.input("Địa chỉ tool", value=public, placeholder="https://report.tenmien.com").props(
+                    "outlined dense stack-label").classes("col")
+
+                def save_link():
+                    v = (link.value or "").strip().rstrip("/")
+                    if v and not v.startswith("https://"):
+                        ui.notify("Địa chỉ tool phải bắt đầu bằng https://", type="warning")
+                        return
+                    if v != public:
+                        _setting(app_connect, "public_url", v)
+                        k.log("Đổi địa chỉ tool", v or "(bỏ)")
+                        body.refresh()
+                link.on("blur", save_link)
+                link.on("keydown.enter", save_link)
+            if public:
+                from .user_google import CALLBACK as ME_CALLBACK
+                ui.label("Authorized redirect URIs (thêm cả 3 vào OAuth client trên Google Cloud)").classes(
+                    "text-xs muted q-mt-xs")
+                for uri in (GL.redirect_uri(public), public.rstrip("/") + "/oauth/google",
+                            public.rstrip("/") + ME_CALLBACK):
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        ui.label(uri).classes("text-sm col ellipsis").style("font-family: var(--mono)")
+                        ui.button(icon="content_copy", on_click=lambda _, u=uri: (ui.clipboard.write(u),
+                                                                                ui.notify("Đã chép"))).props(
+                            "flat round dense color=grey-8").tooltip("Chép để dán vào Google Cloud")
+        summary, status, actions, _ = k.setting_row("lock_person", "blue", "Chỉ cho đăng nhập bằng Google")
+        summary.text = "Mọi người dùng nút Google; Owner vẫn đăng nhập được bằng mật khẩu (dự phòng)"
+        with status:
+            T.status_chip(ui, "Đang bật" if only else "Đang tắt", "green" if only else "grey",
+                          "check_circle" if only else "radio_button_unchecked")
+        with actions:
+            sw = ui.switch(value=only).props("dense")
+            if not ready and not only:
+                sw.disable()
+                sw.tooltip("Cần lưu Client ID, Client secret và Địa chỉ tool trước")
+
+        def apply(on: bool):
+            with app_connect() as c:
+                A.set_google_only(c, on, user)
+            if on:  # phiên mật khẩu của người không phải Owner hết hiệu lực: ngắt trang đang mở
+                for u in us:
+                    if u["role"] != A.OWNER:
+                        LIVE.kick(email=u["email"], keep=ui.context.client.id)
+            k.log("Chỉ cho đăng nhập bằng Google" if on else "Cho đăng nhập bằng mật khẩu trở lại")
+            ui.notify("Đã bật: mọi người đăng nhập bằng Google" if on else "Đã tắt: mọi người dùng lại được mật khẩu",
+                      type="positive")
+            body.refresh()
+
+        def on_switch(e):
+            if e.value == only:
+                return
+            if not e.value:
+                apply(False)
+                return
+            left = [u for u in us if u["role"] != A.OWNER and not u.get("google_login")]
+            with ui.dialog() as d, ui.card().style("max-width: 520px; border-radius: 14px"):
+                ui.label("Chỉ cho đăng nhập bằng Google?").classes("text-lg font-semibold")
+                ui.label("Người đang đăng nhập bằng mật khẩu (trừ Owner) sẽ bị đăng xuất và phải bấm “Đăng nhập bằng "
+                         "Google”. Tài khoản Google phải đúng email trong Phân quyền.").classes("text-sm")
+                if left:
+                    ui.label(f"{len(left)} người chưa đăng nhập bằng Google lần nào:").classes(
+                        "text-sm font-semibold q-mt-sm")
+                    for u in left[:8]:
+                        ui.label(u["email"] + ("  · tên đăng nhập, cần đổi sang email Google"
+                                               if A.is_username(u["email"]) else "")).classes("text-sm")
+                    if len(left) > 8:
+                        ui.label(f"… và {len(left) - 8} người khác").classes("text-sm muted")
+
+                def cancel():
+                    d.close()
+                    sw.value = False
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=cancel).props("flat no-caps")
+                    ui.button("Bật", on_click=lambda: (d.close(), apply(True))).props("unelevated no-caps")
+            d.props("persistent")
+            d.open()
+        sw.on_value_change(on_switch)
+
+    body()
+    return lambda it: body.refresh() if it.key == "google_login" else None
+
+
 def build_settings_page(ui, base, app_connect, user, config_path, local: bool, google_origin: str | None,
                         google_notice: str | None = None) -> None:
     """local: đang mở trên máy chạy tool (không hỏi lại mật khẩu). google_origin: địa chỉ localhost để Google quay
@@ -305,7 +432,8 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         ui.link("Chất lượng dữ liệu của dự án đang mở (kiểm tra số GA4 / Search Console)",
                 "/ai?tab=chat-luong").classes("text-sm")
 
-    k = _kit(ui, base, app_connect, user, local)
+    after_save: list = []  # khối Đăng nhập vào tool vẽ lại khi vừa lưu Client ID
+    k = _kit(ui, base, app_connect, user, local, on_saved=lambda it: [f(it) for f in after_save])
     log, setting_row, chip, toggle, integration_card = k.log, k.setting_row, k.chip, k.toggle, k.integration_card
 
     def go_google(switch: bool):
@@ -313,7 +441,10 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
         if not google_origin or not owner:
             return
         try:
-            url = auth.web_login_url(base, f"{google_origin}/oauth/google", switch_account=switch)
+            remote = not google_origin.startswith("http://")  # qua tên miền: OAuth client Web (Đăng nhập Google)
+            from .user_google import client_config
+            url = auth.web_login_url(base, f"{google_origin}/oauth/google", switch_account=switch,
+                                     client_config=client_config(base) if remote else None)
         except ValueError as e:
             ui.notify(str(e), type="negative")
             return
@@ -353,7 +484,7 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
             if not google_origin:
                 for b in (connect_btn, switch_btn):
                     b.disable()
-                    b.tooltip("Mở tool trên máy chạy tool để kết nối Google")
+                    b.tooltip("Cài Đăng nhập bằng Google (bên dưới) để kết nối từ xa, hoặc mở tool trên máy chạy tool")
 
         d_summary, d_status, d_actions, d_editor = setting_row("folder", "amber", "Google Drive")
         with app_connect() as c:
@@ -403,9 +534,12 @@ def build_settings_page(ui, base, app_connect, user, config_path, local: bool, g
                 ui.button("Hủy", on_click=lambda: toggle(d_editor, d_btn)).props("flat no-caps")
                 ui.button("Lưu", icon="check", on_click=save_drive).props("unelevated no-caps")
 
+        ui.label("Đăng nhập vào tool").classes("sr-nav-group q-mt-md")
+        after_save.append(login_section(ui, base, app_connect, user, k))
+
         ui.label("Mã API dịch vụ").classes("sr-nav-group q-mt-md")
         for it in I.INTEGRATIONS:
-            if it.group != "ai":
+            if it.group == "service":
                 integration_card(it)
         ui.label("Nhà cung cấp AI").classes("sr-nav-group q-mt-md")
         with ui.row().classes("items-center gap-1"):

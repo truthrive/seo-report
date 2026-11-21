@@ -319,19 +319,34 @@ def report_facts(rep) -> str:
     return "\n".join(out)
 
 
-def report_prompt(rep) -> str:
+def local_facts(cfg, rep) -> str:
+    """Số Google Maps (Local SEO) của cùng kỳ báo cáo; trống khi chưa gắn hồ sơ / lỗi đọc."""
+    try:
+        from contextlib import closing
+
+        from . import db
+        from . import local_signals as LS
+        with closing(db.connect(cfg.db_path)) as c:
+            return "\n".join(LS.report_lines(c, cfg.site_url, rep))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def report_prompt(rep, extra: str = "") -> str:
     month = rep.kind == "month"
     shape = ('{\n  "note": "nhận xét: 3–5 gạch đầu dòng, mỗi dòng bắt đầu bằng \\"- \\", nêu kết quả chính, nguyên nhân '
              'và điểm cần chú ý"' + (',\n  "plan": "kế hoạch tháng sau: 3–5 gạch đầu dòng, việc cụ thể dựa trên số liệu"'
                                      if month else ',\n  "plan": ""') + "\n}")
-    return ("Dữ liệu báo cáo:\n" + report_facts(rep) + "\n\n"
-            f"Viết nhận xét cho báo cáo {'tháng' if month else 'tuần'} này. Câu đầu tiên của nhận xét là kết luận "
+    return ("Dữ liệu báo cáo:\n" + report_facts(rep) + ("\n" + extra if extra else "") + "\n\n"
+            + ("Có số Google Maps (Local SEO): dành 1 gạch đầu dòng nói về Maps (lượt xem / hành động / đánh giá, "
+               "chi nhánh cần chú ý).\n" if extra else "")
+            + f"Viết nhận xét cho báo cáo {'tháng' if month else 'tuần'} này. Câu đầu tiên của nhận xét là kết luận "
             "kỳ này tốt hay chưa tốt. Trả về JSON đúng dạng:\n" + shape)
 
 
 def write_report(cfg, rep, prov: dict | None = None, opener=None) -> tuple[dict, dict]:
     prov = prov or provider(cfg)
-    text = AH.ask(prov, expect_json=True, prompt=report_prompt(rep),
+    text = AH.ask(prov, expect_json=True, prompt=report_prompt(rep, local_facts(cfg, rep)),
                        system=SYSTEM_REPORT, max_tokens=1500, timeout=120, opener=opener)
     m = re.search(r"\{.*\}", text or "", re.S)
     try:

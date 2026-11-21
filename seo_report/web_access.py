@@ -68,6 +68,33 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                 + "Đổi mật khẩu bất cứ lúc nào: bấm vào tên của bạn ở góc dưới bên trái > Đổi mật khẩu. "
                   "Vui lòng không chia sẻ mật khẩu cho người khác.")
 
+    def g_only() -> bool:
+        from . import google_login as GL
+        with connect() as c:
+            return A.google_only(c) and GL.ready(cfg) and bool(_setting(connect, "public_url"))
+
+    def g_ready() -> bool:
+        from . import google_login as GL
+        return GL.ready(cfg)
+
+    def show_google_invite(email: str) -> None:
+        url = _setting(connect, "public_url").rstrip("/")
+        text = (f"Chào bạn, mời bạn dùng SEO Report để xem báo cáo SEO.\nĐăng nhập: {url}/login\n"
+                f"Bấm “Đăng nhập bằng Google” và chọn tài khoản Google {email}.")
+        with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:16px; min-width:480px; max-width:560px"):
+            ui.label(f"Tin mời cho {email}").classes("text-lg font-semibold ellipsis")
+            if A.is_username(email):
+                ui.label("Đây là tên đăng nhập, không phải email: người này không đăng nhập Google được. Thêm lại "
+                         "bằng Gmail / email Google Workspace của họ.").classes("text-sm").style(
+                    f"color:{T.AMBER_TEXT}")
+            msg = ui.textarea(value=text).props("outlined autogrow readonly").classes("w-full")
+            with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                ui.button("Chép tin mời", icon="content_copy",
+                          on_click=lambda: (ui.clipboard.write(msg.value), ui.notify("Đã chép tin mời"))).props(
+                    "outline no-caps")
+                ui.button("Xong", on_click=dlg.close).props("unelevated no-caps")
+        dlg.open()
+
     def show_password(email: str, pw: str, must_change: bool) -> None:
         """Mật khẩu tool tạo chỉ hiện một lần (tool chỉ lưu dạng băm). Kèm tin mời soạn sẵn để dán vào Zalo."""
         with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:16px; min-width:480px; max-width:560px"):
@@ -145,13 +172,20 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
             return False
         return owner or u["role"] != A.ADMIN
 
-    def edit_dialog(u: dict | None, restore: dict | None = None) -> None:
-        """Thêm người (u None), sửa quyền một người, hoặc cấp lại tài khoản đã gỡ (restore)."""
+    def reject(email: str) -> None:
+        with connect() as c:
+            A.resolve_request(c, email, "rejected", user)
+        ui.notify(f"Đã từ chối {email}", type="positive")
+        body.refresh()
+
+    def edit_dialog(u: dict | None, restore: dict | None = None, request: str | None = None) -> None:
+        """Thêm người (u None), sửa quyền một người, cấp lại tài khoản đã gỡ (restore), hoặc duyệt yêu cầu truy cập
+        (request: email đã đăng nhập Google, chưa có quyền)."""
         if not can_manage(u) and not (u and u["role"] == A.OWNER):
             return
         with connect() as c:
             mine = dict(A.members(c).get(u["email"], {})) if u else {}
-        base = u or restore or {}
+        base = u or restore or ({"email": request} if request else {})
         locked_admin = bool(u and u["role"] == A.OWNER)
         if u is None and not restore and current in names:
             mine_default = {current: A.CLIENT}  # thêm mới: chọn sẵn website đang mở, quyền Khách hàng
@@ -163,7 +197,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
         team_role = None
 
         with dialogs, ui.dialog() as dlg, ui.card().style("border-radius:16px; width:640px; max-width:96vw"):
-            ui.label("Thêm người" if not u and not restore else
+            ui.label(f"Duyệt {request}" if request else "Thêm người" if not u and not restore else
                      f"Cấp lại {base['email']}" if restore else f"Quyền của {u['email']}").classes(
                 "text-lg font-semibold")
             with ui.row().classes("w-full no-wrap gap-3 q-mt-xs"):
@@ -284,11 +318,17 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     err.text = str(ex)
                     return
                 dlg.close()
+                with connect() as c:
+                    A.resolve_request(c, e, "approved", user)  # có yêu cầu truy cập đang chờ: coi như đã duyệt
                 ui.notify(f"Đã lưu quyền của {e}", type="positive")
                 body.refresh()
                 with connect() as c:
                     has_pw = next((x["has_password"] for x in A.users(c, cfg.access) if x["email"] == e), False)
-                if not has_pw:
+                if request:  # duyệt người đã đăng nhập Google: họ vào bằng Google, không cần mật khẩu / tin mời
+                    ui.notify(f"Đã duyệt {e}. Trang chờ duyệt của họ tự vào tool.", type="positive")
+                elif g_only() or (g_ready() and not A.is_username(e) and not has_pw):
+                    show_google_invite(e)  # đăng nhập bằng Google: tin mời không kèm mật khẩu
+                elif not has_pw:
                     issue_password(e)  # người mới / cấp lại: đặt luôn mật khẩu để gửi tin mời
 
             def save():
@@ -421,6 +461,7 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
     ui.timer(20, lambda: (presence_avatar.refresh(), presence_text.refresh()))
 
     def person_row(u: dict, mine: dict, k: str) -> None:
+        only, google = g_only(), g_ready()
         tone = {"owner": "green", "admin": "green", "team": "blue", "client": "amber"}[k]
         with connect() as c:
             pf = A.profiles(c).get(u["email"], {})  # tên / ảnh người dùng tự đặt ở màn Hồ sơ
@@ -437,13 +478,21 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                         if u.get("title"):
                             T.status_chip(ui, u["title"], "grey")
                         presence_text(u["email"], u.get("last_seen"))
+                        if google and A.is_username(u["email"]):
+                            T.status_chip(ui, "Cần email Google", "amber", "warning").tooltip(
+                                "Tên đăng nhập không đăng nhập Google được: thêm lại người này bằng Gmail / email "
+                                "Google Workspace của họ rồi gỡ tài khoản này")
                     meta = [u["note"]] if u["note"] else []
                     meta.append("trong config.toml" if u["source"] == "config" else
                                 f"thêm bởi {u['added_by']} · {_when(u['added_at'])}")
-                    meta.append("chưa có mật khẩu" if not u["has_password"] else
-                                "đang dùng mật khẩu được cấp" if u["must_change"] else
-                                f"đăng nhập lần cuối {_when(u['last_login'])}" if u["last_login"] else
-                                "chưa đăng nhập lần nào")
+                    if only and u["role"] != A.OWNER:
+                        meta.append(f"đăng nhập Google lần cuối {_when(u['google_login'])}" if u.get("google_login")
+                                    else "chưa đăng nhập bằng Google")
+                    else:
+                        meta.append("chưa có mật khẩu" if not u["has_password"] else
+                                    "đang dùng mật khẩu được cấp" if u["must_change"] else
+                                    f"đăng nhập lần cuối {_when(u['last_login'])}" if u["last_login"] else
+                                    "chưa đăng nhập lần nào")
                     ui.label(" · ".join(meta)).classes("text-xs muted ellipsis")
                 if not can_manage(u):
                     if owner and u["role"] == A.OWNER:  # Owner tự đặt mật khẩu cho tài khoản của mình
@@ -452,10 +501,14 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                     ui.icon("lock", size="18px").classes("muted").style("margin:0 6px").tooltip(
                         "Owner khai trong config.toml" if u["role"] == A.OWNER else "Chỉ Owner sửa được Admin")
                 else:
-                    ui.button(icon="key", on_click=lambda _, em=u["email"]: issue_password(em)).props(
-                        "flat round dense color=grey-8").tooltip(
-                        "Đặt mật khẩu" if not u["has_password"] else
-                        "Đặt lại mật khẩu (đăng xuất người này khỏi mọi máy)")
+                    if only:
+                        ui.button(icon="send", on_click=lambda _, em=u["email"]: show_google_invite(em)).props(
+                            "flat round dense color=grey-8").tooltip("Tin mời đăng nhập bằng Google")
+                    else:
+                        ui.button(icon="key", on_click=lambda _, em=u["email"]: issue_password(em)).props(
+                            "flat round dense color=grey-8").tooltip(
+                            "Đặt mật khẩu" if not u["has_password"] else
+                            "Đặt lại mật khẩu (đăng xuất người này khỏi mọi máy)")
                     ui.button(icon="edit", on_click=lambda _, x=u: edit_dialog(x)).props(
                         "flat round dense color=grey-8").tooltip("Sửa quyền, chức danh, ghi chú")
                     ui.button(icon="person_remove", on_click=lambda _, em=u["email"]: ask_remove(em)).props(
@@ -469,8 +522,26 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
             mem = A.members(c)
             gone = A.removed_users(c)
             log = A.log_entries(c) if view["tab"] == "log" else []
+            reqs = A.pending_requests(c, cfg.access)
         people = [(u, mem.get(u["email"], {}), A.kind(u, mem.get(u["email"], {}))) for u in us]
         counts = {"team": sum(k != "client" for *_, k in people), "client": sum(k == "client" for *_, k in people)}
+
+        if reqs:  # đăng nhập Google được nhưng chưa có quyền: duyệt (chọn quyền, website) hoặc từ chối
+            with ui.element("div").classes("sr-card st-amber q-pa-md w-full q-mb-sm"):
+                with ui.row().classes("items-center gap-2 no-wrap q-mb-xs"):
+                    ui.icon("how_to_reg", size="20px").style(f"color:{T.AMBER}")
+                    ui.label(f"Chờ duyệt · {len(reqs)}").classes("text-sm font-semibold col")
+                    ui.label("Đã đăng nhập Google, chưa có quyền vào tool").classes("text-xs muted")
+                for r in reqs:
+                    with ui.row().classes("w-full items-center gap-3 no-wrap sr-access-row"):
+                        T.presence_avatar(ui, r["email"], "offline", "", size=32, tone="amber")
+                        with ui.column().classes("col gap-0").style("min-width:0"):
+                            ui.label(r["email"]).classes("text-sm font-medium ellipsis")
+                            ui.label(f"xin lúc {_when_time(r['at'])}").classes("text-xs muted")
+                        ui.button("Từ chối", on_click=lambda _, em=r["email"]: reject(em)).props(
+                            "flat dense no-caps color=grey-8")
+                        ui.button("Duyệt", icon="check", on_click=lambda _, em=r["email"]: edit_dialog(
+                            None, request=em)).props("unelevated dense no-caps")
 
         with ui.row().classes("w-full items-center gap-3 q-mb-sm"):
             def tab(e):
@@ -557,8 +628,10 @@ def build_access_page(ui, cfg, connect, user, current: str | None = None, preset
                                                                        "border-color:#EAD7AE"):
             with ui.row().classes("items-start gap-2 no-wrap"):
                 ui.icon("info", size="18px").style(f"color:{T.AMBER}")
-                ui.label("Thêm người xong, tool tạo mật khẩu và soạn sẵn tin mời (kèm link đăng nhập) để dán vào Zalo. "
-                         "Người được mời dùng luôn mật khẩu đó, đổi sang mật khẩu riêng nếu muốn. Đổi hoặc gỡ quyền "
+                ui.label(("Thêm người xong, tool soạn sẵn tin mời (kèm link đăng nhập) để dán vào Zalo. Người được "
+                          "mời bấm “Đăng nhập bằng Google” bằng đúng email đã thêm. " if g_only() else
+                          "Thêm người xong, tool tạo mật khẩu và soạn sẵn tin mời (kèm link đăng nhập) để dán vào Zalo. "
+                          "Người được mời dùng luôn mật khẩu đó, đổi sang mật khẩu riêng nếu muốn. ") + "Đổi hoặc gỡ quyền "
                          "có hiệu lực từ lần mở trang kế tiếp của người đó.").classes("text-sm")
 
     body()

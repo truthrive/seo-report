@@ -51,7 +51,7 @@ LIST_VIEWS = (("links", "Tất cả backlink"), ("domains", "Website trỏ về"
               ("anchors", "Anchor text"))
 # có danh sách toàn bộ backlink: "Việc cần làm" ở Tổng quan dùng mục audit theo từng link thay cho các mục này
 REPLACED = ("spam", "broken", "redirect", "heavy")
-TEAM_TABS = ("built", "gap")  # việc của team: khách hàng không thấy
+TEAM_TABS = ("built", "gap", "audit", "sources")  # việc của team / nguồn dữ liệu nội bộ: khách hàng không thấy
 # link cũ ?tab=… → (tab, bộ lọc của tab)
 OLD_TABS = {"needs": ("pages", "need"), "changes": ("domains", "moi")}
 VIEWS = {"pages": ("all", "need"), "domains": ("all", "moi", "mat")}
@@ -316,7 +316,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                 sel_, title_ = BLL.for_anchor(items_all, key), f"Link dùng anchor “{key or '(trống)'}”"
             else:
                 sel_, title_ = BLL.for_page(items_all, key), f"Link trỏ về {_path(key)}"
-            WBL.dialog(ui, user, title_, f"{len(sel_)} link · DataForSEO + file Semrush", sel_, on_label=body.refresh)
+            WBL.dialog(ui, user, title_, f"{len(sel_)} link" + ("" if cl else " · DataForSEO + file Semrush"), sel_, on_label=body.refresh)
 
         n_dom = len({x["d_from"] for x in items_all})
 
@@ -386,7 +386,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             elif v == "pages":
                 pages_tab()
             elif items_all:
-                WV2.anchors_panel(ui, items_all, brand_terms_of(own), kits["anchors"], open_links)
+                WV2.anchors_panel(ui, items_all, brand_terms_of(own), kits["anchors"], open_links, client=cl)
             else:
                 list_panel("anchors", ls, own, [])
         state["redraw"] = {"pages": pages_tab, "domains": domains_tab, "list": list_tab}
@@ -403,8 +403,9 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                 kpis(bl, ls, ld)
                 if not cl:
                     WAB.profile_box(ui, actx)
-                WV2.overview(ui, ld, bl, audit_checks, open_check,
-                             on_import=(lambda: WBL.import_dialog(ui, cfg, user, body.refresh)) if ed else None)
+                if not cl:  # khách hàng: không bảng so nguồn dữ liệu, không việc cần làm của team
+                    WV2.overview(ui, ld, bl, audit_checks, open_check,
+                                 on_import=(lambda: WBL.import_dialog(ui, cfg, user, body.refresh)) if ed else None)
                 trend(bl)
             with ui.tab_panel("audit").classes("q-px-none"):
                 if cl:
@@ -487,7 +488,10 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                     {"label": f"lần lấy {date.fromisoformat(prev['day']):%d/%m}", "value": F.n(prev[field])})
         with T.kpi_row(ui):
             d, g, _ = delta("referring_domains")
-            if merged:
+            if merged and cl:  # khách hàng: số gộp, không tách nguồn dữ liệu
+                T.kpi(ui, "language", "Website trỏ về", F.n(sm["all"]["domains"]), tone="green",
+                      info=("Số website (tên miền) khác nhau đang có ít nhất một link về site.",))
+            elif merged:
                 T.kpi(ui, "language", "Website trỏ về · gộp", F.n(sm["all"]["domains"]), tone="green",
                       info=("Số website khác nhau đang link về site, gộp DataForSEO và file Semrush (bỏ trùng).",
                             "Số dưới thẻ đếm từ danh sách link của từng nguồn nên khớp bảng Số liệu theo nguồn; "
@@ -502,12 +506,12 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                       info=("Số website (tên miền) khác nhau đang có ít nhất một link về site.",
                             "Chỉ số quan trọng nhất: nhiều website khác nhau link về có giá trị hơn nhiều link từ một "
                             "website."),
-                      hint=f"{F.n(now['referring_domains_nofollow'] or 0)} website chỉ có link nofollow")
+                      hint="" if cl else f"{F.n(now['referring_domains_nofollow'] or 0)} website chỉ có link nofollow")
             d, g, _ = delta("backlinks")
             ch = (ls.get("changes") or {}).get("items")
             moves = (f"+{sum(1 for x in ch if not x['lost'])} / −{sum(1 for x in ch if x['lost'])} trong "
-                     f"{BL.CHANGE_DAYS} ngày (DataForSEO)") if ch is not None else ""
-            card = T.kpi(ui, "link", "Backlink · gộp" if merged else "Backlink",
+                     f"{BL.CHANGE_DAYS} ngày" + ("" if cl else " (DataForSEO)")) if ch is not None else ""
+            card = T.kpi(ui, "link", "Backlink · gộp" if merged and not cl else "Backlink",
                          F.n(sm["all"]["links"]) if merged else F.n(now["backlinks"] or 0),
                          delta="" if merged else d, good=None if merged else g, tone="blue",
                          info=("Tổng số link đang trỏ về site (một website có thể link nhiều lần).",
@@ -516,10 +520,11 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
             if ch is not None:
                 card.classes("clickable").on("click", lambda: go("changes"))
             d, g, _ = delta("rank")
-            T.kpi(ui, "military_tech", "Uy tín (DataForSEO)",
+            T.kpi(ui, "military_tech", "Uy tín" if cl else "Uy tín (DataForSEO)",
                   f"{now['rank'] if now['rank'] is not None else '–'}/1000", delta=d,
                   good=g, tone="lime",
-                  info=("Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link trỏ về.",))
+                  info=("Điểm uy tín của website (0–1000), tính từ số và chất lượng link trỏ về.",) if cl else
+                  ("Điểm uy tín của website theo DataForSEO (0–1000), tính từ số và chất lượng link trỏ về.",))
             d, g, _ = delta("spam_score", good_up=False)
             spam = now["spam_score"]
             if not cl:  # điểm spam: số kiểm soát nội bộ, không đưa cho khách
@@ -625,28 +630,30 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
     def kit_filters(kind: str) -> list[tuple]:
         """Bộ lọc của từng bảng (điểm spam: chỉ team thấy)."""
         spam = [] if cl else [("num", "Điểm spam", "spam")]
+        tech = (lambda *f: [] if cl else list(f))  # dofollow / nofollow: chỉ team thấy
         return {
             "domains": [("text", "Website", ["domain"]), ("num", "Uy tín", "rank"), ("num", "Backlink", "backlinks"),
-                        ("num", "Trang dofollow", "dofollow_n"), *spam, ("enum", "Loại link", "df"),
+                        *tech(("num", "Trang dofollow", "dofollow_n")), *spam, *tech(("enum", "Loại link", "df")),
                         ("date", "Thấy lần đầu", "first_iso")],
             "changes": [("text", "Trang link về / anchor / trang đích", ["source", "title", "anchor", "target"]),
-                        *spam, ("enum", "Loại link", "follow"), ("date", "Ngày", "first_iso")],
+                        *spam, *tech(("enum", "Loại link", "follow")), ("date", "Ngày", "first_iso")],
             "anchors": [("text", "Anchor", ["anchor"]), ("num", "Website dùng", "domains"),
                         ("num", "Backlink", "backlinks"), ("enum", "Loại anchor", "type"),
                         ("date", "Thấy lần đầu", "first_iso")],
             "pages": [("text", "Trang / tiêu đề", ["page", "title"]), ("num", "Website trỏ về", "domains"),
-                      ("num", "Backlink", "backlinks"), ("num", "Uy tín", "rank"), ("enum", "Tình trạng trang", "state")],
+                      ("num", "Backlink", "backlinks"), ("num", "Uy tín", "rank"),
+                      *tech(("enum", "Tình trạng trang", "state"))],
         }[kind]
 
     def kit_copy(kind: str) -> list[tuple[str, str]]:
         spam = [] if cl else [("Điểm spam", "spam")]
         return {
             "domains": [("Website", "domain"), ("Uy tín", "rank"), ("Backlink", "backlinks"),
-                        ("Trang dofollow", "dofollow_n"), ("Số trang", "pages_n"), ("Thấy lần đầu", "first_iso"),
-                        *spam],
+                        *([] if cl else [("Trang dofollow", "dofollow_n")]), ("Số trang", "pages_n"),
+                        ("Thấy lần đầu", "first_iso"), *spam],
             "changes": [("Trạng thái", "status"), ("Trang link về", "href"), ("Tiêu đề trang link về", "title"),
-                        ("Anchor", "anchor"), ("Trang đích", "to_url"), ("Loại", "follow"), ("Ngày", "first_iso"),
-                        *spam],
+                        ("Anchor", "anchor"), ("Trang đích", "to_url"), *([] if cl else [("Loại", "follow")]),
+                        ("Ngày", "first_iso"), *spam],
             "anchors": [("Anchor", "anchor"), ("Loại", "type"), ("Website dùng", "domains"), ("Tỷ lệ", "share"),
                         ("Backlink", "backlinks"), ("Thấy lần đầu", "first_iso")],
             "pages": [("Trang", "href"), ("Tiêu đề", "title"), ("Website trỏ về", "domains"), ("Backlink", "backlinks"),
@@ -799,12 +806,14 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                             ("backlinks", "Backlink", "right"), ("rank", "Uy tín", "right")]
                     rows = [{"k": x["page"], "page": _path(x["page"]), "title": x.get("title") or "",
                              "href": x["page"], "domains": x["domains"], "backlinks": x["backlinks"], "rank": x["rank"],
-                             "gone": (x.get("status") or 200) >= 400,
+                             "gone": (x.get("status") or 200) >= 400 and not cl,
                              "state": "Trang lỗi" if (x.get("status") or 200) >= 400 else (
                                  "Chuyển hướng" if 300 <= (x.get("status") or 200) < 400 else "Bình thường")}
                             for x in items]
                     note += " · xếp theo số website trỏ về"
-                if kind in ("domains", "changes"):  # nhãn website (dùng chung mọi dự án)
+                if cl:  # khách hàng: không cột dofollow / nofollow
+                    cols = [c_ for c_ in cols if c_[0] not in ("dofollow", "follow")]
+                if kind in ("domains", "changes") and not cl:  # nhãn website (dùng chung mọi dự án): việc của team
                     WL.enrich(rows, "domain" if kind == "domains" else "source", user)
                     cols.insert(1, ("labels", "Nhãn", "left"))
                 if q:
@@ -824,7 +833,7 @@ def build_backlink_page(ui, cfg, connect, user, start: str = "", view: str = "")
                                       lambda: set_filter(fkey))
                     ui.label(note).classes("text-xs muted")
                 kit = state.setdefault("kit", {}).setdefault(kind, TK.new_state())
-                lab_kind = kind in ("domains", "changes")
+                lab_kind = kind in ("domains", "changes") and not cl
                 ld_ = state.get("ld")
                 drill = ld_ is not None and kind in ("domains", "anchors", "pages")
                 if drill:

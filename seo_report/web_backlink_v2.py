@@ -112,6 +112,9 @@ def domains_panel(ui, user, items: list[dict], kit: dict, on_label, open_links) 
                      "df": "Có dofollow" if g["dofollow"] else "Chỉ nofollow", "danger": g["threat"]})
     WL.enrich(rows, "domain", user)
     cl = A.is_client(user)
+    if cl:  # khách hàng: dòng phụ chỉ còn quốc gia, không nguồn dữ liệu / cảnh báo audit
+        for r in rows:
+            r.update(src="", dfs=0, semrush=0, danger=False)
     cols = [{"name": "domain", "label": "Website", "field": "domain", "align": "left", "sortable": True}, WL.COLUMN,
             {"name": "links", "label": "Số link", "field": "links", "align": "right", "sortable": True,
              "width": 170},
@@ -127,23 +130,30 @@ def domains_panel(ui, user, items: list[dict], kit: dict, on_label, open_links) 
     if not cl:
         cols.insert(6, {"name": "spam", "label": "Spam", "field": "spam", "align": "right", "sortable": True,
                         "width": 75})
+    else:  # khách hàng: bỏ cột nhãn nội bộ, dofollow, Ascore (Semrush); "Uy tín" không kèm tên nguồn
+        cols = [c_ for c_ in cols if c_["name"] not in ("labels", "dofollow", "ascore")]
+        next(c_ for c_ in cols if c_["name"] == "rank")["label"] = "Uy tín"
     TK.table(ui, columns=cols, rows=rows, row_key="k", st=kit, noun="website", classes="sr-kw-tbl", page_size=25,
-             filters=[("text", "Website", ["domain"]), ("num", "Số link", "links"), ("num", "Uy tín (DFS)", "rank"),
-                      ("num", "Ascore", "ascore"), *([] if cl else [("num", "Điểm spam", "spam")]),
+             filters=[("text", "Website", ["domain"]), ("num", "Số link", "links"), ("num", "Uy tín", "rank"),
+                      ("enum", "Quốc gia", "country"), ("date", "Thấy lần đầu", "first_iso")] if cl else
+                     [("text", "Website", ["domain"]), ("num", "Số link", "links"), ("num", "Uy tín (DFS)", "rank"),
+                      ("num", "Ascore", "ascore"), ("num", "Điểm spam", "spam"),
                       ("enum", "Nguồn dữ liệu", "src_l"), ("enum", "Loại link", "df"), ("enum", "Quốc gia", "country"),
                       WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
              actions=WL.action(ui, user, "domain", on_label), export="backlink-website",
              events={"drill": lambda e: open_links("domain", e.args), **WL.events(ui, user, on_label)},
-             copy=[("Website", "domain"), WL.COPY, ("Nguồn", "src"), ("Số link", "links"), ("Link DataForSEO", "dfs"),
+             copy=[("Website", "domain"), ("Số link", "links"), ("Uy tín", "rank"), ("Trang đích", "targets"),
+                   ("Quốc gia", "country"), ("Thấy lần đầu", "first_iso")] if cl else
+                  [("Website", "domain"), WL.COPY, ("Nguồn", "src"), ("Số link", "links"), ("Link DataForSEO", "dfs"),
                    ("Link Semrush", "semrush"), ("Dofollow", "dofollow"), ("Uy tín (DFS)", "rank"), ("Ascore", "ascore"),
-                   *([] if cl else [("Điểm spam", "spam")]), ("Trang đích", "targets"), ("Quốc gia", "country"),
+                   ("Điểm spam", "spam"), ("Trang đích", "targets"), ("Quốc gia", "country"),
                    ("IP", "ip"), ("Thấy lần đầu", "first_iso")],
              slots={
                  "body-cell-domain": """
                 <q-td :props="props"><a :href="'https://' + props.row.domain" target="_blank" rel="noopener"
                   class="sr-bb-link">{{ props.row.domain }}</a>
                   <span v-if="props.row.danger" class="sr-bl-type k-lost q-ml-xs">Google cảnh báo</span>
-                  <div class="sr-bb-sub">{{ props.row.src }}{{ props.row.country ? ' · ' + props.row.country : '' }}
+                  <div class="sr-bb-sub">{{ [props.row.src, props.row.country].filter(Boolean).join(' · ') }}
                   </div></q-td>""",
                  "body-cell-labels": WL.SLOT,
                  "body-cell-links": """
@@ -165,6 +175,9 @@ def pages_panel(ui, user, items: list[dict], kit: dict, open_links) -> None:
                      "status": st, "redir": g["redir"],
                      "state": ("Trang lỗi" if st and st >= 400 else "Chuyển hướng" if st and 300 <= st < 400 else
                                "Bình thường" if st else "Chưa rõ")})
+    cl = A.is_client(user)
+    for r in rows:  # khách hàng: một số website gộp, không tách theo nguồn dữ liệu
+        r["split"] = not cl
     cols = [{"name": "page", "label": "Trang đích", "field": "page", "align": "left", "sortable": True},
             {"name": "domains", "label": "Website (DFS / Semrush)", "field": "domains", "align": "right",
              "sortable": True, "width": 170},
@@ -173,11 +186,15 @@ def pages_panel(ui, user, items: list[dict], kit: dict, open_links) -> None:
              "width": 90},
             {"name": "state", "label": "Tình trạng", "field": "state", "align": "left", "sortable": True, "width": 125},
             {"name": "act", "label": "", "field": "k", "align": "left", "width": 96, "sortable": False}]
+    if cl:  # khách hàng: bỏ dofollow và tình trạng trang (mã lỗi / chuyển hướng)
+        cols = [c_ for c_ in cols if c_["name"] not in ("dofollow", "state")]
+        cols[1]["label"] = "Website trỏ về"
     TK.table(ui, columns=cols, rows=rows, row_key="k", st=kit, noun="trang", classes="sr-kw-tbl", page_size=25,
-             filters=[("text", "Trang đích", ["page"]), ("num", "Số website", "domains"), ("num", "Backlink", "links"),
-                      ("enum", "Tình trạng", "state")],
+             filters=[("text", "Trang đích", ["page"]), ("num", "Số website", "domains"), ("num", "Backlink", "links")]
+             + ([] if cl else [("enum", "Tình trạng", "state")]),
              export="backlink-trang-dich", events={"drill": lambda e: open_links("page", e.args)},
-             copy=[("Trang đích", "url"), ("Website trỏ về", "domains"), ("Website DataForSEO", "dfs"),
+             copy=[("Trang đích", "url"), ("Website trỏ về", "domains"), ("Backlink", "links")] if cl else
+                  [("Trang đích", "url"), ("Website trỏ về", "domains"), ("Website DataForSEO", "dfs"),
                    ("Website Semrush", "semrush"), ("Backlink", "links"), ("Dofollow", "dofollow"),
                    ("Mã trạng thái", "status"), ("Chuyển hướng tới", "redir"), ("Tình trạng", "state")],
              slots={
@@ -186,7 +203,8 @@ def pages_panel(ui, user, items: list[dict], kit: dict, open_links) -> None:
                   style="max-width:100%" :title="props.row.url">{{ props.row.page }}</a></q-td>""",
                  "body-cell-domains": """
                 <q-td :props="props"><span class="num">{{ props.row.domains }}</span>
-                  <span class="sr-bb-sub q-ml-xs">{{ props.row.dfs }} / {{ props.row.semrush }}</span></q-td>""",
+                  <span v-if="props.row.split" class="sr-bb-sub q-ml-xs">{{ props.row.dfs }} / {{ props.row.semrush }}
+                  </span></q-td>""",
                  "body-cell-state": """
                 <q-td :props="props"><span :class="props.row.status >= 400 ? 'sr-bl-type k-lost' : ''">
                   {{ props.row.state }}{{ props.row.status && props.row.status !== 200 ? ' · ' + props.row.status : '' }}
@@ -196,7 +214,8 @@ def pages_panel(ui, user, items: list[dict], kit: dict, open_links) -> None:
                   label="Xem link" class="q-px-xs" @click.stop="$parent.$emit('drill', props.row.k)"/></q-td>"""})
 
 
-def anchors_panel(ui, items: list[dict], brand_terms: list[str], kit: dict, open_links) -> None:
+def anchors_panel(ui, items: list[dict], brand_terms: list[str], kit: dict, open_links, client: bool = False) -> None:
+    """client (khách hàng): cột website không tách theo nguồn dữ liệu, không câu hướng dẫn tối ưu anchor."""
     rs = AG.anchors(items, brand_terms)
     mix = AG.anchor_mix(rs)
     with ui.element("div").classes("sr-bl-mix q-mb-sm"):
@@ -205,30 +224,33 @@ def anchors_panel(ui, items: list[dict], brand_terms: list[str], kit: dict, open
     rows = [{"k": r["anchor"], "anchor": r["anchor"] or "(trống / ảnh)", "type": ANCHOR_TYPE[r["type"]],
              "domains": r["domains"], "dfs": r["dfs"], "semrush": r["semrush"], "links": r["links"],
              "share": f"{r['share'] * 100:.1f}%".replace(".", ","), "share_n": r["share"],
-             "first_iso": r["first"] or "", "first": _vn(r["first"])} for r in rs]
+             "first_iso": r["first"] or "", "first": _vn(r["first"]), "split": not client} for r in rs]
     cols = [{"name": "anchor", "label": "Anchor", "field": "anchor", "align": "left", "sortable": True},
             {"name": "type", "label": "Loại", "field": "type", "align": "left", "sortable": True, "width": 115},
-            {"name": "domains", "label": "Website (DFS / Semrush)", "field": "domains", "align": "right",
-             "sortable": True, "width": 170},
+            {"name": "domains", "label": "Website trỏ về" if client else "Website (DFS / Semrush)", "field": "domains",
+             "align": "right", "sortable": True, "width": 170},
             {"name": "share", "label": "Tỷ lệ", "field": "share_n", "align": "right", "sortable": True, "width": 80},
             {"name": "links", "label": "Backlink", "field": "links", "align": "right", "sortable": True, "width": 95},
             {"name": "act", "label": "", "field": "k", "align": "left", "width": 96, "sortable": False}]
     TK.table(ui, columns=cols, rows=rows, row_key="k", st=kit, noun="anchor", classes="sr-kw-tbl", page_size=25,
              filters=[("text", "Anchor", ["anchor"]), ("num", "Số website", "domains"), ("enum", "Loại anchor", "type")],
              export="backlink-anchor", events={"drill": lambda e: open_links("anchor", e.args)},
-             copy=[("Anchor", "anchor"), ("Loại", "type"), ("Website", "domains"), ("Website DataForSEO", "dfs"),
-                   ("Website Semrush", "semrush"), ("Tỷ lệ", "share"), ("Backlink", "links"),
-                   ("Thấy lần đầu", "first_iso")],
+             copy=[("Anchor", "anchor"), ("Loại", "type"), ("Website", "domains"),
+                   *([] if client else [("Website DataForSEO", "dfs"), ("Website Semrush", "semrush")]),
+                   ("Tỷ lệ", "share"), ("Backlink", "links"), ("Thấy lần đầu", "first_iso")],
              slots={
                  "body-cell-anchor": """
                 <q-td :props="props"><div class="ellipsis" :title="props.row.anchor">{{ props.row.anchor }}</div></q-td>""",
                  "body-cell-domains": """
                 <q-td :props="props"><span class="num">{{ props.row.domains }}</span>
-                  <span class="sr-bb-sub q-ml-xs">{{ props.row.dfs }} / {{ props.row.semrush }}</span></q-td>""",
+                  <span v-if="props.row.split" class="sr-bb-sub q-ml-xs">{{ props.row.dfs }} / {{ props.row.semrush }}
+                  </span></q-td>""",
                  "body-cell-share": """<q-td :props="props">{{ props.row.share }}</q-td>""",
                  "body-cell-act": """
                 <q-td :props="props" style="overflow:visible"><q-btn flat dense no-caps size="sm" color="primary"
                   label="Xem link" class="q-px-xs" @click.stop="$parent.$emit('drill', props.row.k)"/></q-td>"""})
+    if client:
+        return
     ui.label("Tỷ lệ tính trên số website dùng anchor. Hồ sơ tự nhiên có nhiều anchor thương hiệu / URL; anchor từ khóa "
              "chiếm quá nửa là dấu hiệu tối ưu quá mức.").classes("text-xs muted q-mt-xs")
 

@@ -63,6 +63,13 @@ INTEGRATIONS = [
                 "Insights API” và “Chrome UX Report API” trong Library. Nên giới hạn key chỉ dùng cho 2 API này.",
                 [Field("api_key", "API key", secret=True, placeholder="AIza…")],
                 default_path="secrets/google_api.toml", required=("api_key",)),
+    Integration("google_login", "Đăng nhập bằng Google", "login",
+                "Cho mọi người đăng nhập tool bằng tài khoản Google. Tạo ở Google Cloud Console > APIs & Services > "
+                "Credentials > Create credentials > OAuth client ID > loại “Web application”, thêm Authorized "
+                "redirect URI như dòng bên dưới, rồi chép Client ID và Client secret vào đây.",
+                [Field("client_id", "Client ID", placeholder="…apps.googleusercontent.com"),
+                 Field("client_secret", "Client secret", secret=True, placeholder="GOCSPX-…")],
+                default_path="secrets/google_login.toml", required=("client_id", "client_secret"), group="login"),
     Integration("ai", "Anthropic (Claude)", "auto_awesome",
                 "Nhà cung cấp AI chính của tool: viết nhận xét báo cáo, đoạn trả lời AI Overview, brief nội dung… "
                 "Lấy khóa ở platform.claude.com > API keys.",
@@ -340,7 +347,13 @@ def _test_gateway(cfg, v: dict, opener=None) -> tuple[bool, str]:
 
 
 TESTS = {"dataforseo": _test_dataforseo, "google_ads": _test_google_ads, "ai": _test_ai,
-         "google_api": _test_google_api, "gateway": _test_gateway, **{k: _test_key(k) for k in _MODEL_LIST}}
+         "google_api": _test_google_api, "gateway": _test_gateway, **{k: _test_key(k) for k in _MODEL_LIST},
+         "google_login": lambda cfg, v: _test_google_login(cfg, v)}
+
+
+def _test_google_login(cfg, v: dict) -> tuple[bool, str]:
+    from . import google_login as GL
+    return GL.test_client(cfg, v)
 
 
 def test(cfg, key: str, values: dict) -> tuple[bool, str]:

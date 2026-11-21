@@ -114,13 +114,19 @@ def db_path(base: Config, project: dict) -> Path:
 def config_for(base: Config, project: dict) -> Config:
     """Cấu hình của một dự án: chung phần tài khoản Google, DataForSEO, phân quyền; riêng website và dữ liệu."""
     s = project["settings"]
+    owner = s.get("google_owner") or ""  # website người dùng tự thêm: lấy số bằng token Google của người đó
+    paid_ok = bool(s.get("paid_ok", True)) or not owner
+    if owner:
+        from .user_google import token_path
+        base = replace(base, token_path=token_path(base, owner))
     return replace(
         base, site_url=project["site_url"], ga4_property=project["ga4_property"], db_path=db_path(base, project),
+        google_owner=owner, paid_ok=paid_ok,
         logo=project.get("logo") or "",
         keywords=replace(base.keywords, brand_terms=tuple(s["brand_terms"])),
         rank=replace(base.rank, monthly_budget_usd=float(s["rank_budget_usd"]), location_code=int(s["location_code"]),
                      language_code=s["language_code"], device=s["device"],
-                     se_domain=s.get("se_domain") or DEFAULTS["se_domain"], paused=bool(s.get("rank_paused"))),
+                     se_domain=s.get("se_domain") or DEFAULTS["se_domain"], paused=bool(s.get("rank_paused")) or not paid_ok),
         okr=replace(base.okr, sheet=s["okr_sheet"], okr_tab=s["okr_tab"], weekly_tab=s["weekly_tab"]))
 
 

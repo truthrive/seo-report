@@ -9,6 +9,8 @@ let uid = 0;
 export default {
   template: `
     <div class="sr-fab-group" ref="root" @keydown.esc="closeDial(true)">
+      <!-- nền mờ phía sau khi mở thao tác nhanh: tách các nút khỏi giao diện bên dưới; bấm vào nền để đóng -->
+      <div v-if="open || ctx" class="sr-fab-scrim" aria-hidden="true" @click="open ? closeDial(false) : (ctx = null)"></div>
       <button v-if="actions.length" ref="fab" type="button" class="sr-fab" :class="{ open: open }"
               :aria-expanded="open ? 'true' : 'false'" :aria-controls="open ? dialId : null"
               :aria-label="open ? 'Đóng thao tác nhanh' : fabLabel" @click="toggle">

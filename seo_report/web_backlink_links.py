@@ -105,6 +105,7 @@ def rows_of(items: list[dict], client: bool = False, brand_terms: list[str] | No
             "country": x.get("country") or "", "ip": x.get("ip") or "",
             "first_iso": x.get("first") or "", "first": _vn(x.get("first")), "last_iso": x.get("last") or "",
             "spammy": (x.get("spam") or 0) >= LA.SPAM and not client,
+            "client": client,  # khách hàng: ô bảng không hiện dòng phụ kỹ thuật (dạng link, mã trạng thái)
             # thêm cho xuất file / sao chép (đủ dữ liệu để audit)
             "pre": x.get("pre") or "", "post": x.get("post") or "", "alt": x.get("alt") or "",
             "st_to": st, "redir": x.get("redir") or "", "indirect": "có" if x.get("indirect") else "",
@@ -113,7 +114,7 @@ def rows_of(items: list[dict], client: bool = False, brand_terms: list[str] | No
             "st_from": x.get("st_from"), "original": "có" if x.get("original") else "",
             "threat": ((BLL_SB.get(x["threat"], x["threat"]) if x["threat"] else "an toàn") if "threat" in x
                        else "chưa kiểm tra"),
-            "danger": BLL_SB.get(x.get("threat") or "", "") if x.get("threat") else "",
+            "danger": BLL_SB.get(x.get("threat") or "", "") if x.get("threat") and not client else "",
             "a_type": {"url": "URL", "brand": "Thương hiệu", "keyword": "Từ khóa", "empty": "Trống / ảnh"}.get(
                 anchor_type(x.get("anchor") or "", brand_terms or []), "")})
     WL.enrich(rows, "d_from", user)
@@ -137,25 +138,33 @@ def table(ui, user, items: list[dict], kit: dict, on_label=None, export: str = "
     if not cl:
         cols.insert(-1, {"name": "spam", "label": "Spam", "field": "spam", "align": "right", "sortable": True,
                          "width": 75})
+    else:  # khách hàng: kết quả, không cột kỹ thuật (nhãn nội bộ, dofollow / nofollow, nguồn dữ liệu)
+        cols = [c_ for c_ in cols if c_["name"] not in ("labels", "follow", "src")]
+    filters = ([("text", "Website / trang đặt link / anchor / trang đích", ["from", "title", "anchor", "to"]),
+                ("num", "Uy tín website", "d_rank"), ("date", "Thấy lần đầu", "first_iso")] if cl else
+               [("text", "Website / trang đặt link / anchor / trang đích", ["from", "title", "anchor", "to"]),
+                ("num", "Uy tín website", "d_rank"), ("num", "Điểm spam", "spam"),
+                ("enum", "Loại link", "follow"), ("enum", "Vị trí", "place"), ("enum", "Dạng link", "type"),
+                ("enum", "Nguồn dữ liệu", "src_l"),
+                WL.FILTER, ("date", "Thấy lần đầu", "first_iso")])
+    copy = ([("Website", "d_from"), ("Trang đặt link", "from"), ("Tiêu đề trang", "title"), ("Anchor", "anchor"),
+             ("Trang đích", "to"), ("Uy tín website", "d_rank"), ("Thấy lần đầu", "first_iso")] if cl else
+            [("Website", "d_from"), WL.COPY, ("Nguồn", "src"), ("Page ascore (Semrush)", "ascore"), ("Trang đặt link", "from"), ("Tiêu đề trang", "title"),
+             ("Anchor", "anchor"), ("Loại anchor", "a_type"), ("Chữ trước anchor", "pre"),
+             ("Chữ sau anchor", "post"), ("Dạng link", "type"), ("Alt ảnh", "alt"), ("Trang đích", "to"),
+             ("Mã trang đích", "st_to"), ("Chuyển hướng tới", "redir"), ("Link gián tiếp", "indirect"),
+             ("Loại", "follow"), ("Thuộc tính rel", "attrs_all"), ("Vị trí", "place"), ("Vị trí (HTML)", "loc"),
+             ("Số link giống trên trang", "same"), ("Uy tín website", "d_rank"), ("Uy tín trang", "p_rank"),
+             ("Uy tín truyền (rank)", "rank"), ("Điểm spam", "spam"),
+             ("Link ra ngoài của trang nguồn", "ext"), ("Từ khóa top 10 của trang nguồn", "kw10"),
+             ("Từ khóa top 100 của trang nguồn", "kw100"), ("Loại website (DataForSEO)", "platform"),
+             ("Ngôn ngữ", "lang"), ("Quốc gia", "country"), ("IP", "ip"), ("Mã trang nguồn", "st_from"), ("Google Safe Browsing", "threat"),
+             ("Có từ lần đầu", "original"), ("Thấy lần đầu", "first_iso"), ("Thấy gần nhất", "last_iso")])
     TK.table(ui, columns=cols, rows=rows, row_key="i", st=kit, noun=noun, classes="sr-kw-tbl", page_size=25,
-             filters=[("text", "Website / trang đặt link / anchor / trang đích", ["from", "title", "anchor", "to"]),
-                      ("num", "Uy tín website", "d_rank"), *([] if cl else [("num", "Điểm spam", "spam")]),
-                      ("enum", "Loại link", "follow"), ("enum", "Vị trí", "place"), ("enum", "Dạng link", "type"),
-                      ("enum", "Nguồn dữ liệu", "src_l"),
-                      WL.FILTER, ("date", "Thấy lần đầu", "first_iso")],
+             filters=filters,
              actions=WL.action(ui, user, "d_from", on_label) if on_label else None, export=export,
              events=WL.events(ui, user, on_label),
-             copy=[("Website", "d_from"), WL.COPY, ("Nguồn", "src"), ("Page ascore (Semrush)", "ascore"), ("Trang đặt link", "from"), ("Tiêu đề trang", "title"),
-                   ("Anchor", "anchor"), ("Loại anchor", "a_type"), ("Chữ trước anchor", "pre"),
-                   ("Chữ sau anchor", "post"), ("Dạng link", "type"), ("Alt ảnh", "alt"), ("Trang đích", "to"),
-                   ("Mã trang đích", "st_to"), ("Chuyển hướng tới", "redir"), ("Link gián tiếp", "indirect"),
-                   ("Loại", "follow"), ("Thuộc tính rel", "attrs_all"), ("Vị trí", "place"), ("Vị trí (HTML)", "loc"),
-                   ("Số link giống trên trang", "same"), ("Uy tín website", "d_rank"), ("Uy tín trang", "p_rank"),
-                   ("Uy tín truyền (rank)", "rank"), *([] if cl else [("Điểm spam", "spam")]),
-                   ("Link ra ngoài của trang nguồn", "ext"), ("Từ khóa top 10 của trang nguồn", "kw10"),
-                   ("Từ khóa top 100 của trang nguồn", "kw100"), ("Loại website (DataForSEO)", "platform"),
-                   ("Ngôn ngữ", "lang"), ("Quốc gia", "country"), ("IP", "ip"), ("Mã trang nguồn", "st_from"), ("Google Safe Browsing", "threat"),
-                   ("Có từ lần đầu", "original"), ("Thấy lần đầu", "first_iso"), ("Thấy gần nhất", "last_iso")],
+             copy=copy,
              slots={
                  "body-cell-from": """
                 <q-td :props="props"><div class="ellipsis" style="max-width:100%">
@@ -167,10 +176,10 @@ def table(ui, user, items: list[dict], kit: dict, on_label=None, export: str = "
                  "body-cell-labels": WL.SLOT,
                  "body-cell-anchor": """
                 <q-td :props="props"><div class="ellipsis" :title="props.row.anchor">{{ props.row.anchor }}</div>
-                  <div class="sr-bb-sub">{{ props.row.type }}</div></q-td>""",
+                  <div v-if="!props.row.client" class="sr-bb-sub">{{ props.row.type }}</div></q-td>""",
                  "body-cell-to": """
                 <q-td :props="props"><div class="ellipsis" :title="props.row.to">{{ props.row.to_path }}</div>
-                  <span v-if="props.row.st" class="sr-bl-type" :class="props.row.bad ? 'k-lost' : ''">
+                  <span v-if="props.row.st && !props.row.client" class="sr-bl-type" :class="props.row.bad ? 'k-lost' : ''">
                     {{ props.row.bad ? 'lỗi ' : '' }}{{ props.row.st }}</span></q-td>""",
                  "body-cell-follow": """
                 <q-td :props="props"><span class="sr-bl-type" :class="props.row.follow === 'dofollow' ? 'k-new' : ''">
@@ -409,7 +418,9 @@ def panel(ui, cfg, user, data: dict | None, checks: list[dict], state: dict, ref
                 + (f" / {F.n(data['total'])} (lấy {F.n(len(items))} link uy tín cao nhất)"
                    if data.get("total") and data["total"] > len(items) else "")
                 + (f" · so với lần lấy {_vn(data['prev']['fetched_at'])}" if data.get("prev") else ""))
-        for imp in data.get("imports") or []:
+        if A.is_client(user):  # khách hàng: chỉ ngày cập nhật và số link, không chuyện nhập file / giới hạn lấy
+            note = f"Cập nhật {_vn(data['fetched_at'])} · {F.n(len(items))} link"
+        for imp in [] if A.is_client(user) else data.get("imports") or []:
             note += (f" · gộp file {SRC_NAME.get(imp['source'], imp['source'])} nhập {_vn(imp['imported_at'])} "
                      f"({F.n(imp['count'])} link còn)")
         with ui.row().classes("w-full items-center no-wrap gap-2 q-mb-xs"):

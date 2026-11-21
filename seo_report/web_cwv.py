@@ -22,6 +22,7 @@ def _score_tone(s) -> str:
 
 
 TABS = (("overview", "Tổng quan"), ("field", "Người dùng thật"), ("pages", "Từng trang"))
+CLIENT_TABS = ("overview",)  # khách hàng: chỉ Tổng quan (điểm + 3 chỉ số), không bảng từng trang / việc cần sửa
 
 
 def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
@@ -29,10 +30,10 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: số tốc độ, không danh sách việc cần sửa / nên sửa của team
     right = T.page_header(ui, "speed", "Tốc độ trang & Core Web Vitals",
-                          "Website nhanh hay chậm với người dùng thật, trang nào cần sửa.")
+                          "Website nhanh hay chậm với người dùng thật" + ("." if cl else ", trang nào cần sửa."))
     right.classes("no-wrap")  # nút Kiểm tra ngay + Xuất cùng một hàng
     state = {"form": "PHONE", "metric": "lcp", "running": False, "filter": None,
-             "tab": start if start in dict(TABS) else "overview"}
+             "tab": start if start in dict(TABS) and (not cl or start in CLIENT_TABS) else "overview"}
     has_key = bool(C.load_key(cfg))
 
     async def run_now(btn) -> None:
@@ -91,7 +92,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         if not has_key:
             T.empty_state(ui, "key", "Chưa có Google API key",
                           "Owner thêm Google API key ở Cài đặt tích hợp (miễn phí)."
-                          if ed else "Số tốc độ sẽ có sau khi tool được cấu hình.")
+                          if ed else "Đội SEO đang chuẩn bị số liệu này.")
             return
         with connect() as c:
             series = C.origin_series(c, state["form"])
@@ -106,6 +107,9 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         ui.label(f"Kiểm tra lúc {datetime.fromisoformat(last).astimezone():%H:%M %d/%m/%Y} · tự kiểm tra lại mỗi tuần") \
             .classes("text-xs muted q-mb-xs")
         checks = [] if cl else CA.audit(phone, desktop, pages)
+        if cl:  # khách hàng: chỉ phần Tổng quan, không thanh tab
+            overview_tab(CA.score(phone, desktop, pages), phone, checks)
+            return
         site_checks = [c_ for c_ in checks if not c_["pages"]]   # cả website: tab Người dùng thật
         page_checks = [c_ for c_ in checks if c_["pages"]]       # theo trang: tab Từng trang (bấm để lọc)
         badge = {"field": sum(1 for c_ in site_checks if c_["level"] == "high"),

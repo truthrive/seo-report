@@ -619,6 +619,55 @@ def overview(con: sqlite3.Connection, today: date, period: tuple[date, date] | N
     return out
 
 
+def end_as_of(exts: list[dict], current_end: str | None, day: date) -> str | None:
+    """Ngày kết thúc của hạng mục vào ngày `day` (trước các lần gia hạn sau ngày đó)."""
+    before = [x for x in exts if x["at"] and x["at"][:10] <= day.isoformat()]
+    if before:
+        return before[-1]["new_end"]
+    return exts[0]["old_end"] if exts else current_end
+
+
+def week_history(con, today: date, cycle: str | None = None) -> list[dict]:
+    """Từng tuần (thứ Hai – Chủ nhật) của đợt, từ tuần đầu tới tuần này, mới trước: đến hạn, hoàn thành trong tuần,
+    trễ hạn tính đến cuối tuần (theo hạn lúc đó: trước các lần gia hạn sau tuần đó; tuần đang chạy: tính đến hôm nay),
+    số task tuần. [{"start", "end", "due", "done", "late", "next", "tasks", "current"}]"""
+    ov = overview(con, today, cycle=cycle)
+    cyc = next((c for c in ov["cycles"] if c["name"] == ov["cycle"]), None) or {}
+    leaf = [i for i in ov["items"] if i["status"] != PAUSE]
+    starts = [date.fromisoformat(i["start"]) for i in leaf if i["start"]]
+    first = date.fromisoformat(cyc["start"]) if cyc.get("start") else (min(starts) if starts else today)
+    mon = first - timedelta(days=first.weekday())
+    this_mon = today - timedelta(days=today.weekday())
+    dd = done_dates(con)
+    first_seen = first_snapshot(con)
+    for i in leaf:  # xong trước khi tool bắt đầu theo dõi: không biết ngày xong thật, coi như xong đúng hạn
+        if dd.get(i["uid"]) and dd[i["uid"]] == first_seen and i["end"]:
+            dd[i["uid"]] = min(dd[i["uid"]], i["end"])
+    ext: dict[str, list[dict]] = {}
+    for uid, o, n, at in con.execute("SELECT uid, old_end, new_end, at FROM okr_extensions ORDER BY id"):
+        ext.setdefault(uid, []).append({"old_end": o, "new_end": n, "at": at})
+    task_weeks: dict[str, int] = {}
+    for (w,) in con.execute("SELECT week FROM okr_tasks"):
+        task_weeks[w] = task_weeks.get(w, 0) + 1
+    out = []
+    while mon <= this_mon:
+        s, e = mon, mon + timedelta(days=6)
+        p = overview(con, today, (s, e), cycle=ov["cycle"])["period"]
+        if e >= today:
+            late = ov["late"]
+        else:
+            late = []
+            for i in leaf:
+                end = end_as_of(ext.get(i["uid"], []), i["end"], e)
+                if end and end <= e.isoformat() and not (dd.get(i["uid"]) and dd[i["uid"]] <= e.isoformat()):
+                    late.append(i)
+        out.append({"start": s, "end": e, "due": p["due"], "done": p["done"], "late": late, "next": p["next"],
+                    "tracking_since": p["tracking_since"], "tasks": task_weeks.get(s.isoformat(), 0),
+                    "current": s == this_mon})
+        mon += timedelta(days=7)
+    return out[::-1]
+
+
 # ---- OKR do tool quản lý (tạo / sửa trên tool, tool ghi đè tab OKRs trên sheet dự án) ----
 
 STATUSES = (TODO, DOING, WAIT, PAUSE, DONE)  # trạng thái chọn trên tool ("Đang chờ" chọn qua start_wait: phải nói chờ ai)

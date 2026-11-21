@@ -6,7 +6,6 @@ không và đổi nguồn trích giữa các lần tìm, nên các số chính t
 với nhau. Mọi số ghi rõ nơi check (thiết bị, vùng) và đã kiểm tra bao nhiêu / tổng số từ khóa."""
 from datetime import date, timedelta
 
-from . import points as PT
 from . import keywords as K
 from . import rank as R
 from . import ui_theme as T
@@ -114,20 +113,21 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
         own, now, prev = d["own"], d["now"], d["prev"]
         last = d["weeks"][-1] if d["weeks"] else None
         # ---- dòng phạm vi: tuần, nơi check, đã kiểm tra bao nhiêu, lần check tới ----
-        nxt = next_check(connect, cfg)
         parts = []
         if last:
             w0 = date.fromisoformat(d["last_week"])
             parts.append(f"Tuần {w0:%d/%m} – {w0 + timedelta(days=6):%d/%m}")
-        parts.append(where)
-        parts.append(f"đã kiểm tra {last['checked'] if last else 0}/{d['total']} từ khóa")
-        if nxt:
-            parts.append(f"lần check tới: {R.WEEKDAYS[nxt.weekday()]}, {nxt:%d/%m}")
-        ui.label(" · ".join(parts)).classes("sr-aio-scope")
+        if not cl:  # khách: chỉ ghi tuần, không nơi check / số đã kiểm tra / lịch check
+            nxt = next_check(connect, cfg)
+            parts.append(where)
+            parts.append(f"đã kiểm tra {last['checked'] if last else 0}/{d['total']} từ khóa")
+            if nxt:
+                parts.append(f"lần check tới: {R.WEEKDAYS[nxt.weekday()]}, {nxt:%d/%m}")
+        if parts:
+            ui.label(" · ".join(parts)).classes("sr-aio-scope")
         if not last:
             T.empty_state(ui, "auto_awesome", "Chưa có số AI Overview",
-                          "Lần check rank tới sẽ có." if cl or PT.member(user_) else
-                          "Lần check rank tới sẽ có.")
+                          "Đội SEO đang chuẩn bị số liệu này." if cl else "Lần check rank tới sẽ có.")
             return
 
         # ---- 4 thẻ: một hàng ngang trên cùng, cùng chiều cao, cùng đơn vị % ----
@@ -147,7 +147,8 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                     good = None  # nhiều hay ít AI Overview không phải tốt hay xấu
                 value, hint = _pct(_rate(now.get(k_))), tip.format(n=n_, d=d_)
                 if k_ == "visibility" and not d_:  # lần check cũ chưa lưu nội dung chữ AI Overview
-                    value, hint = "–", "Chưa có nội dung chữ AI Overview: lần check tới sẽ có"
+                    value, hint = "–", ("Chưa có số liệu" if cl else
+                                        "Chưa có nội dung chữ AI Overview: lần check tới sẽ có")
                 T.kpi(ui, icon, label, value, delta, good, hint, tone=tone)
 
         # ---- Thương hiệu trong AI Overview (rộng hết khung) ----
@@ -220,10 +221,12 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                 if len(charted) < len(d["brands"]):
                     ui.label("Biểu đồ vẽ thương hiệu của bạn và các đối thủ chính."
                              ).classes("sr-kpi-hint")
-            if len(d["brands"]) == 1:
+            if len(d["brands"]) == 1 and not cl:
                 ui.label("Thêm đối thủ ở tab Thương hiệu để so sánh.").classes("sr-kpi-hint")
 
-        # ---- Thay đổi so với lần check trước ----
+        # ---- Thay đổi so với lần check trước (chi tiết từng lần check: khách không cần) ----
+        if cl:
+            return
         names = {"new_mention": "Mới được nhắc", "lost_mention": "Mất nhắc", "new_cite": "Mới được trích",
                  "lost_cite": "Mất trích"}
         opts = {k: f"{v} · {len(ch[k])}" for k, v in names.items()}
@@ -257,7 +260,8 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
         with connect() as c:
             rows = AO.keyword_rows(c, cfg, state["set"])
         if not rows:
-            T.empty_state(ui, "auto_awesome", "Chưa có số AI Overview", "Lần check rank tới sẽ có.")
+            T.empty_state(ui, "auto_awesome", "Chưa có số AI Overview",
+                          "Đội SEO đang chuẩn bị số liệu này." if cl else "Lần check rank tới sẽ có.")
             return
         host = R.domain(cfg.site_url)
         flt = {"all": ("Tất cả", lambda r: True), "aio": ("Có AI Overview", lambda r: r["aio"]),
@@ -284,7 +288,7 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
                 "cite": "–" if not r["aio"] else ("Có" if r["own_cited"] else "Chưa"),
                 "brands": ", ".join(r["mentioned"]) or "–", "refs": ", ".join(others) or "–",
                 "date": _vn(r["date"])[:5]})
-        t = ui.table(columns=[
+        cols = [
             {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
             {"name": "pos", "label": "Vị trí", "field": "pos", "align": "right", "sortable": True,
              ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos", "headerStyle": "width:72px"},
@@ -297,7 +301,11 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
             {"name": "brands", "label": "Thương hiệu AI nhắc", "field": "brands", "align": "left"},
             {"name": "refs", "label": "Website AI trích", "field": "refs", "align": "left"},
             {"name": "date", "label": "Ngày check", "field": "date", "align": "center", "headerStyle": "width:96px"},
-        ], rows=trows, row_key="id", pagination=25).classes("w-full sr-aio-table").props("flat dense")
+        ]
+        if cl:  # khách: không cột ngày check
+            cols = [c_ for c_ in cols if c_["name"] != "date"]
+        t = ui.table(columns=cols, rows=trows, row_key="id", pagination=25).classes("w-full sr-aio-table").props(
+            "flat dense")
         kq.bind_value_to(t, "filter")
         for col in ("mention", "cite"):
             t.add_slot(f"body-cell-{col}", """
@@ -309,6 +317,8 @@ def tab(ui, connect, cfg, ed: bool, header=None, start: str = "", set_id: int | 
         for col in ("brands", "refs"):
             t.add_slot(f"body-cell-{col}", """
                 <q-td :props="props"><div class="ellipsis" :title="props.value">{{ props.value }}</div></q-td>""")
+        if cl:  # khách: chỉ xem danh sách, không mở chi tiết từng lần check
+            return
         t.add_slot("body-cell-keyword", """
             <q-td :props="props"><span class="sr-kw-link" role="button" tabindex="0"
               @click="$parent.$emit('open', props.row)" @keydown.enter="$parent.$emit('open', props.row)">

@@ -43,6 +43,10 @@ TASKS = {
                       "sắp lên top.", None),
     "review_reply": ("Trả lời đánh giá Google Maps", "AI viết nháp câu trả lời cho một đánh giá ở trang Local SEO; team "
                      "sửa rồi mới gửi.", None),
+    "review_insight": ("Phân tích đánh giá Google Maps", "AI đọc đánh giá gần đây, tóm tắt điều khách khen / chê lặp "
+                       "lại theo chi nhánh và việc nên làm (Local SEO › Đánh giá).", None),
+    "gbp_post": ("Bài đăng Google Business Profile", "AI viết nháp bài đăng (cập nhật / ưu đãi / sự kiện) ở trang Local "
+                 "SEO › Bài đăng; team sửa rồi mới đăng.", None),
 }
 DAYS = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
 DEFAULTS = {
@@ -60,6 +64,8 @@ DEFAULTS = {
     "rank_target": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "rank_actions": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "review_reply": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "gbp_post": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
+    "review_insight": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "backlink_insight": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "backlink_classify": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "backlink_disavow": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
@@ -71,7 +77,7 @@ ACTION_TASK = {"ai_aio": "aio_answer", "ai_report": "report_week", "ai_brief": "
                "ai_kwbrief": "kw_brief", "ai_kpi": "kpi_import",
                "ai_kpi_insight": "kpi_insight", "ai_rank_insight": "rank_insight", "ai_rank_diag": "rank_diag",
                "ai_rank_target": "rank_target", "ai_rank_actions": "rank_actions",
-               "ai_review_reply": "review_reply", "ai_bl_insight": "backlink_insight",
+               "ai_review_reply": "review_reply", "ai_gbp_post": "gbp_post", "ai_review_insight": "review_insight", "ai_bl_insight": "backlink_insight",
                "ai_bl_classify": "backlink_classify", "ai_bl_disavow": "backlink_disavow",
                "ai_bl_rivals": "backlink_rivals", "ai_bl_plan": "backlink_plan"}  # mã credit -> tác vụ
 
@@ -213,9 +219,15 @@ def set_fallback(con, provider: str | None, model: str = "") -> None:
 
 def block_status(con) -> dict | None:
     """Lần gần nhất model chính bị chặn (giá mới / hết hạn mức / khóa sai): {"at", "name", "model", "error",
-    "fallback"}; None khi model chính đã gọi lại được."""
+    "fallback"}; None khi model chính đã gọi lại được, hoặc model đó đã bị bỏ khỏi mọi combo (khi đó xóa luôn cảnh báo)."""
     ensure(con)
-    return _get(con, "", "ai_block")
+    b = _get(con, "", "ai_block")
+    if b and b.get("model"):
+        used = {(st.get("model") or "").strip() for c in combos(con) for st in c.get("steps") or []}
+        if used and b["model"].strip() not in used:  # chưa có combo nào (cách cài cũ): vẫn báo
+            _put(con, "", "ai_block", None)
+            return None
+    return b
 
 
 def note_block(prov: dict, error: str, fb: dict | None) -> None:

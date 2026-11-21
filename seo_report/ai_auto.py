@@ -193,6 +193,8 @@ async def auto_loop(base) -> None:
                 projects = PJ.list_projects(c)
             for p in projects:
                 cfg = PJ.config_for(base, p)
+                if not cfg.paid_ok:  # website người dùng tự thêm: AI tự chạy chờ Owner / Admin cho phép
+                    continue
 
                 def connect(cfg=cfg):
                     return closing(db.connect(cfg.db_path))

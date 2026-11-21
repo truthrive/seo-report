@@ -173,7 +173,9 @@ PASSWORD_COLS = {"pw_hash": "TEXT", "pw_set_at": "TEXT", "must_change": "INTEGER
                  "team_role": "TEXT",
                  "last_seen": "TEXT",  # lúc đóng trang tool gần nhất (chấm trạng thái: "offline · lần cuối …")
                  # hồ sơ do chính người dùng sửa ở màn Hồ sơ: tên hiển thị và ảnh đại diện (data URI PNG nhỏ)
-                 "display_name": "TEXT NOT NULL DEFAULT ''", "avatar": "TEXT NOT NULL DEFAULT ''"}
+                 "display_name": "TEXT NOT NULL DEFAULT ''", "avatar": "TEXT NOT NULL DEFAULT ''",
+                 "google_login": "TEXT",
+                 "google_asked": "TEXT"}  # lúc tool hỏi người này có muốn kết nối Google (GSC / GA4) của họ  # lần đăng nhập bằng Google gần nhất (màn Phân quyền: ai chưa chuyển)
 EMAIL_RE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 USERNAME_RE = r"^[a-z0-9][a-z0-9._-]{2,31}$"  # tài khoản không cần email: tên đăng nhập 3–32 ký tự
 ROLE_LABEL = {EDITOR: "Owner", ADMIN_ACCT: "Admin", VIEWER: "Theo dự án"}  # loại tài khoản
@@ -223,7 +225,7 @@ def _ensure(con) -> None:
 
 
 _COLS = ("email, role, note, added_by, added_at, removed_at, pw_hash IS NOT NULL, pw_set_at, must_change, "
-         "locked_until, last_login, title, team_role, removed_by, last_seen")
+         "locked_until, last_login, title, team_role, removed_by, last_seen, google_login")
 
 
 def users(con, settings: AccessSettings) -> list[dict]:
@@ -254,7 +256,8 @@ def users(con, settings: AccessSettings) -> list[dict]:
                   "must_change": bool(r and r[8]), "locked_until": r[9] if r else None,
                   "last_login": r[10] if r else None, "title": (r[11] if r else "") or "",
                   "team_role": (r[12] if r and u["role"] == VIEWER else None),
-                  "last_seen": (r[14] if r else None) or (r[10] if r else None)})
+                  "last_seen": (r[14] if r else None) or (r[10] if r else None),
+                  "google_login": r[15] if r else None})
     return sorted(out.values(), key=lambda u: ({EDITOR: 0, ADMIN_ACCT: 1}.get(u["role"], 2), u["email"]))
 
 
@@ -535,7 +538,8 @@ def migrate_four_groups(con) -> int:
     return n
 
 
-def project_role(con, settings: AccessSettings, user, project: str, first_project: str | None) -> str | None:
+def project_role(con, settings: AccessSettings, user, project: str, first_project: str | None,
+                 private: bool = False) -> str | None:
     """Quyền của một người trong một dự án; None là không được vào dự án đó.
 
     Quản trị và chủ máy: mọi dự án. Tài khoản theo dự án: quyền gắn riêng cho dự án đó; không có thì quyền Team mọi
@@ -550,7 +554,7 @@ def project_role(con, settings: AccessSettings, user, project: str, first_projec
         return EDITOR if role == VIEWER else role  # Team xem cũ đã gộp vào Member
     _ensure(con)
     row = con.execute("SELECT team_role, removed_at FROM access_users WHERE email = ?", (email,)).fetchone()
-    if row and row[1] is None and row[0]:  # Team mọi dự án
+    if row and row[1] is None and row[0] and not private:  # Team mọi dự án (trừ website người khác tự thêm)
         return EDITOR
     if (project == first_project and email in _norm(settings.viewers) and not (row and row[1])
             and not members(con).get(email)):  # config.toml, chưa được gắn dự án nào: dự án đầu tiên
@@ -561,7 +565,8 @@ def project_role(con, settings: AccessSettings, user, project: str, first_projec
 ROLE_ORDER = {"owner": 0, "admin": 1, EDITOR: 2, VIEWER: 2, CLIENT: 3}
 
 
-def people_in_project(con, settings: AccessSettings, project: str, first_project: str | None) -> list[dict]:
+def people_in_project(con, settings: AccessSettings, project: str, first_project: str | None,
+                      private: bool = False) -> list[dict]:
     """Mọi tài khoản vào được một website: [{"email", "title", "role": "admin" | editor | viewer | client}], theo
     thứ tự cố định quản trị → được sửa → chỉ xem → khách hàng, rồi theo email (nhóm avatar trên thanh trên cùng)."""
     mem = members(con)
@@ -571,7 +576,7 @@ def people_in_project(con, settings: AccessSettings, project: str, first_project
         if u["role"] in (EDITOR, ADMIN_ACCT):
             role = "owner" if u["role"] == EDITOR else "admin"
         else:
-            role = (mine.get(project) or u.get("team_role")
+            role = (mine.get(project) or (None if private else u.get("team_role"))
                     or (EDITOR if u["source"] == "config" and project == first_project and not mine else None))
             role = EDITOR if role == VIEWER else role
         if role:
@@ -657,6 +662,8 @@ def login(con, settings: AccessSettings, email: str, pw: str, now=None) -> tuple
             con.execute("UPDATE access_users SET failed = ?, locked_until = ? WHERE email = ?",
                         (0 if locked else failed, locked, email))
         return None, (f"Sai mật khẩu {MAX_FAILED} lần: tạm khóa {LOCK_MINUTES} phút" if locked else generic), None
+    if google_only(con) and u["role"] != EDITOR:  # kiểm sau mật khẩu: không lộ email nào có trong tool
+        return None, GOOGLE_ONLY_MSG, None
     with con:
         con.execute("UPDATE access_users SET failed = 0, locked_until = NULL, last_login = ? WHERE email = ?",
                     (now.isoformat(timespec="seconds"), email))
@@ -664,13 +671,55 @@ def login(con, settings: AccessSettings, email: str, pw: str, now=None) -> tuple
             {"email": email, "pw_set_at": row[4]})
 
 
+# ---- Đăng nhập bằng Google ----
+# Bật "chỉ Google" (màn Cài đặt tích hợp): mọi người đăng nhập bằng tài khoản Google; riêng Owner (email `editors`
+# trong config.toml) vẫn dùng được mật khẩu, làm đường vào dự phòng khi Google lỗi.
+GOOGLE_ONLY_KEY = "login_google_only"
+GOOGLE_ONLY_MSG = "Tài khoản này đăng nhập bằng Google: bấm nút “Đăng nhập bằng Google”"
+
+
+def google_only(con) -> bool:
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    row = con.execute("SELECT value FROM app_settings WHERE key = ?", (GOOGLE_ONLY_KEY,)).fetchone()
+    return bool(row and row[0] == "1")
+
+
+def set_google_only(con, on: bool, by) -> None:
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    with con:
+        con.execute("INSERT OR REPLACE INTO app_settings VALUES (?, ?)", (GOOGLE_ONLY_KEY, "1" if on else "0"))
+        _log(con, by, "", "Chỉ cho đăng nhập bằng Google" if on else "Cho đăng nhập bằng mật khẩu trở lại", "")
+
+
+def google_login(con, settings: AccessSettings, email: str, now=None) -> tuple["User | None", str, dict | None]:
+    """Google đã xác minh email (google_login.finish): email phải đang có quyền trong tool."""
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc)
+    email = (email or "").strip().lower()
+    u = next((x for x in users(con, settings) if x["email"] == email), None) if email else None
+    if not u:
+        return None, f"{email or 'Tài khoản Google này'} chưa được cấp quyền dùng tool", None
+    stamp = now.isoformat(timespec="seconds")
+    with con:
+        con.execute("INSERT INTO access_users (email, role, note, added_by, added_at) VALUES (?, ?, '', 'config.toml', "
+                    "?) ON CONFLICT(email) DO NOTHING", (email, u["role"], _now()))
+        con.execute("UPDATE access_users SET last_login = ?, google_login = ? WHERE email = ?", (stamp, stamp, email))
+    return User(email, u["role"], via="google"), "", {"email": email, "via": "google", "at": stamp}
+
+
 def from_session(con, settings: AccessSettings, sess: dict | None) -> "User | None":
-    """Người dùng của phiên đăng nhập đã lưu; None nếu quyền đã bị gỡ hoặc mật khẩu đã được đặt lại sau khi đăng
-    nhập."""
+    """Người dùng của phiên đăng nhập đã lưu; None nếu quyền đã bị gỡ, mật khẩu đã được đặt lại sau khi đăng nhập,
+    hoặc tool đã chuyển sang chỉ đăng nhập Google (phiên mật khẩu của người không phải Owner hết hiệu lực)."""
     if not sess or not sess.get("email"):
         return None
     u = next((x for x in users(con, settings) if x["email"] == sess["email"]), None)
-    if not u or not u["has_password"] or u["pw_set_at"] != sess.get("pw_set_at"):
+    if not u:
+        return None
+    if sess.get("via") == "google":
+        return User(u["email"], u["role"], via="google")
+    if not u["has_password"] or u["pw_set_at"] != sess.get("pw_set_at"):
+        return None
+    if u["role"] != EDITOR and google_only(con):
         return None
     return User(u["email"], u["role"], must_change=u["must_change"], via="password")
 
@@ -747,3 +796,47 @@ def _verify(token: str, s: AccessSettings) -> str:
     if body.get("exp", 0) < time.time():
         raise ValueError("hết hạn")
     return body.get("email", "")
+
+
+# ---- Yêu cầu truy cập: đăng nhập Google được nhưng email chưa có trong Phân quyền ----
+REQUESTS_SCHEMA = """CREATE TABLE IF NOT EXISTS access_requests (
+  email TEXT PRIMARY KEY, at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  decided_by TEXT, decided_at TEXT);"""
+MAX_PENDING = 50  # chặn spam: quá số yêu cầu đang chờ thì không nhận thêm
+
+
+def add_request(con, email: str) -> str:
+    """Ghi yêu cầu (một dòng mỗi email). Trả trạng thái: new (vừa ghi), pending (đã chờ từ trước), rejected (đã bị
+    từ chối), full (quá nhiều yêu cầu đang chờ)."""
+    con.executescript(REQUESTS_SCHEMA)
+    email = (email or "").strip().lower()
+    row = con.execute("SELECT status FROM access_requests WHERE email = ?", (email,)).fetchone()
+    if row and row[0] in ("pending", "rejected"):
+        return row[0]
+    if con.execute("SELECT COUNT(*) FROM access_requests WHERE status = 'pending'").fetchone()[0] >= MAX_PENDING:
+        return "full"
+    with con:
+        con.execute("INSERT OR REPLACE INTO access_requests (email, at, status) VALUES (?, ?, 'pending')",
+                    (email, _now()))
+    return "new"
+
+
+def pending_requests(con, settings: AccessSettings | None = None) -> list[dict]:
+    """Yêu cầu đang chờ (bỏ email đã được cấp quyền bằng cách khác), mới nhất trước."""
+    con.executescript(REQUESTS_SCHEMA)
+    _ensure(con)
+    have = ({u["email"] for u in users(con, settings)} if settings is not None else
+            {r[0] for r in con.execute("SELECT email FROM access_users WHERE removed_at IS NULL")})
+    return [{"email": r[0], "at": r[1]} for r in con.execute(
+        "SELECT email, at FROM access_requests WHERE status = 'pending' ORDER BY at DESC") if r[0] not in have]
+
+
+def resolve_request(con, email: str, status: str, by) -> None:
+    """Duyệt (approved) hoặc từ chối (rejected) một yêu cầu; ghi nhật ký."""
+    con.executescript(REQUESTS_SCHEMA)
+    email = (email or "").strip().lower()
+    with con:
+        n = con.execute("UPDATE access_requests SET status = ?, decided_by = ?, decided_at = ? "
+                        "WHERE email = ? AND status = 'pending'", (status, str(by), _now(), email)).rowcount
+        if n and status == "rejected":
+            _log(con, by, email, "Từ chối yêu cầu truy cập", "")

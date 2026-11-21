@@ -5,6 +5,14 @@ from . import presence as PR
 from . import ui_theme as T
 
 MAX_PHOTO_BYTES = 5_000_000
+# Thẻ Thông tin: ảnh + nút bên trái, các ô bên phải (màn rộng); một cột trên điện thoại
+PROFILE_CSS = """
+.sr-pf-layout { width: 100%; display: grid; grid-template-columns: 200px 1fr; gap: 28px; align-items: start; padding-top: 8px; }
+.sr-pf-photo { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.sr-pf-photo-acts .text-xs { max-width: 190px; }
+@media (max-width: 640px) { .sr-pf-layout { grid-template-columns: 1fr; gap: 16px; } }
+.sr-profile-dialog .sr-pf-layout { grid-template-columns: 140px 1fr; gap: 20px; }
+"""
 
 
 def photo_uri(content: bytes, size: int = 128) -> str:
@@ -27,10 +35,10 @@ def photo_uri(content: bytes, size: int = 128) -> str:
 
 
 def build_profile_page(ui, cfg, connect, user) -> None:
-    T.page_header(ui, "account_circle", "Hồ sơ của tôi", "Tên và ảnh hiện ở menu và nhóm avatar." if T.client_view() else
+    T.page_header(ui, "account_circle", "Hồ sơ của tôi", "Tên và ảnh hiện ở menu tài khoản." if T.client_view() else
                   "Tên và ảnh hiện ở menu, nhóm avatar và màn Phân quyền.",
                   tone="grey")
-    with ui.element("div").classes("sr-card q-pa-md").style("max-width: 560px; width: 100%"):
+    with ui.element("div").classes("sr-card q-pa-lg").style("max-width: 760px; width: 100%"):
         profile_form(ui, cfg, connect, user)
 
 
@@ -63,14 +71,15 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
         prof = A.profiles(c).get(email, {"name": "", "avatar": ""})
         row = next((u for u in A.users(c, settings) if u["email"] == email), None)
     state = {"avatar": prof["avatar"]}
-    role_text = A.GROUPS[A.group(user)]
+    role_text = "Khách hàng" if A.is_client(user) else A.GROUPS[A.group(user)]
 
     with ui.tabs().classes("w-full sr-tabs").props("align=left no-caps dense inline-label") as tabs:
         t_info = ui.tab("Thông tin", icon="badge")
         t_pass = ui.tab("Mật khẩu", icon="key")
     panels = ui.tab_panels(tabs, value=t_info).classes("w-full").props("animated=false")
-    with panels, ui.tab_panel(t_info).classes("q-px-none q-pb-none"):
-        with ui.row().classes("items-center gap-4 no-wrap w-full"):
+    ui.add_css(PROFILE_CSS)
+    with panels, ui.tab_panel(t_info).classes("q-px-none q-pb-none"), ui.element("div").classes("sr-pf-layout"):
+        with ui.element("div").classes("sr-pf-photo"):
             @ui.refreshable
             def avatar_box():
                 st, st_text = PR.describe(email)
@@ -78,7 +87,7 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
                                   photo=state["avatar"])
 
             box = ui.element("div")  # chỗ avatar: vẽ sau khi có ô tên (chữ cái đầu theo tên đang gõ)
-            with ui.column().classes("gap-1"):
+            with ui.column().classes("gap-1 items-center sr-pf-photo-acts"):
                 async def uploaded(e):
                     try:
                         state["avatar"] = photo_uri(await e.file.read())
@@ -98,7 +107,8 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
                         avatar_box.refresh()
                     ui.button("Bỏ ảnh", icon="hide_image", on_click=drop_photo).props("flat dense no-caps")
                 ui.label("PNG, JPG hoặc WEBP, tối đa 5 MB. Tool tự cắt vuông và thu nhỏ.").classes("text-xs muted")
-        with ui.element("div").classes("w-full q-mt-md").style("display:grid; gap: 10px"):
+        fields = ui.element("div").classes("w-full").style("display:grid; gap: 10px; align-content: start")
+        with fields:
             name = ui.input("Tên hiển thị", value=prof["name"], placeholder="ví dụ: Trường Thịnh").props(
                 f"outlined dense counter maxlength={A.MAX_NAME}")
             ui.input("Email / tên đăng nhập", value=email).props("outlined dense readonly").tooltip(
@@ -119,18 +129,29 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
             ui.notify("Đã lưu hồ sơ", type="positive")
             ui.navigate.reload()  # menu, avatar trên thanh trên cùng cập nhật theo
 
-        with ui.row().classes("w-full justify-end q-mt-sm gap-2"):
+        with fields, ui.row().classes("w-full justify-end q-mt-sm gap-2"):
             if on_close:
                 ui.button("Hủy", on_click=on_close).props("flat no-caps")
             ui.button("Lưu hồ sơ", icon="check", on_click=save_profile).props("unelevated no-caps")
 
     with panels, ui.tab_panel(t_pass).classes("q-px-none q-pb-none"):
-        if user.via != "password" and user.role != A.LOCAL:
+        google = user.via == "google"
+        if user.via not in ("password", "google") and user.role != A.LOCAL:
             ui.label("Bạn đăng nhập qua Cloudflare Access / Tailscale nên không có mật khẩu trong tool.").classes(
                 "text-sm muted")
             return
-        local = user.role == A.LOCAL  # ngồi ở máy chạy tool: đặt mật khẩu không cần mật khẩu cũ
-        ui.label(("Mật khẩu để đăng nhập khi mở tool từ máy khác (qua tên miền). " if local else "")
+        # chủ máy / đăng nhập Google (Google đã xác minh): đặt mật khẩu không cần mật khẩu cũ
+        local = user.role == A.LOCAL or google
+        with connect() as c:
+            only = A.google_only(c) and user.role != A.EDITOR
+            has_pw = next((u["has_password"] for u in A.users(c, A.effective(c, cfg.access))
+                           if u["email"] == email), False)
+        if google:
+            ui.label(f"Bạn đang đăng nhập bằng Google ({email}). Đặt thêm mật khẩu để đăng nhập bằng email + mật "
+                     "khẩu khi cần." + (" Lưu ý: tool đang chỉ cho đăng nhập bằng Google, mật khẩu chỉ dùng được "
+                                        "khi Owner mở lại đăng nhập bằng mật khẩu." if only else "")).classes(
+                "text-sm muted")
+        ui.label(("Mật khẩu để đăng nhập khi mở tool từ máy khác (qua tên miền). " if user.role == A.LOCAL else "")
                  + f"Mật khẩu mới ít nhất {A.MIN_PASSWORD} ký tự. Đổi xong, các máy khác đang đăng nhập bằng mật "
                    "khẩu cũ sẽ phải đăng nhập lại.").classes("text-sm muted")
         with ui.element("div").classes("w-full q-mt-sm").style("display:grid; gap: 10px"):
@@ -147,6 +168,17 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
             if (new.value or "") != (again.value or ""):
                 err.text = "Hai lần nhập mật khẩu mới không khớp"
                 return
+            if google:  # Google xác minh lúc đăng nhập: chỉ tin trong 30 phút, quá thì đăng nhập Google lại
+                from datetime import datetime, timezone
+                try:
+                    age = (datetime.now(timezone.utc)
+                           - datetime.fromisoformat((app.storage.user.get("auth") or {}).get("at") or "")).total_seconds()
+                except ValueError:
+                    age = 10 ** 9
+                if age > 30 * 60:
+                    err.text = "Để bảo mật, đăng nhập Google lại rồi đặt mật khẩu (lần đăng nhập trước đã quá 30 phút)."
+                    relogin.set_visibility(True)
+                    return
             with connect() as c:
                 settings = A.effective(c, cfg.access)
                 if cur is not None:
@@ -160,7 +192,7 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
                 except ValueError as e:
                     err.text = str(e)
                     return
-                if not local:  # phiên mới gắn với mật khẩu mới (máy này không bị đăng xuất)
+                if not local and not google:  # phiên mới gắn với mật khẩu mới (máy này không bị đăng xuất)
                     _, _, sess = A.login(c, settings, email, new.value)
                     app.storage.user["auth"] = sess
             for f in (cur, new, again):
@@ -168,7 +200,12 @@ def profile_form(ui, cfg, connect, user, on_close=None) -> None:
                     f.value = ""
             from .live import kick
             kick(email=str(user), keep=ui.context.client.id)  # trang ở máy khác (mật khẩu cũ): ngắt
-            ui.notify("Đã đổi mật khẩu", type="positive")
+            ui.notify("Đã đặt mật khẩu" if google and not has_pw else "Đã đổi mật khẩu", type="positive")
 
-        with ui.row().classes("w-full justify-end"):
-            ui.button("Đổi mật khẩu", icon="key", on_click=change_password).props("outline no-caps")
+        with ui.row().classes("w-full justify-end gap-2"):
+            relogin = ui.button("Đăng nhập Google lại", icon="login",
+                                on_click=lambda: ui.navigate.to("/login/google?next=/tai-khoan")).props(
+                "flat no-caps")
+            relogin.set_visibility(False)
+            ui.button("Đặt mật khẩu" if google and not has_pw else "Đổi mật khẩu", icon="key",
+                      on_click=change_password).props("outline no-caps")

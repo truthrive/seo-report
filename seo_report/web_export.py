@@ -10,13 +10,17 @@ from . import points as PT
 
 def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Callable,
                 make_pptx: Callable | None = None, label: str = "Xuất", user=None, icon_only: bool = False,
-                category: str | None = None) -> None:
+                category: str | None = None, report: bool = False) -> None:
     """name: tên file (không đuôi). make_xlsx / make_pptx: hàm (có thể async) trả về bytes. Người chỉ xem (user) chỉ
     tải file về máy, không lưu vào Drive của chủ tool. icon_only: nút chỉ có icon (tên hiện khi rê chuột).
     category: hạng mục (drive.CATEGORIES) → file lưu vào thư mục con của hạng mục đó trong folder dự án."""
     import inspect
 
     from nicegui import run
+
+    from . import ui_theme as T
+    if T.client_view() and not report:  # khách hàng: chỉ tải báo cáo tuần / tháng (trang Báo cáo)
+        return
 
     from . import drive as D
     from .access import can_edit

@@ -170,6 +170,18 @@ class FallbackTest(unittest.TestCase):
         with self.AIS._connect() as c:
             self.assertIsNone(self.AIS.block_status(c))
 
+    def test_block_cleared_when_model_removed_from_combos(self):
+        from seo_report import ai_settings as AIS
+        AIS.note_block({"name": "Cổng", "model": "old-model"}, "bị chặn", None)
+        with AIS._connect() as c:
+            AIS.save_combos(c, [{"id": AIS.DEFAULT_COMBO, "name": "Mặc định",
+                                 "steps": [{"provider": "gateway", "model": "old-model"}]}])
+            self.assertEqual(AIS.block_status(c)["model"], "old-model")  # còn trong combo: vẫn báo
+            AIS.save_combos(c, [{"id": AIS.DEFAULT_COMBO, "name": "Mặc định",
+                                 "steps": [{"provider": "gateway", "model": "new-model"}]}])
+            self.assertIsNone(AIS.block_status(c))  # đã bỏ khỏi combo: hết báo
+            self.assertIsNone(AIS._get(c, "", "ai_block"))
+
     def test_tries_fallbacks_in_order(self):
         from seo_report import ai_http as AH
         seen = []

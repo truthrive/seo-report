@@ -42,10 +42,32 @@ Dùng qua `T.pill`, `T.tag`, `T.count_badge`. Mỗi tone là một cặp (nền,
 | `grey` | `#F1F0EA` | `#6B6A5E` | Trung tính, tạm ngưng |
 | `purple` | `#F1EAFB` | `#7C3AED` | AI |
 
+### Màu thẻ
+
+Màu trên thẻ chỉ dùng để **nói trạng thái**, để thẻ cần nhìn nổi lên giữa các thẻ trắng.
+
+| Loại thẻ | Nền | Viền | Ví dụ |
+|---|---|---|---|
+| Thẻ thường (khung nội dung, ô KPI bình thường) | trắng `#fff` | `--line` | Phần lớn thẻ |
+| Thẻ lồng trong thẻ | `#F6F6F1` | không | Ô trong khung, dòng danh sách |
+| Cần sửa / xấu (`st-red`) | `#FCEDE6` (nền tone red) | `#F2CDBC` | Ô "Tỉ lệ 1–3 sao" vượt 5%, thẻ "còn đánh giá thấp chưa trả lời" |
+| Nên xem / cảnh báo (`st-amber`) | `#FBF1DE` (nền tone amber) | `#EED9B0` | Trả lời chậm hơn 3 ngày, còn đánh giá chưa trả lời |
+| Đang chọn (ô bật / tắt đường) | màu của chỉ số pha 7% với trắng | màu chỉ số pha 45% | Ô trong `T.trend_chart` |
+
+- Thẻ **tốt không tô nền xanh**: để trắng, cái tốt thể hiện bằng số / pill màu xanh. Tô xanh khắp nơi thì thẻ đỏ,
+  vàng không còn nổi.
+- Ô KPI: `T.kpi(..., status="red" | "amber")` để tô nền; `tone` chỉ là màu icon, cố định theo ý nghĩa chỉ số (không
+  đổi theo số).
+- Mỗi màn có tối đa **một thẻ việc cần làm** có nền màu, đặt trên cùng.
+- **Không** gradient, không bóng đổ khi đứng yên, không vạch màu bên trái, không nền mực đậm.
+
 - Chữ màu hổ phách luôn dùng `AMBER_TEXT #8F5F14`, **không** dùng `AMBER #B7791F` cho chữ (không đủ tương phản).
 - Ba mức kiểm tra (audit, backlink…) luôn là: **Cần sửa** = red · **Nên sửa / Nên xem** = amber ·
   **Tham khảo** = blue · **Ổn** = green.
 - Nút AI: `color=deep-purple-1 text-color=deep-purple-9` + icon `auto_awesome` + class `sr-kg-aibtn`.
+- **Mọi nội dung AI dùng tím** để người xem biết ngay phần nào do AI viết: khối AI `T.section(..., "auto_awesome",
+  tone="purple")` (icon tím), đoạn tóm tắt AI `.sr-st-sum` (nền `#F1EAFB`), khung nhập cho AI viết nền `#F6F1FD`
+  viền `#E4D8F7`, link mở chi tiết của khối AI màu `#6D28D9`. Nút AI nhỏ trong dòng: thêm `size=sm`, cùng màu.
 
 ---
 
@@ -266,6 +288,19 @@ Mọi bảng trong tool cùng một kiểu (CSS chung `.q-table__container` tron
   viền khi focus (`outline: 2px solid …`).
 - Màu không phải cách duy nhất truyền nghĩa: pill có chữ, ▲▼ có tooltip, đường biểu đồ khác kiểu nét.
 - Biểu đồ nhỏ có `role="img"` và `aria-label` mô tả ("Đang tăng").
+- Hàng nút / nút gạt **không dùng `no-wrap` trên điện thoại**; nhãn `.ellipsis` trong cột flex luôn bị giới hạn bề
+  rộng (CSS chung). Bố cục hai cột cố định (danh sách + chi tiết) dưới 768px chuyển thành danh sách → chi tiết, có nút
+  quay lại (mẫu: Hiệu suất URL, `.sr-url-split`).
+- Ô nhập chữ trên điện thoại cỡ **16px** (iOS tự phóng to trang nếu nhỏ hơn). Ô chọn không mở bàn phím thì không cần.
+- Màn cảm ứng (`pointer: coarse`): nút `dense` cao tối thiểu 40px, nút gạt 36px, nút phân trang bảng 40×40.
+- Chữ phụ trên điện thoại tối thiểu 12px.
+- Điện thoại: không có nút về đầu trang; chạm lại mục đang mở trên thanh dưới đáy thì về đầu trang. Nút + lùi đi khi
+  cuộn xuống, hiện lại khi cuộn lên. Thông báo nằm trên thanh dưới đáy.
+- Bảng `table_kit` trên điện thoại: cột đầu dính bên trái khi cuộn ngang.
+- Thanh trên điện thoại **chỉ một dòng**: ☰ · tên website · nút kỳ ("Tuần 09/11 · SEO chủ lực"). Ô chọn kỳ / nhóm
+  nằm trong khung trượt từ đáy khi bấm nút kỳ; avatar người có quyền và "GSC đến …" ẩn. Ô chọn mới cho thanh trên thêm
+  vào `controls()` trong `web.shell` để cả hai bản cùng có.
+- Sửa giao diện xong: đo mọi trang ở 375px, `document.documentElement.scrollWidth` phải bằng 375.
 
 ---
 

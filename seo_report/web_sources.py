@@ -56,6 +56,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
     from nicegui import run
     site = cfg.site_url
     ed = A.can_edit(user)
+    cl = A.is_client(user)  # khách hàng: thẻ nguồn + biểu đồ tuần + chỉ số; không bảng chi tiết theo trang / loại kết quả
     right = T.page_header(ui, "travel_explore", "Nguồn traffic",
                           "Khách đến từ đâu trên Google: tìm kiếm, hình ảnh, video, Tin tức, Discover.")
     right.classes("no-wrap")
@@ -197,6 +198,8 @@ def build_sources_page(ui, cfg, connect, user) -> None:
                                 _points_chip(pos_d, unit="", good_up=True, value=abs(pos_d) if pos_d else None))
         if t == "web":
             web_extras()
+        if cl:
+            return
         with T.section(ui, f"Trang hàng đầu · {GT.TYPES[t]}", "description",
                        (f"{date.fromisoformat(period[0]):%d/%m} – {date.fromisoformat(period[1]):%d/%m}, so với 28 ngày "
                         "trước · bấm tên trang để mở" if period else "Chưa có trang nào")):
@@ -269,7 +272,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
                                 "lineStyle": {"width": 1.5, "type": "dashed", "color": "#8C8A7E"},
                                 "itemStyle": {"color": "#8C8A7E"}, "data": [h["prev_clicks"] for h in hrs]}]},
                 ).classes("w-full").style("height:240px")
-        if apps:
+        if apps and not cl:
             sub = (f"{date.fromisoformat(aperiod[0]):%d/%m} – {date.fromisoformat(aperiod[1]):%d/%m}, so với 28 ngày "
                    "trước" if aperiod else "")
             with T.section(ui, "Theo loại kết quả trên Google", "auto_awesome_mosaic",

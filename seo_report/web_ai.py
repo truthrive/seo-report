@@ -144,20 +144,25 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
 
     from . import db
     from .access import can_edit
+    from .access import is_client
     ed = can_edit(user)  # người chỉ xem: không nhập/ẩn file GSC, không đổi ngưỡng quy tắc
+    cl = is_client(user)  # khách hàng: chỉ xem kết quả, gộp Trang đích / AI trên Google vào Tổng quan
 
     if not cfg.ga4_property:
         ui.label("AI Search & GEO").classes("text-2xl font-semibold")
+        if not ed:  # khách: không cần biết cách cài
+            T.empty_state(ui, "insights", "Chưa có số liệu", "Đội SEO đang chuẩn bị số liệu này.")
+            return
         ui.label("Chưa kết nối GA4: gắn GA4 property cho dự án ở màn Dự án (Quản trị → Dự án → Sửa).").classes("text-negative")
         return
 
     from urllib.parse import urlencode
     init = state_from_params(params or {}, date.today(), week)
-    quality = init["tab"] == "Chất lượng dữ liệu"
+    quality = init["tab"] == "Chất lượng dữ liệu" and not cl  # khách không mở màn kỹ thuật này
     start0, end0 = init["start"], init["end"]
     state = {**{k: init[k] for k in ("preset", "start", "end", "compare", "source", "country", "landing")},
              "data": None, "loading": False, "error": None,
-             "land": None, "geo": None, "opp": None, "dq": None, "lazy_loading": set(), "events": None}
+             "land": None, "geo": None, "opp": None, "dq": None, "top": None, "lazy_loading": set(), "events": None}
     client = ui.context.client
 
     # ---- Bộ lọc chung ----
@@ -181,6 +186,8 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         ui.space()
         refresh_btn = ui.button(icon="refresh", on_click=lambda: load(force=True)).props("flat round").tooltip(
             "Làm mới dữ liệu (bỏ cache GA4)")
+        if cl:  # khách: không cần nút kỹ thuật
+            refresh_btn.set_visibility(False)
         from .web_export import export_menu
         if not quality:
             export_menu(ui, cfg, connect, f"ai-search-geo_{state['start']}_{state['end']}", lambda: export_all(),
@@ -200,10 +207,11 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
     tab_by_name = {t._props["name"]: t for t in (t_over, t_src, t_land, t_geo, t_gai, t_opp, t_dq)}
     t_geo.set_visibility(False)  # quốc gia hiện ngay trong tab Nguồn AI
     t_dq.set_visibility(False)  # mở từ menu "Chất lượng dữ liệu"
-    from .access import is_client
-    if is_client(user):  # khách hàng: không tab Cơ hội (việc của team) / Chất lượng dữ liệu (kỹ thuật)
-        t_opp.set_visibility(False)
-        if init["tab"] in (t_opp._props["name"], t_dq._props["name"]):
+    if cl:  # khách hàng: không tab Cơ hội (việc của team) / Chất lượng dữ liệu (kỹ thuật);
+        # Trang đích / AI trên Google gộp gọn vào Tổng quan
+        for t in (t_opp, t_land, t_gai):
+            t.set_visibility(False)
+        if init["tab"] in (t_opp._props["name"], t_dq._props["name"], t_land._props["name"], t_gai._props["name"]):
             init["tab"] = t_over._props["name"]
     if quality:
         tabs.set_visibility(False)
@@ -236,7 +244,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                     "trend": ai.trend(start, end, f, interval=interval),
                     "key_events": ai.key_events(start, end, state["events"], f) if state["events"] else None}
 
-        state["land"] = state["geo"] = state["opp"] = state["dq"] = None
+        state["land"] = state["geo"] = state["opp"] = state["dq"] = state["top"] = None
         sync_url()  # bộ lọc đổi: tab tải sau phải tải lại
         try:
             state["data"] = await run.io_bound(work)
@@ -250,7 +258,8 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
 
     def lazy_load(tab):
         name = getattr(tab, "_props", {}).get("name", tab)
-        for kind in ([LAZY[name]] if name in LAZY else []) + (["geo"] if name == "Nguồn AI" else []):
+        extra = (["geo"] if name == "Nguồn AI" else []) + (["top"] if cl and name == "Tổng quan" else [])
+        for kind in ([LAZY[name]] if name in LAZY else []) + extra:
             if state[kind] is None:
                 background_tasks.create(load_extra(kind))
 
@@ -277,6 +286,8 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                         groups.setdefault(t, []).append(path)
                 seg = ai.segments(start, end, groups, f, compare=state["compare"])
                 return {"pages": land, "organic": organic, "types": types, "segments": seg}
+            if kind == "top":  # khách: 5 trang đích nhiều phiên AI nhất, hiện ở Tổng quan
+                return ai.landing_pages(start, end, f, compare=False, limit=10)
             if kind == "opp":
                 return opp_data(ai, start, end)
             if kind == "dq":
@@ -520,10 +531,56 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                 row_key="ev").classes("w-full").props("flat bordered dense")
             if any(e["sessionKeyEventRate"] is None for e in ke["data"]["events"]):
                 ui.label("N/A: Google Analytics không tính tỷ lệ cho sự kiện này; số lần vẫn đúng.").classes("text-xs muted")
+        if cl:
+            guest_extras()
         with ui.row().classes("gap-2"):
             ui.button("Xem nguồn AI", on_click=lambda: tabs.set_value(t_src)).props("outline no-caps")
-            ui.button("Xem trang đích", on_click=lambda: tabs.set_value(t_land)).props("outline no-caps")
+            if not cl:
+                ui.button("Xem trang đích", on_click=lambda: tabs.set_value(t_land)).props("outline no-caps")
         provenance(s)
+
+    def guest_extras():
+        """Khách: tóm tắt gọn thay cho tab Trang đích và AI trên Google."""
+        ui.label("Trang được khách từ AI ghé nhiều nhất").classes("text-lg font-semibold q-mt-md")
+        top = state["top"]
+        if top is None or "top" in state["lazy_loading"]:
+            T.skeleton(ui).classes("w-full").style("height: 160px")
+        elif top.get("error") or top.get("status") == "ERROR":
+            ui.label("Chưa tải được danh sách trang.").classes("text-sm muted")
+        else:
+            rows = sorted((r for r in top["data"].get("rows", []) if r["landingPage"] not in ("(not set)", "")),
+                          key=lambda r: -(r["sessions"] or 0))[:5]
+            if rows:
+                ui.table(columns=[
+                    {"name": "page", "label": "Trang", "field": "page", "align": "left"},
+                    {"name": "s", "label": "Phiên AI", "field": "s", "align": "right"},
+                ], rows=[{"page": r["landingPage"], "s": F.n(r["sessions"])} for r in rows],
+                    row_key="page").classes("w-full").props("flat bordered dense")
+            else:
+                ui.label("Chưa có trang nào có khách từ AI trong kỳ này.").classes("text-sm muted")
+
+        from . import ai_gsc_import as G
+        ui.label("Hiển thị trong AI Overviews của Google").classes("text-lg font-semibold q-mt-md")
+        start, end = state["start"], state["end"]
+        with connect() as c:
+            if not G.imports(c, cfg.site_url):
+                ui.label("Đội SEO đang chuẩn bị số liệu này.").classes("text-sm muted")
+                return
+            tot = G.period_total(c, cfg.site_url, start, end)
+            ai_d = G.daily(c, cfg.site_url, start, end)
+        with T.kpi_row(ui):
+            kpi_card("Impression AI Overviews / AI Mode",
+                     F.n(tot["impressions"]) if tot["impressions"] is not None else "Chưa đủ số liệu",
+                     hint=f"kỳ {start:%d/%m}–{end:%d/%m} · chỉ lượt hiển thị, không có click")
+        pts = sorted((d, v) for d, v in ai_d.items() if v is not None)
+        if len(pts) > 1:
+            ui.echart({"tooltip": {"trigger": "axis"},
+                       "grid": {"left": 48, "right": 16, "top": 16, "bottom": 28},
+                       "xAxis": {"type": "category", "data": [d[8:10] + "/" + d[5:7] for d, _ in pts]},
+                       "yAxis": {"type": "value"},
+                       "series": [{"name": "Impression", "type": "line", "smooth": True, "symbol": "none",
+                                   "data": [v for _, v in pts], "itemStyle": {"color": GREEN},
+                                   "areaStyle": {"opacity": 0.12}}]}).classes("w-full").style("height: 160px")
 
     def land_tab(d):
         pages, organic, types, seg = d["pages"], d["organic"], d["types"], d["segments"]
@@ -587,7 +644,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         search.bind_value(table, "filter")
         ui.label(f"{len(rows)} trang có khách từ AI. Bấm một dòng để xem chi tiết.").classes("text-xs muted")
         table.on("rowClick", lambda e: page_detail(e.args[1]["page"]))
-        ui.button("Tải CSV trang đích", icon="download", on_click=lambda: download_rows(
+        T.team_button(ui, "Tải CSV trang đích", icon="download", on_click=lambda: download_rows(
             "trang-dich", ["landing_page", "type", "ai_sessions", "ai_sessions_prev", "engagement_rate", "key_events",
                            "session_key_event_rate", "organic_search_sessions"],
             [[r["landingPage"], types.get(r["landingPage"], ""), r["sessions"], r["sessionsPrev"], r["engagementRate"],
@@ -680,7 +737,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                                "itemStyle": {"color": palette[i % len(palette)]}}
                               for i, s in enumerate(tr["data"].get("series", []))]}).classes("w-full").style(
             "height: 260px")
-        ui.button("Tải CSV quốc gia", icon="download", on_click=lambda: download_rows(
+        T.team_button(ui, "Tải CSV quốc gia", icon="download", on_click=lambda: download_rows(
             "quoc-gia", ["country", "ai_sessions", "ai_sessions_prev", "engagement_rate", "key_events",
                          "session_key_event_rate"],
             [[r["country"], r["sessions"], r["sessionsPrev"], r["engagementRate"], r["keyEvents"],
@@ -834,14 +891,14 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         search.bind_value(table, "filter")
         ui.label("So khách từ AI (GA4) với hiển thị trên Google (Search Console) cho từng trang.").classes("text-xs muted")
         with ui.row().classes("gap-2"):
-            ui.button("Tải CSV bảng URL", icon="download", on_click=lambda: download_rows(
+            T.team_button(ui, "Tải CSV bảng URL", icon="download", on_click=lambda: download_rows(
                 "co-hoi-url", ["url", "type", "match", "ga4_landing_paths", "ai_sessions", "ai_engagement_rate",
                                "ai_key_events", "gsc_web_clicks", "gsc_web_impressions", "gsc_web_ctr",
                                "gsc_web_avg_position"],
                 [[r["url"], r["type"], r["match"], " ".join(r["ga4_paths"]), r["ai_sessions"],
                   r["ai_engagement_rate"], r["ai_key_events"], r["gsc_clicks"], r["gsc_impressions"], r["gsc_ctr"],
                   r["gsc_position"]] for r in rows])).props("outline no-caps")
-            ui.button("Tải CSV gợi ý", icon="download", on_click=lambda: download_rows(
+            T.team_button(ui, "Tải CSV gợi ý", icon="download", on_click=lambda: download_rows(
                 "co-hoi-goi-y", list(O.OPP_FIELDS), [[o[k] for k in O.OPP_FIELDS] for o in d["opportunities"]])
                       ).props("outline no-caps")
         ui.label(f"Kỳ {d['period']}").classes("text-xs muted")
@@ -1032,7 +1089,10 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
         from . import ai_gsc_import as G
         from . import ai_opportunities as O
         with ui.card().props("flat").classes("w-full q-pa-sm").style("background: #EEF4FF; border: 1px solid #C7D7F5"):
-            ui.label("Số lần trang của site được hiển thị trong AI Overviews và AI Mode của Google, lấy từ báo cáo "
+            ui.label("Số lần trang của website được hiển thị trong AI Overviews và AI Mode của Google (chỉ lượt hiển "
+                     "thị, không có click). Đây là kênh khác với lượt truy cập từ ChatGPT/Gemini ở các tab trước."
+                     if not ed else
+                     "Số lần trang của site được hiển thị trong AI Overviews và AI Mode của Google, lấy từ báo cáo "
                      "Generative AI của GSC. Chỉ có impression (không có click), chỉ Web dạng chữ. GSC không có API "
                      "cho báo cáo này nên phải xuất file và nhập tay. Đây là kênh khác với phiên từ ChatGPT/Gemini ở "
                      "các tab trước: không cộng hai loại số với nhau.").classes("text-sm")
@@ -1047,7 +1107,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                 with ui.card().props("flat bordered").classes("w-full q-pa-lg items-center"):
                     ui.icon("upload_file", size="40px", color="grey-6")
                     ui.label("Chưa có dữ liệu").classes("text-base font-semibold")
-                    ui.label("Chưa nhập file nào nên chưa có số."
+                    ui.label("Chưa nhập file nào nên chưa có số." if ed else "Đội SEO đang chuẩn bị số liệu này."
                              ).classes("text-sm muted")
                 return
             start, end = state["start"], state["end"]
@@ -1156,7 +1216,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
                 names = {"Mobile": "Điện thoại", "Desktop": "Máy tính", "Tablet": "Máy tính bảng"}
                 T.donut(ui, [(names.get(r["key"], r["key"]), r["impressions"] or 0) for r in devices],
                         ["#1E7C31", "#2563EB", "#B7791F", "#8C8A7E"], "impression")
-        ui.button("Tải CSV theo trang", icon="download", on_click=lambda: download_rows(
+        T.team_button(ui, "Tải CSV theo trang", icon="download", on_click=lambda: download_rows(
             f"aio-trang-{p0}_{p1}", ["url", "type", "aio_impressions", "gsc_web_impressions_same_period"],
             [[r["url"], r["type"], r["ai"], r["web"]] for r in prow])).props("outline no-caps")
 
@@ -1247,7 +1307,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             row_key="code").classes("w-full cursor-pointer").props("flat bordered dense")
         table.on("rowClick", lambda e: set_filter("source", e.args[1]["code"]) if e.args[1]["code"] != "OTHER_AI"
                  else ui.notify("Nguồn chưa nhận diện không lọc riêng được", type="warning"))
-        ui.button("Tải CSV bảng nguồn", icon="download", on_click=lambda: download_csv(src)).props("outline no-caps")
+        T.team_button(ui, "Tải CSV bảng nguồn", icon="download", on_click=lambda: download_csv(src)).props("outline no-caps")
 
         pts = tr["data"].get("points", [])
         key = "week" if tr["data"].get("interval") == "week" else "date"
@@ -1268,7 +1328,7 @@ def build_ai_page(ui, cfg, connect, user: str, params: dict | None = None,
             ui.label("Biểu đồ đang lọc theo nguồn đã chọn.").classes("text-xs muted")
 
         with ui.expansion("Chi tiết source / medium / kênh GA4 (để đối soát danh sách nhận diện)",
-                          icon="manage_search").classes("w-full"):
+                          icon="manage_search").classes("w-full" + (" hidden" if cl else "")):
             ui.table(columns=[
                 {"name": "src", "label": "sessionSource", "field": "src", "align": "left"},
                 {"name": "med", "label": "sessionMedium", "field": "med", "align": "left"},
