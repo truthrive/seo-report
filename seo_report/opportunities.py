@@ -222,6 +222,15 @@ def lost_queries(con: sqlite3.Connection, url_id: int, end: date, limit: int = 8
             for q, c, pc, i, pi, p, pp in rows]
 
 
+def page_queries(con: sqlite3.Connection, url_id: int, end: date, limit: int = 12) -> list[dict]:
+    """Từ khóa của một URL nhiều lượt hiển thị nhất trong 28 ngày gần nhất (ngữ cảnh cho AI viết đoạn còn thiếu)."""
+    cur = K.query_period(con, url_id, *window(end))
+    rows = sorted(cur.items(), key=lambda kv: -(kv[1][1] or 0))[:limit]
+    texts = K._texts(con, "queries", "text", {q for q, _ in rows})
+    return [{"query": texts[q], "clicks": c or 0, "impressions": i or 0, "position": round(p, 1) if p else None}
+            for q, (c, i, p) in rows if q in texts]
+
+
 # ---- Tranh nhau từ khóa ----
 
 def cannibal(con: sqlite3.Connection, site: str, end: date, settings: KeywordSettings) -> list[dict]:

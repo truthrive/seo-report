@@ -32,6 +32,26 @@ def _as_text(d: dict, keyword: str) -> str:
     return "\n".join(out).strip()
 
 
+def ai_cost_box(ui, user, action: str, before: list[tuple[str, str]] | None = None) -> bool:
+    """Khối chi phí trước khi bấm viết (DESIGN.md mục 8): các bước miễn phí đi trước, rồi lượt AI. Member thấy credit
+    và số còn lại sau lần này; Owner / Admin thấy là không trừ credit. Trả False khi Member không đủ credit."""
+    lines = list(before or [])
+    cost = PT.cost(action)
+    bal = PT.my_balance(user)
+    if bal is None:
+        lines.append(("AI viết", "1 lần gọi AI"))
+        T.cost_lines(ui, lines, note="Owner / Admin không trừ credit; tiền AI tính vào Quản trị › Ngân sách & chi phí.")
+        return True
+    lines.append(("AI viết", f"{cost} credit"))
+    after = bal["left"] - cost
+    enough = after >= 0
+    tone = "red" if not enough else "amber" if bal["limit"] and after < bal["limit"] * 0.1 else "neutral"
+    T.cost_lines(ui, lines, total=("Còn lại sau lần này", f"{max(after, 0):,} / {bal['limit']:,} credit".replace(
+        ",", ".")), note="AI lỗi thì hoàn credit." if enough else
+        f"Không đủ credit: còn {bal['left']} credit tháng này, cần {cost}. Nhờ Owner / Admin cấp thêm.", tone=tone)
+    return enough
+
+
 def answer_dialog(ui, connect, cfg, user, keyword_id: int, keyword: str, page_url: str, aio_text: str,
                   sources: list[dict], issue: str = "", on_saved=None) -> None:
     if not A.can_edit(user):
@@ -86,6 +106,7 @@ def answer_dialog(ui, connect, cfg, user, keyword_id: int, keyword: str, page_ur
                             "<li>3–5 tiêu đề H2 / H3 dạng câu hỏi</li><li>Các ý nên bổ sung so với nguồn đang được "
                             "trích</li><li>2–3 câu hỏi đáp (FAQ)</li></ul>")
                     ui.label("AI không bịa số: chỗ cần số liệu riêng sẽ để [điền …].").classes("text-xs muted")
+                state["enough"] = ai_cost_box(ui, user, "ai_aio")
                 if no_prov:
                     ui.label(no_prov).classes("text-sm").style(f"color:{T.RED}")
             else:
@@ -124,7 +145,7 @@ def answer_dialog(ui, connect, cfg, user, keyword_id: int, keyword: str, page_ur
             label = ("Viết lại" if d else "Viết bằng AI") + (f" · {cost} credit" if PT.member(user) else "")
             btn = ui.button(label, icon="auto_fix_high", on_click=lambda: go(btn)).props(
                 "unelevated no-caps color=primary")
-            if not prov:
+            if not prov or not state.get("enough", True):
                 btn.disable()
 
     async def go(btn) -> None:
@@ -132,23 +153,36 @@ def answer_dialog(ui, connect, cfg, user, keyword_id: int, keyword: str, page_ur
         entry = PT.take(ui, user, cfg, "ai_aio", detail=keyword)
         if entry is False:
             return
-        btn.props("loading")
+        btn.disable()
+        body.clear()
+        with body:
+            steps = T.Steps(ui, ["AI viết đoạn trả lời, tiêu đề, ý còn thiếu, FAQ", "Lưu vào Thư viện AI"])
+            ui.label("Có thể đóng hộp thoại: bản nháp vẫn được lưu, mở lại từ tab Việc nên làm hoặc Thư viện AI."
+                     ).classes("text-xs muted")
+        steps.run(0)
         try:
             draft, used = await run.io_bound(AW.write_aio, cfg, keyword, brand, page_url, aio_text, sources, issue,
                                              prov)
         except (AH.AIError, AW.NoProvider) as e:
             PT.give_back(entry)
             AIS.log_call(site, "aio_answer", "manual", str(user), prov, False, str(e))
-            btn.props(remove="loading")
+            steps.done(0, "lỗi" + (", đã hoàn credit" if entry else ""), state="fail")
+            btn.enable()
             ui.notify(f"AI chưa viết được: {e}", type="warning", position="bottom-right", multi_line=True)
             return
+        steps.done(0)
+        steps.run(1)
         AIS.log_call(site, "aio_answer", "manual", str(user), used, True, credits=PT.cost("ai_aio") if PT.member(user) else 0)
         with connect() as c:
             AW.save(c, site, KIND, ref, draft, used, str(user))
             state["draft"] = AW.latest(c, site, KIND, ref)
-        render()
-        if on_saved:
-            on_saved()
+        steps.done(1)
+        try:
+            render()
+            if on_saved:
+                on_saved()
+        except Exception:  # noqa: BLE001 — hộp thoại / trang đã đóng: bản nháp đã lưu
+            pass
 
     render()
     dlg.open()

@@ -31,6 +31,7 @@ COSTS = {
     "kg": ("Kiểm tra Knowledge Graph", 1),
     "sheets": ("Lưu Google Sheets / Drive", 1),
     "ai_aio": ("AI viết đoạn trả lời AIO", 5),
+    "ai_page_gap": ("AI viết đoạn còn thiếu cho trang", 5),
     "ai_report": ("AI viết nhận xét báo cáo", 10),
     "ai_brief": ("AI bản tin Tổng quan", 5),
     "ai_plan": ("AI lập chiến lược SEO", 10),

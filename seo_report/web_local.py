@@ -793,7 +793,7 @@ def build_local_page(ui, cfg, connect, user, start: str = "") -> None:
                   </div></q-td>""",
                          "body-cell-reply": """
                 <q-td :props="props"><div v-if="props.row.reply" style="white-space:normal; line-height:1.45">
-                  {{ props.row.reply }}</div><span v-else class="sr-bl-type k-lost">chưa trả lời</span></q-td>""",
+                  {{ props.row.reply }}</div><span v-else class="sr-bl-type k-lost is-status">Chưa trả lời</span></q-td>""",
                          "body-cell-act": """
                 <q-td :props="props"><q-btn flat dense no-caps size="sm" color="primary"
                   :label="props.row.reply ? 'Sửa trả lời' : 'Trả lời'" @click.stop="$parent.$emit('reply', props.row.k)"/>

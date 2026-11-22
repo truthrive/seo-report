@@ -20,6 +20,8 @@ TASKS = {
     "report_month": ("Nhận xét báo cáo tháng", "AI viết nháp nhận xét và kế hoạch tháng sau khi hết tháng.", "monthly"),
     "aio_answer": ("Đoạn trả lời AI Overview", "Viết đoạn trả lời để được AI Overview trích; tự chạy cho từ khóa vừa "
                    "mất trích.", "weekly"),
+    "page_gap": ("Đoạn còn thiếu cho trang sắp lên top", "Đọc trang đang ở vị trí 4–15 và viết phần còn thiếu (H2 + "
+                 "đoạn bổ sung, FAQ, anchor link nội bộ) ở SEO Opportunities › Striking Distance.", None),
     "kw_strategy": ("Chiến lược SEO", "Lập chiến lược cho nhóm từ khóa ở Ý tưởng từ khóa.", None),
     "kw_brief": ("Brief từ khóa", "Viết dàn ý bài cho một từ khóa ở Tổng quan từ khóa.", None),
     "kpi_import": ("Đọc sheet cam kết KPI", "AI đọc bảng cam kết trong sheet đã gắn, điền sẵn vào trang Sửa cam kết.",
@@ -55,6 +57,7 @@ DEFAULTS = {
     "report_month": {"enabled": True, "provider": "auto", "model": "", "combo": "default", "auto": True, "day": 1, "time": "08:00"},
     "aio_answer": {"enabled": True, "provider": "auto", "model": "", "combo": "default", "auto": True, "days": [0, 1, 2, 3, 4, 5],
                    "time": "09:00", "limit": 5},
+    "page_gap": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "kw_strategy": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "kw_brief": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
     "kpi_import": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
@@ -73,7 +76,7 @@ DEFAULTS = {
     "backlink_plan": {"enabled": True, "provider": "auto", "model": "", "combo": "default"},
 }
 CAP_DEFAULT = 300
-ACTION_TASK = {"ai_aio": "aio_answer", "ai_report": "report_week", "ai_brief": "brief", "ai_plan": "kw_strategy",
+ACTION_TASK = {"ai_aio": "aio_answer", "ai_page_gap": "page_gap","ai_report": "report_week", "ai_brief": "brief", "ai_plan": "kw_strategy",
                "ai_kwbrief": "kw_brief", "ai_kpi": "kpi_import",
                "ai_kpi_insight": "kpi_insight", "ai_rank_insight": "rank_insight", "ai_rank_diag": "rank_diag",
                "ai_rank_target": "rank_target", "ai_rank_actions": "rank_actions",

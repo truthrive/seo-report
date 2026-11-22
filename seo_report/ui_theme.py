@@ -1296,6 +1296,21 @@ HEAD = """
   .sr-aw-faq { padding: 8px 12px; background: #F7F6F1; border-radius: 10px; }
   .sr-aw-btn { background: #F1EAFB !important; color: #6D28D9 !important; font-size: 12px; border-radius: 8px; }
   .sr-aw-btn.done { background: #EEF6F0 !important; color: #1E7C31 !important; }
+  /* ô từ khóa hai tầng có nút AI dạng icon (SEO Opportunities › Striking Distance) */
+  .sr-op-kwrow { display: flex; align-items: flex-start; gap: 6px; max-width: 200px; }
+  .sr-op-kwmain { flex: 1 1 auto; min-width: 0; }
+  .sr-op-kwmain .sr-op-kw { max-width: none; }
+  .sr-op-kwmain .sr-bl-sub { margin-top: 1px; line-height: 1.35; white-space: normal; }
+  .sr-op-kwmain .sr-bl-sub > span { white-space: nowrap; }  /* xuống dòng ở " · ", không ngắt giữa một cụm */
+  .sr-op-help { border-bottom: 1px dotted #B8B6A8; cursor: help; }
+  .sr-op-ai { flex: none; min-width: 26px !important; min-height: 26px !important; padding: 0 !important;
+    border-radius: 8px; color: #7C3AED !important; margin-top: -2px; }
+  .sr-op-ai .q-icon { font-size: 16px !important; }
+  .sr-op-ai:hover, .sr-op-ai:focus-visible { background: #F1EAFB; }
+  .sr-op-ai.done { color: #1E7C31 !important; }
+  .sr-op-ai.done:hover, .sr-op-ai.done:focus-visible { background: #EEF6F0; }
+  @media (pointer: coarse) {  /* vùng chạm 40px trên màn cảm ứng, icon nhìn vẫn nhỏ */
+    .sr-op-ai { min-width: 40px !important; min-height: 40px !important; margin: -9px -8px -9px -4px; } }
   /* AI Overview: gợi ý audit (tab Việc nên làm) */
   .sr-aa-big { font-family: var(--head); font-size: 26px; font-weight: 700; color: #1F221E; line-height: 1; }
   .sr-aa-big span { font-family: var(--body, inherit); font-size: 13px; font-weight: 500; color: #6B6A5E;
@@ -2092,6 +2107,26 @@ HEAD = """
   .sr-cost-box.green { background: #EEF6EF; color: #1E5A2A; }
   .sr-cost-box.amber { background: #FBF1DE; color: #8F5F14; }
   .sr-cost-box.red { background: #FCEBE3; color: #9A3412; }
+  .sr-cost-box.neutral { background: #F7F6F1; color: #1F221E; }
+  .sr-cost-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; }
+  .sr-cost-row > .sr-cost-val { white-space: nowrap; font-variant-numeric: tabular-nums; flex: none; }
+  .sr-cost-row.total { border-top: 1px solid rgba(31,34,30,.12); margin-top: 4px; padding-top: 6px; font-weight: 600; }
+  .sr-cost-note { font-size: 12px; opacity: .8; margin-top: 2px; }
+  /* tiến trình theo bước có tên (tác vụ AI / tác vụ dài): trạng thái + thời gian thật của từng bước */
+  .sr-steps { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 12px;
+    background: #FAF8FE; border: 1px solid #ECE4FA; }
+  .sr-step { display: flex; align-items: center; gap: 10px; min-height: 32px; font-size: 13.5px; color: #1F221E; }
+  .sr-step-ic { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+    flex: none; }
+  .sr-step-name { flex: 1 1 auto; min-width: 0; }
+  .sr-step-note { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 55%; }
+  .sr-step.wait { color: #8C8A7E; }
+  .sr-step.run .sr-step-name { font-weight: 600; }
+  .sr-step.warn .sr-step-note { color: #8F5F14; }
+  .sr-step.fail .sr-step-note { color: #9A3412; }
+  @media (max-width: 600px) { .sr-step { flex-wrap: wrap; } .sr-step-note { max-width: 100%; flex-basis: 100%;
+    padding-left: 28px; white-space: normal; } }
   .sr-info { color: #A3A194; cursor: help; flex: none; border-radius: 50%; }
   .sr-info:hover, .sr-info:focus { color: #4A4A40; outline: none; }
   .sr-info-tip { font-size: 12.5px; line-height: 1.45; padding: 8px 10px; background: #2B2E29; }
@@ -3517,6 +3552,32 @@ HEAD = """
     .sr-kpi:hover, .sr-kpi.clickable:hover, .sr-cwv-cell:hover, .sr-set-card:hover, .sr-trend-tile:hover,
     .sr-brand-card:hover, .sr-dark:hover { transform: none; }
   }
+  /* ---- NHÃN (label) chuẩn cho toàn site: một hình dạng, hai loại ----
+     Hình: chữ nhật bo 4px, cao 20px, chữ 11,5px đậm 500 (không viên thuốc bo tròn, không chữ đậm 600).
+     Trạng thái (Chưa trả lời, Đang đạt, Cần sửa…): thêm chấm 6px màu chữ phía trước. .sr-bl-type dùng chung cho cả
+     phân loại (dofollow, loại trang) nên chỉ có chấm khi thêm class is-status.
+     Phân loại (loại trang, ý định, loại bộ…): không chấm. Màu nền / chữ giữ theo tone (TONES, đã đạt 4,5:1).
+     Lặp tên class (.a.a) để đè các luật cũ cùng độ ưu tiên đặt rải rác phía trên. Nhãn bấm được (chip lọc, sr-kchip,
+     sr-spend-chip, sr-h2h-pill) và huy hiệu số (sr-badge, sr-place-badge) không thuộc nhóm này. */
+  .sr-status.sr-status, .sr-tag.sr-tag, .sr-pill.sr-pill, .sr-bl-type.sr-bl-type, .sr-kp-chip.sr-kp-chip,
+  .sr-aa-pill.sr-aa-pill, .sr-set-tag.sr-set-tag, .sr-ar-tag.sr-ar-tag, .sr-ar-atype.sr-ar-atype,
+  .sr-ko-hchip.sr-ko-hchip, .sr-spend-kind.sr-spend-kind, .sr-kw-chip.sr-kw-chip, .sr-ai-chip.sr-ai-chip,
+  .sr-lb-flags .sr-lb-flag.sr-lb-flag {
+    display: inline-flex; align-items: center; gap: 4px; min-height: 20px; padding: 1px 6px; border-radius: 4px;
+    font-size: 11.5px; font-weight: 500; line-height: 1.3; letter-spacing: 0; white-space: nowrap;
+    vertical-align: middle; box-sizing: border-box; }
+  .sr-status.sr-status .q-icon, .sr-kp-chip.sr-kp-chip .q-icon, .sr-pill.sr-pill .q-icon { font-size: 13px !important; }
+  /* chấm trạng thái */
+  .sr-status.sr-status::before, .sr-pill.sr-pill::before, .sr-kp-chip.sr-kp-chip::before,
+  .sr-aa-pill.sr-aa-pill::before, .sr-lb-flags .sr-lb-flag.sr-lb-flag::before, .sr-bl-type.is-status::before,
+  .sr-kw-chip.sr-kw-chip::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+  /* đã có icon thì không thêm chấm */
+  .sr-status.sr-status:has(.q-icon)::before, .sr-pill.sr-pill:has(.q-icon)::before,
+  .sr-kp-chip.sr-kp-chip:has(.q-icon)::before { display: none; }
+  /* nhãn website người dùng tự đặt: cùng hình (bo 4px, chữ 500), giữ viền màu + nút ✕ vì gỡ được */
+  .sr-lbl.sr-lbl { border-radius: 4px; font-weight: 500; vertical-align: middle; }
+  @media (max-width: 600px) { .sr-status.sr-status { white-space: normal; } }
 </style>
 """
 
@@ -4064,6 +4125,72 @@ def empty_state(ui, icon: str, title: str, text: str = ""):
         ui.label(title).classes("text-base font-semibold q-mt-sm")
         if text:
             ui.label(text).classes("text-sm muted")
+
+
+def cost_lines(ui, lines: list[tuple[str, str]], total: tuple[str, str] | None = None, note: str = "",
+               tone: str = "neutral"):
+    """Khối chi phí trước khi bấm chạy, tách từng phần: [(việc, giá)], dòng tổng (in đậm) và một câu ghi chú.
+    tone: neutral (mặc định) · green · amber (sắp hết) · red (không đủ). Trả phần tử để vẽ lại khi số đổi."""
+    box = ui.element("div").classes(f"sr-cost-box {tone} w-full").props('role="group" aria-label="Chi phí"')
+    with box:
+        for (name, value), cls in [(x, "") for x in lines] + ([(total, " total")] if total else []):
+            with ui.element("div").classes("sr-cost-row" + cls):
+                ui.label(name)
+                ui.label(value).classes("sr-cost-val")
+        if note:
+            ui.label(note).classes("sr-cost-note")
+    return box
+
+
+class Steps:
+    """Tiến trình theo bước có tên: mỗi bước một dòng (chờ · đang chạy · xong · bỏ qua · cảnh báo · lỗi) kèm ghi chú
+    ngắn và thời gian thật đã chạy. Không đoán thời gian còn lại. Phần tử đã bị xóa (đóng hộp thoại / rời trang) thì
+    bỏ qua lặng lẽ: việc nền vẫn chạy tiếp và lưu kết quả."""
+    ICONS = {"wait": ("radio_button_unchecked", "#B8B6A8"), "done": ("check_circle", GREEN),
+             "skip": ("remove_circle_outline", GREY), "warn": ("warning", AMBER), "fail": ("error", RED)}
+
+    def __init__(self, ui, labels: list[str]):
+        import time
+        self._ui, self._time = ui, time.monotonic
+        self.box = ui.element("div").classes("sr-steps w-full").props('role="list" aria-live="polite"')
+        self.rows, self._start = [], {}
+        with self.box:
+            for label in labels:
+                row = ui.element("div").classes("sr-step wait").props('role="listitem"')
+                with row:
+                    icon = ui.element("span").classes("sr-step-ic")
+                    ui.label(label).classes("sr-step-name")
+                    note = ui.label("").classes("sr-step-note")
+                self.rows.append((row, icon, note))
+                self._paint(len(self.rows) - 1, "wait")
+
+    def _paint(self, i: int, state: str, note: str = "") -> None:
+        try:
+            row, icon, lab = self.rows[i]
+            row.classes(replace=f"sr-step {state}")
+            icon.clear()
+            with icon:
+                if state == "run":
+                    self._ui.spinner(size="16px", color="deep-purple-7")
+                else:
+                    name, color = self.ICONS[state]
+                    self._ui.icon(name, size="18px").style(f"color:{color}").props('aria-hidden="true"')
+            lab.text = note
+        except Exception:  # noqa: BLE001 — hộp thoại đã đóng
+            pass
+
+    def run(self, i: int, note: str = "") -> None:
+        self._start[i] = self._time()
+        self._paint(i, "run", note)
+
+    def elapsed(self, i: int) -> str:
+        s = self._time() - self._start.get(i, self._time())
+        return "dưới 1 giây" if s < 1 else f"{s:.0f} giây" if s < 90 else f"{s / 60:.1f} phút".replace(".", ",")
+
+    def done(self, i: int, note: str = "", state: str = "done") -> None:
+        """state: done · warn · fail · skip. Ghi chú mặc định là thời gian bước đó đã chạy."""
+        took = self.elapsed(i) if i in self._start else ""
+        self._paint(i, state, " · ".join(x for x in (note, took) if x))
 
 
 def kpi_row(ui):

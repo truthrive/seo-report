@@ -4,6 +4,9 @@ from datetime import date
 
 from . import points as PT
 from . import access as A
+from . import ai_page_gap as PG
+from . import ai_settings as AIS
+from . import web_page_gap as WPG
 from . import brand_entity as BE
 from . import keywords as K
 from . import opportunities as O
@@ -40,6 +43,7 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
     T.page_header(ui, "insights", "SEO Opportunities",
                   f"Việc nên làm để tăng traffic, tính từ Search Console 28 ngày gần nhất ({cur[0]:%d/%m} – {cur[1]:%d/%m/%Y}).")
     ed = A.can_edit(user)
+    can_gap = ed and AIS.enabled(site, PG.TASK)
     state = {"tab": start if start in dict(TABS) else TABS[0][0], "data": None, "strike": "all", "new": "signal",
              "q": ""}
 
@@ -169,17 +173,41 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
             {"name": "clicks", "label": "Click", "field": "clicks", "align": "right", ":format": NUM},
             {"name": "potential", "label": "Click có thể thêm", "field": "potential", "align": "right"},
         ]
+        drafted = WPG.drafted_refs(connect, site) if can_gap else set()
         data = [{**r, "id": i, "path": _path(r["url"], site),
-                 "move": None if r["prev_position"] is None else round(r["prev_position"] - r["position"], 1)}
+                 "move": None if r["prev_position"] is None else round(r["prev_position"] - r["position"], 1),
+                 "ai": PG.ref_of(r["url_id"], r["query"]) in drafted}
                 for i, r in enumerate(shown)]
         tb = ui.table(columns=columns, rows=data, row_key="id", pagination=20).props(
             "flat dense binary-state-sort").classes("w-full sr-bl-table")
+        # Ô từ khóa hai tầng: dòng 1 = từ khóa + nút AI dạng icon nhỏ bên phải (không thêm cột: bảng không tràn ngang,
+        # trên điện thoại nút ở cột đầu); dòng 2 = chữ phụ 12px "Đang theo dõi hạng · 30 trang cùng lên" thay cho chip.
+        # Nút AI chỉ có khi người sửa được dự án và tác vụ đang bật.
+        gap_btn = """
+                <q-btn flat dense size="sm" :icon="props.row.ai ? 'description' : 'auto_fix_high'"
+                  :class="props.row.ai ? 'sr-op-ai done' : 'sr-op-ai'"
+                  :aria-label="(props.row.ai ? 'Xem bản nháp đoạn còn thiếu: ' : 'AI viết đoạn còn thiếu cho: ')
+                    + props.row.query"
+                  @click.stop="$parent.$emit('gap', props.row)">
+                  <q-tooltip>{{ props.row.ai ? 'Xem bản nháp AI' : 'AI viết đoạn còn thiếu cho trang' }}</q-tooltip>
+                </q-btn>""" if can_gap else ""
+        if can_gap:
+            by_id = {r["id"]: r for r in data}
+            tb.on("gap", lambda e: WPG.gap_dialog(ui, connect, cfg, user, by_id[e.args["id"]], end,
+                                                  on_saved=lambda: striking_table.refresh(rows)))
         tb.add_slot("body-cell-query", """
-            <q-td :props="props"><div class="sr-op-kw">{{ props.value }}
-              <span v-if="props.row.tracked" class="sr-bl-type k-url q-ml-xs">đang theo dõi hạng</span>
-              <span v-if="props.row.urls > 1" class="sr-bl-type q-ml-xs">{{ props.row.urls }} trang cùng lên
-                <q-tooltip>Có {{ props.row.urls }} trang của site cùng nhận lượt hiển thị cho từ khóa này; số liệu là
-                  của trang nhận nhiều nhất</q-tooltip></span></div></q-td>""")
+            <q-td :props="props"><div class="sr-op-kwrow">
+              <div class="sr-op-kwmain">
+                <div class="sr-op-kw">{{ props.value }}</div>
+                <div v-if="props.row.tracked || props.row.urls > 1" class="sr-bl-sub">
+                  <span v-if="props.row.tracked">Theo dõi hạng</span>
+                  <span v-if="props.row.tracked && props.row.urls > 1"> · </span>
+                  <span v-if="props.row.urls > 1" class="sr-op-help">{{ props.row.urls }} trang cùng lên
+                    <q-tooltip>Có {{ props.row.urls }} trang của site cùng nhận lượt hiển thị cho từ khóa này; số liệu
+                      là của trang nhận nhiều nhất</q-tooltip></span>
+                </div>
+              </div>""" + gap_btn + """
+            </div></q-td>""")
         tb.add_slot("body-cell-path", """
             <q-td :props="props"><div class="sr-bl-src"><a :href="props.row.url" target="_blank" rel="noopener"
               class="sr-bl-link" :title="props.row.url">{{ props.value }}</a></div></q-td>""")
@@ -196,7 +224,9 @@ def build_opps_page(ui, cfg, connect, user, start: str = "") -> None:
     def striking_tab(rows: list[dict]) -> None:
         explain("Từ khóa đang ở vị trí 4–15, nhiều lượt hiển thị: đẩy lên top 3 là có thêm click nhanh nhất.", [
             "Việc nên làm: bổ sung nội dung trả lời đúng từ khóa, đưa từ khóa vào tiêu đề / H1 / mô tả, thêm link "
-            "nội bộ từ các trang mạnh về trang này.",
+            "nội bộ từ các trang mạnh về trang này."
+            + (" Nút “Viết đoạn còn thiếu”: AI đọc trang rồi viết nháp phần cần thêm, team sửa và tự đưa lên trang."
+               if can_gap else ""),
             f"“Click có thể thêm” ước tính nếu lên vị trí 3 (CTR khoảng {O.CTR_TOP3:.0%}), trên 28 ngày. Từ khóa "
             "thương hiệu không tính."])
         if not rows:

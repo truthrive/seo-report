@@ -11,6 +11,7 @@ from . import ui_theme as T
 KINDS = {"kw_strategy": ("Chiến lược SEO", "view_module", "/research"),
          "kw_brief": ("Brief từ khóa", "article", "/tu-khoa"),
          "aio_answer": ("Đoạn trả lời AIO", "tips_and_updates", "/aio?tab=viec"),
+         "page_gap": ("Đoạn còn thiếu cho trang", "playlist_add", "/co-hoi?tab=len-top"),
          "report_note": ("Nhận xét báo cáo", "summarize", "/report"),
          "brief": ("Bản tin Tổng quan", "auto_awesome", "/")}
 
@@ -52,6 +53,8 @@ def _describe(r: dict, names: dict) -> tuple[str, str]:
                                                                                d.get("intent", ""))
     if k == "aio_answer":
         return names.get(int(r["ref"]) if str(r["ref"]).isdigit() else -1, f"Từ khóa #{r['ref']}"), d.get("answer", "")
+    if k == "page_gap":
+        return d.get("keyword") or r["ref"], d.get("heading", "")
     if k == "report_note":
         ref = str(r["ref"])
         if ref.startswith("month:"):
@@ -75,6 +78,9 @@ def _text(r: dict) -> str:
         return brief_text(r["title"], d)
     if k == "aio_answer":
         return _as_text(d, r["title"])
+    if k == "page_gap":
+        from .ai_page_gap import as_text
+        return as_text(d)
     if k == "report_note":
         return d.get("note", "") + (("\n\nKế hoạch tháng sau:\n" + d["plan"]) if d.get("plan") else "")
     if k == "brief":
@@ -107,6 +113,11 @@ def _view(ui, r: dict) -> None:
                 with ui.element("div").classes("sr-aw-faq w-full"):
                     ui.label(f["q"]).classes("text-sm font-medium")
                     ui.label(f["a"]).classes("text-sm")
+        elif r["kind"] == "page_gap":
+            from .web_page_gap import render_draft
+            if d.get("url"):
+                ui.link(d["url"], d["url"], new_tab=True).classes("sr-bl-link text-sm")
+            render_draft(ui, d)
         elif r["kind"] == "report_note":
             for title, v in (("Nhận xét", d.get("note")), ("Kế hoạch tháng sau", d.get("plan"))):
                 if v:
@@ -130,7 +141,7 @@ def _view(ui, r: dict) -> None:
     dlg.open()
 
 
-RESEARCH_KINDS = ("kw_strategy", "kw_brief")
+RESEARCH_KINDS = ("kw_strategy", "kw_brief", "page_gap")
 AIO_KINDS = ("aio_answer",)
 
 
@@ -147,7 +158,8 @@ def build_ai_library(ui, cfg, connect, user, kinds: tuple = RESEARCH_KINDS, head
     from . import access as A
     can_del = A.can_edit(user)
     if header:
-        T.page_header(ui, "auto_awesome", "Thư viện AI", "Chiến lược SEO và brief AI đã viết cho website này.",
+        T.page_header(ui, "auto_awesome", "Thư viện AI", "Chiến lược SEO, brief và đoạn còn thiếu AI đã viết cho "
+                      "website này.",
                       eyebrow="Research")
     state = {"kind": "all", "q": ""}
 

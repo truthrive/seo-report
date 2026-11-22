@@ -175,15 +175,25 @@ ui.toggle({...}, value=...).props(
 
 Thanh chọn chính phía trên thanh chọn phụ thêm class `sr-seg-main` (to hơn).
 
-### Pill, tag, badge, chip
+### Nhãn (label), badge, chip
 
-| Hàm | Hình | Dùng cho |
-|---|---|---|
-| `T.pill(ui, text, tone, icon)` | Viên thuốc bo tròn hẳn | **Trạng thái**: Đang đạt, Cần sửa, Tạm ngưng |
-| `T.tag(ui, text, tone)` | Bo góc nhỏ 6px | **Phân loại**: loại trang, nhóm |
-| `T.count_badge(ui, n, label)` | Số tròn nhỏ | Số việc trên nhãn tab; `label` là câu đầy đủ cho trình đọc màn hình |
-| `T.filter_chip(ui, text, on_remove)` | Chip có nút ✕ | Bộ lọc đang bật |
-| Nhãn website (`web_labels`) | Chip màu riêng, có ✕ để gỡ | Nhãn người dùng tự đặt |
+**Mọi nhãn tĩnh cùng một hình**: chữ nhật bo **4px**, cao 20px, đệm ngang 6px, chữ **11,5px đậm 500**, màu nền / chữ
+theo tone. Không dùng viên thuốc bo tròn hẳn, không chữ đậm 600 cho nhãn. Chữ đầu viết hoa ("Chưa trả lời").
+CSS chung ở cuối `HEAD` trong `ui_theme.py` (khối "NHÃN chuẩn") áp cho mọi class nhãn cũ; class nhãn mới phải thêm vào
+khối đó, không tự đặt cỡ / bo góc riêng.
+
+| Hàm / class | Loại | Hình | Dùng cho |
+|---|---|---|---|
+| `T.pill(ui, text, tone, icon)` | **Trạng thái** | Nhãn chuẩn + **chấm 6px** phía trước (có icon thì bỏ chấm) | Đang đạt, Cần sửa, Tạm ngưng, Chưa trả lời |
+| `T.tag(ui, text, tone)` | **Phân loại** | Nhãn chuẩn, không chấm | Loại trang, nhóm, dofollow, ý định từ khóa |
+| `.sr-bl-type` (trong slot bảng) | Phân loại; thêm `is-status` thành trạng thái | như trên | Nhãn trong ô bảng |
+| `T.count_badge(ui, n, label)` | Số đếm | Số tròn nhỏ | Số việc trên nhãn tab; `label` là câu đầy đủ cho trình đọc màn hình |
+| `T.filter_chip(ui, text, on_remove)` | Bấm được | Chip có nút ✕ | Bộ lọc đang bật |
+| Nhãn website (`web_labels`, `.sr-lbl`) | Gỡ được | Nhãn chuẩn bo 4px + viền màu + ✕ | Nhãn người dùng tự đặt |
+
+- Một ô / một dòng tối đa **một** nhãn màu; thông tin phụ khác viết thành dòng chữ phụ (xem mục Bảng).
+- Viên % và ▲▼ trong thẻ chỉ số, huy hiệu hạng (`sr-place-badge`), chip lọc bấm được **không** phải nhãn: giữ kiểu
+  riêng của chúng.
 
 - **Không đánh dấu dòng / thẻ đang chọn bằng vạch màu bên trái** (`border-left`, `box-shadow: inset 3px 0 …`). Dùng
   nền nhạt (`#EEF3FB` cho đang chọn, `#F7F6F1` khi rê chuột).
@@ -222,6 +232,11 @@ cùng loại số.
 - Đang tải: khung xám `T.bone(...)` giữ đúng chỗ nội dung sắp hiện, trong vùng có `aria-busy="true"`.
 - Việc chạy lâu (quét, lấy số): dòng tiến độ ngay dưới thanh công cụ với **số thật** ("Đang quét 120/300 trang");
   thông báo gọn ở góc dưới phải (`position="bottom-right"`). Không biết tiến độ thì dùng thanh chạy vô định, không bịa %.
+- Việc gồm vài bước khác nhau (AI đọc trang rồi viết, lấy số rồi phân tích): `T.Steps(ui, ["Đọc trang …", "AI viết …",
+  "Lưu vào Thư viện AI"])`, gọi `steps.run(i)` / `steps.done(i, ghi_chú, state=…)` khi từng bước thật sự bắt đầu / xong.
+  Mỗi dòng có trạng thái (chờ · đang chạy · xong · bỏ qua · cảnh báo · lỗi), ghi chú kết quả ("2.140 chữ, 9 tiêu đề")
+  và **thời gian thật đã chạy**. Không đếm ngược, không đoán thời gian còn lại. Việc chạy tiếp khi đóng hộp thoại thì
+  ghi rõ ("Có thể đóng hộp thoại: bản nháp vẫn được lưu…").
 
 ---
 
@@ -244,6 +259,12 @@ Mọi bảng trong tool cùng một kiểu (CSS chung `.q-table__container` tron
 - Bề rộng tối thiểu của bảng tính theo số cột đang hiện, để bảng không cuộn ngang vô cớ.
 - Bảng dài: tiêu đề cột dính khi cuộn.
 - Ô có hai tầng (website + nguồn, trang + đường dẫn): dòng phụ dùng class `.sr-bb-sub` / `.sr-bl-sub`.
+- **Không chồng nhiều chip trong một ô.** Thông tin phụ của một dòng (đang theo dõi hạng, số trang cùng lên…) gom
+  thành **một dòng chữ phụ 12px** nối bằng " · " ("Theo dõi hạng · 30 trang cùng lên"), mỗi cụm không bị ngắt giữa
+  chừng; cụm cần giải thích thì gạch chấm dưới + tooltip. Chip màu chỉ dành cho trạng thái cần nổi bật (Mới, Mất…).
+- Hành động theo dòng (AI viết, xem bản nháp) đặt **trong ô chính dưới dạng nút icon nhỏ** (`.sr-op-ai`: icon 16px,
+  tím; đã có bản nháp thì xanh), có tooltip + `aria-label`; không thêm cột nút có chữ làm bảng tràn ngang. Màn cảm ứng
+  tự mở rộng vùng chạm 40px.
 - Mỗi bảng có nút xuất Excel; file xuất **đủ cột** kể cả cột đang ẩn trên màn hình.
 - **Bảng theo tháng / lộ trình** (cột = tháng): không tô nền từng ô; trạng thái bằng màu chữ (xanh đạt, đỏ không đạt,
   hổ phách đang thiếu). Trạng thái tháng ghi bằng nhãn nhỏ dưới tên cột ("Đang chạy 14/30", "Bắt đầu cam kết"), không
@@ -291,6 +312,9 @@ Mọi bảng trong tool cùng một kiểu (CSS chung `.q-table__container` tron
 - **Không gọi API trả phí khi mở trang.** Chỉ gọi khi người dùng bấm nút, và nút ghi giá trước ("~0,15 USD",
   "8 credit"). Member thấy giá bằng credit; Owner / Admin thấy USD.
 - Việc tốn phí có lịch tự động thì hiện chip lịch kèm ước tính tháng ("Mỗi tháng · lần tới 12/12 · ~0,18 USD/tháng").
+- Trước khi bấm một việc gồm nhiều phần, hiện **khối chi phí tách dòng** `T.cost_lines(ui, [(việc, giá)], total, note,
+  tone)`: phần miễn phí ghi "miễn phí", phần tốn phí ghi giá; Member có dòng tổng "Còn lại sau lần này 1.940 / 2.000
+  credit" (hổ phách khi còn dưới 10%, đỏ và khóa nút khi không đủ). Tác vụ AI dùng `web_ai_write.ai_cost_box`.
 - Tính năng AI: chỉ chạy khi bấm, lưu vào thư viện (nút đồng hồ `history` mở "Thư viện AI"), ghi chi phí. Kết quả cũ
   hơn số liệu hiện tại thì báo "Đã có số mới, bấm để cập nhật".
 - Bật / tắt và chọn model AI ở **Quản trị › AI**. **Tên model chỉ hiện ở trang đó**, không hiện ở nơi khác.
