@@ -8,6 +8,7 @@ quyền business.manage và cùng API “Google My Business API” với phần 
 - Ảnh: Google tải ảnh qua một link công khai, nên ảnh lưu trong thư mục gbp_media và phục vụ ở /gbp-media/<tên ngẫu
   nhiên> (không đoán được tên, không cần đăng nhập).
 """
+import io
 import json
 import re
 import secrets
@@ -73,22 +74,48 @@ def media_dir(base_dir: Path | None = None) -> Path:
     return d
 
 
+def _strip_metadata(data: bytes) -> tuple[bytes, str]:
+    """Vẽ lại ảnh thành tệp mới không kèm metadata, trả (bytes, đuôi tệp).
+
+    Ảnh được phục vụ công khai qua /gbp-media/, nên không được mang theo EXIF (GPS, máy chụp, phần mềm chỉnh), XMP,
+    chú thích PNG hay dấu C2PA của công cụ tạo ảnh AI. Chiều xoay trong EXIF được áp vào điểm ảnh trước khi bỏ."""
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        fmt = img.format
+        img.load()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as e:
+        raise ValueError("Không đọc được ảnh (tệp hỏng hoặc không phải JPG / PNG)") from e
+    if fmt not in ("JPEG", "PNG"):
+        raise ValueError("Chỉ nhận ảnh JPG hoặc PNG")
+    img = ImageOps.exif_transpose(img)
+    out = io.BytesIO()
+    if fmt == "JPEG":
+        img.convert("RGB").save(out, "JPEG", quality=92, optimize=True)
+        return out.getvalue(), ".jpg"
+    if img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
+        img = img.convert("RGBA")
+    img.save(out, "PNG", optimize=True)  # không truyền pnginfo / exif: chú thích tEXt, iTXt, eXIf bị bỏ
+    return out.getvalue(), ".png"
+
+
 def save_image(base_dir: Path | None, data: bytes, content_type: str) -> str:
-    """Lưu ảnh tải lên (JPG / PNG, tối đa 5 MB), trả tên tệp ngẫu nhiên."""
-    ext = IMG_EXT.get((content_type or "").split(";")[0].strip().lower())
-    if not ext:
-        if data[:3] == b"\xff\xd8\xff":
-            ext = ".jpg"
-        elif data[:8] == b"\x89PNG\r\n\x1a\n":
-            ext = ".png"
-        else:
-            raise ValueError("Chỉ nhận ảnh JPG hoặc PNG")
+    """Lưu ảnh tải lên (JPG / PNG, tối đa 5 MB) đã bỏ metadata, trả tên tệp ngẫu nhiên."""
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    if ctype and ctype not in IMG_EXT and ctype != "application/octet-stream":
+        raise ValueError("Chỉ nhận ảnh JPG hoặc PNG")
     if len(data) > MAX_IMG:
         raise ValueError("Ảnh lớn hơn 5 MB (Google chỉ nhận ảnh tới 5 MB)")
     if len(data) < 10 * 1024:
         raise ValueError("Ảnh quá nhỏ (Google cần ảnh từ 10 KB, cạnh ngắn từ 250 px)")
+    clean, ext = _strip_metadata(data)
+    if len(clean) > MAX_IMG:
+        raise ValueError("Ảnh lớn hơn 5 MB sau khi xử lý (Google chỉ nhận ảnh tới 5 MB): giảm kích thước rồi tải lại")
+    if len(clean) < 10 * 1024:
+        raise ValueError("Ảnh quá nhỏ (Google cần ảnh từ 10 KB, cạnh ngắn từ 250 px)")
     name = secrets.token_urlsafe(18) + ext
-    (media_dir(base_dir) / name).write_bytes(data)
+    (media_dir(base_dir) / name).write_bytes(clean)
     return name
 
 

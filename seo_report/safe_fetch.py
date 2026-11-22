@@ -18,6 +18,11 @@ import zlib
 
 MAX_BODY = 5_000_000
 MAX_REDIRECTS = 5
+# User-Agent khi đọc website BÊN THỨ BA (trang đặt backlink, logo đối thủ): giống trình duyệt thường, để chủ site đó
+# nhìn log không biết công cụ nào đang kiểm tra. Crawl website của chính khách hàng (Technical Audit, index) vẫn dùng
+# "SEOReportBot" để dev bên khách cho phép trong tường lửa.
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/131.0.0.0 Safari/537.36")
 
 
 class NotPublic(OSError):

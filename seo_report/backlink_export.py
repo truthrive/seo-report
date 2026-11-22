@@ -280,6 +280,32 @@ def _sources(wb, sources: dict) -> None:
     _sheet(wb, "Nguồn dữ liệu", [("Mục", 40, None), ("Giá trị", 100, None)], rows)
 
 
+VENDOR_NAMES = (  # file cho khách: không nêu tên nhà cung cấp dữ liệu (thứ tự: cụm dài trước)
+    (re.compile(r"(nguồn )?DataForSEO Backlinks API"), "nguồn dữ liệu backlink"),
+    (re.compile(r"Page ascore \(Semrush\)"), "Điểm trang (nguồn 2)"),
+    (re.compile(r"File Semrush đã nhập"), "File nguồn 2 đã nhập"),
+    (re.compile(r"DataForSEO"), "nguồn 1"),
+    (re.compile(r"\bDFS\b"), "nguồn 1"),
+    (re.compile(r"Semrush"), "nguồn 2"),
+)
+
+
+def neutral_text(s: str) -> str:
+    for pat, rep in VENDOR_NAMES:
+        s = pat.sub(rep, s)
+    return "N" + s[1:] if s.startswith("nguồn ") else s  # đầu ô / tên cột viết hoa
+
+
+def _neutral_vendors(wb) -> None:
+    """Đổi tên nhà cung cấp dữ liệu (DataForSEO, Semrush) thành "nguồn 1 / nguồn 2" ở mọi ô và tên sheet."""
+    for ws in wb.worksheets:
+        ws.title = neutral_text(ws.title)[:31]
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and not cell.value.startswith("="):
+                    cell.value = neutral_text(cell.value)
+
+
 def build(lists: dict, latest: dict | None, brand_terms: list[str], site: str, which: str = "all",
           client: bool = False, links: dict | None = None, labels: dict | None = None,
           sources: dict | None = None) -> bytes:
@@ -322,6 +348,7 @@ def build(lists: dict, latest: dict | None, brand_terms: list[str], site: str, w
         _sheet(wb, "Trống", [("Chưa có dữ liệu", 30, None)], [])
     if client:
         _drop_spam(wb)
+        _neutral_vendors(wb)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

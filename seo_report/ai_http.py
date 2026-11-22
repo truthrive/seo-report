@@ -11,6 +11,7 @@ Kiểu API (route) và định dạng gửi / nhận:
 
 Khóa chỉ đi trong header, không bao giờ nằm trong URL. Gọi AI tốn tiền: chỉ gọi khi người dùng bấm nút."""
 import json
+import logging
 import time
 import re
 from urllib.error import HTTPError, URLError
@@ -50,6 +51,7 @@ class FormatError(AIError):
 
 
 MAX_TOKENS_CAP = 16000
+log = logging.getLogger(__name__)
 
 
 def _root(base: str) -> str:
@@ -115,7 +117,9 @@ def parse(style: str, data: dict) -> str:
         if style == "generate":
             return data["response"] or ""
     except (KeyError, IndexError, TypeError) as e:
-        raise AIError(f"Không đọc được câu trả lời ({style}): {str(data)[:200]}") from e
+        # nguyên văn phản hồi có thể lộ tên model / nhà cung cấp: chỉ ghi nhật ký máy chủ, câu hiện lên giao diện ngắn gọn
+        log.warning("AI trả về định dạng lạ (%s): %s", style, str(data)[:500])
+        raise AIError("Không đọc được câu trả lời của AI (định dạng lạ, chi tiết ở nhật ký máy chủ)") from e
     raise AIError(f"Kiểu API không hỗ trợ: {style}")
 
 
@@ -197,7 +201,8 @@ def complete(style: str, base: str, key: str, model: str, prompt: str, system: s
                                 "hoặc thêm model dự phòng ở Quản trị › AI") from e
         if e.code == 429:
             raise AIError("Nhà cung cấp đang giới hạn lượt gọi hoặc hết hạn mức, thử lại sau") from e
-        raise AIError(f"Nhà cung cấp báo lỗi {e.code}: {detail}") from e
+        log.warning("AI báo lỗi %s: %s", e.code, detail)  # nguyên văn chỉ ở nhật ký máy chủ
+        raise AIError(f"Nhà cung cấp AI báo lỗi {e.code} (chi tiết ở nhật ký máy chủ)") from e
     except URLError as e:
         if isinstance(e.reason, TimeoutError):
             raise UpstreamError(f"Model AI không trả lời sau {timeout} giây (hết giờ chờ)") from e

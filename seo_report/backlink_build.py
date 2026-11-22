@@ -51,7 +51,7 @@ STRONG_RANK = 300       # website trỏ về có uy tín (DataForSEO 0–1000) t
 SPAM_FLAG = 50
 SPAM_SPIKE = 5          # từ số link spam mới này (30 ngày) thì báo
 MAX_BYTES = 3_000_000
-UA = "Mozilla/5.0 (compatible; SEO-Report-LinkCheck/1.0)"
+UA = SF.BROWSER_UA  # trang đặt link là site bên thứ ba: không lộ tên tool trong log của họ
 
 
 def ensure_tables(con: sqlite3.Connection) -> None:

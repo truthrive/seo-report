@@ -247,7 +247,7 @@ def build_report_excel(rep: WeeklyReport, user: str) -> bytes:
 
     rs = rank_summary(rep, rep.committed)
     s.section(("Thứ hạng từ khóa cam kết" if rs["committed"] else "Thứ hạng từ khóa theo dõi")
-              + f" · {rs['total']} từ khóa (DataForSEO, Google mobile, Việt Nam)")
+              + f" · {rs['total']} từ khóa (Google mobile, Việt Nam)")  # file gửi khách: không nêu nhà cung cấp
     if not rs["total"]:
         s.text(f"Chưa có lần check rank nào trong {unit} này.")
     else:

@@ -257,6 +257,26 @@ class ExportTest(unittest.TestCase):
                          {"Anchor có điểm spam cao", "Cơ cấu anchor"})
         au = load_workbook(_io.BytesIO(BX.build(ls, latest, [], SITE, "audit")))
         self.assertEqual(au.sheetnames[0], "Audit")
+        # file nội bộ còn nêu nguồn; file cho khách không có tên nhà cung cấp dữ liệu ở bất kỳ ô / tên sheet nào
+        self.assertIn("DataForSEO", self._all_text(wb))
+        cl = load_workbook(_io.BytesIO(BX.build(ls, latest, ["example"], SITE, client=True)))
+        text = self._all_text(cl)
+        for vendor in ("DataForSEO", "Semrush", "DFS"):
+            self.assertNotIn(vendor, text)
+
+    @staticmethod
+    def _all_text(wb) -> str:
+        return " ".join(wb.sheetnames + [str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row
+                                         if c.value is not None])
+
+    def test_neutral_text(self):
+        from seo_report import backlink_export as BX
+        self.assertEqual(BX.neutral_text("DataForSEO"), "Nguồn 1")
+        self.assertEqual(BX.neutral_text("Link DataForSEO"), "Link nguồn 1")
+        self.assertEqual(BX.neutral_text("Page ascore (Semrush)"), "Điểm trang (nguồn 2)")
+        self.assertEqual(BX.neutral_text("Uy tín (DFS)"), "Uy tín (nguồn 1)")
+        self.assertEqual(BX.neutral_text("Website: x.vn · nguồn DataForSEO Backlinks API"),
+                         "Website: x.vn · nguồn dữ liệu backlink")
 
 
 class AnchorTypeTest(unittest.TestCase):

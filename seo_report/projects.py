@@ -336,10 +336,10 @@ def fetch_logo(site_url: str, timeout: int = 10) -> str | None:
     from urllib.parse import urljoin, urlsplit
 
     home = f"https://{domain(site_url)}/"
-    headers = {"User-Agent": "Mozilla/5.0 (SEO Report logo fetch)"}
     # Chỉ http(s) tới địa chỉ công khai: trang chủ và domain đối thủ (do người khác chọn) không được khiến tool đọc
     # file trên máy (file:), FTP hay dò mạng nội bộ qua chuyển hướng / icon (xem safe_fetch)
     from . import safe_fetch as SF
+    headers = {"User-Agent": SF.BROWSER_UA}  # có thể là site đối thủ: không lộ tên tool
     opener = SF.OPEN
 
     def get(url: str) -> tuple[bytes, str]:

@@ -86,11 +86,54 @@ class GbpPostsTest(unittest.TestCase):
             GP.save_image(d, b"GIF89a" + b"0" * 20000, "image/gif")
         with self.assertRaises(ValueError):
             GP.save_image(d, b"\xff\xd8\xff" + b"0" * 100, "image/jpeg")  # quá nhỏ
-        name = GP.save_image(d, b"\xff\xd8\xff" + b"0" * 20000, "image/jpeg")
+        with self.assertRaises(ValueError):
+            GP.save_image(d, b"\xff\xd8\xff" + b"0" * 20000, "image/jpeg")  # đầu JPG nhưng không phải ảnh
+        name = GP.save_image(d, _noisy_image("JPEG"), "image/jpeg")
         self.assertTrue(name.endswith(".jpg"))
         self.assertIsNotNone(GP.image_file(d, name))
         self.assertIsNone(GP.image_file(d, "../app.db"))
         self.assertIsNone(GP.image_file(d, "abc.jpg"))  # tên ngắn: không phải tên tool tạo
+
+    def test_image_metadata_removed(self):
+        """Ảnh phục vụ công khai không còn GPS / máy chụp / phần mềm (EXIF) hay chú thích PNG."""
+        from PIL import Image
+        d = Path(tempfile.mkdtemp())
+        name = GP.save_image(d, _noisy_image("JPEG", exif=True), "image/jpeg")
+        raw = GP.image_file(d, name).read_bytes()
+        self.assertNotIn(b"Exif", raw)
+        self.assertNotIn(b"Pixel 9 Pro", raw)
+        with Image.open(GP.image_file(d, name)) as im:
+            self.assertEqual(len(im.getexif()), 0)
+            self.assertEqual(im.size, (300, 400))  # Orientation=6: ảnh được xoay thật trước khi bỏ EXIF
+        name = GP.save_image(d, _noisy_image("PNG", exif=True), "")  # không có content type: nhận diện từ nội dung
+        self.assertTrue(name.endswith(".png"))
+        raw = GP.image_file(d, name).read_bytes()
+        self.assertNotIn(b"c2pa-made-with", raw)
+        self.assertNotIn(b"eXIf", raw)
+
+
+def _noisy_image(fmt: str, exif: bool = False) -> bytes:
+    """Ảnh 400x300 nhiễu ngẫu nhiên (nén không nhỏ đi dưới 10 KB), có thể kèm EXIF GPS + máy chụp + chiều xoay."""
+    import io
+    import os
+
+    from PIL import Image, PngImagePlugin
+    img = Image.frombytes("RGB", (400, 300), os.urandom(400 * 300 * 3))
+    kw = {}
+    if exif:
+        ex = Image.Exif()
+        ex[0x0110] = "Pixel 9 Pro"  # Model
+        ex[0x0131] = "Photoshop"  # Software
+        ex[0x0112] = 6  # Orientation: xoay 90°
+        ex[0x8825] = {1: "N", 2: (10.0, 48.0, 0.0)}  # GPSInfo
+        kw["exif"] = ex
+        if fmt == "PNG":
+            info = PngImagePlugin.PngInfo()
+            info.add_text("c2pa-made-with", "AI image model")
+            kw["pnginfo"] = info
+    buf = io.BytesIO()
+    img.save(buf, fmt, **kw)
+    return buf.getvalue()
 
     def test_import_from_google(self):
         class G2:

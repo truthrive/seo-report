@@ -747,8 +747,9 @@ def health_strip(ui, cfg, connect, rep) -> None:
 
 
 def rank_section(ui, rep, site) -> None:
+    # khách cũng xem màn này: không nêu nhà cung cấp dữ liệu
     with T.section(ui, f"Thứ hạng thực tế · {len(rep.ranks)} từ khóa", "leaderboard",
-                   "DataForSEO, mobile toàn VN · " + ("lần check cuối trong tháng so với cuối tháng trước"
+                   "Google mobile toàn VN · " + ("lần check cuối trong tháng so với cuối tháng trước"
                                                       if rep.kind == "month" else
                                                       "lần check mới nhất đến hết tuần kế tiếp"), href="/rank"):
         if not rep.ranks:
