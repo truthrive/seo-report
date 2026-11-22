@@ -335,8 +335,9 @@ def _daily_one(cfg) -> None:
             traceback.print_exc()
         try:  # backlink (DataForSEO): lấy lại khi lần gần nhất đã cũ hơn 7 ngày
             from . import backlinks
-            with db.connect(cfg.db_path) as con:
-                backlinks.refresh(con, cfg.site_url, cfg, log=lambda m: print(m, flush=True))
+            if cfg.paid_ok:  # website người dùng tự thêm: chờ Owner / Admin cho phép tính năng tốn tiền
+                with db.connect(cfg.db_path) as con:
+                    backlinks.refresh(con, cfg.site_url, cfg, log=lambda m: print(m, flush=True))
         except (Exception, SystemExit):
             traceback.print_exc()
         try:  # báo cáo công việc: chép sheet OKR / Weekly Task về, ghi trạng thái hôm nay

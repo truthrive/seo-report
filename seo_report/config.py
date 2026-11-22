@@ -50,6 +50,8 @@ class Config:
     config_path: Path = Path("config.toml")  # file cấu hình đã đọc (màn Cài đặt tích hợp ghi lại [drive])
     drive_parent: str = ""  # ID folder Drive của bạn chứa mọi folder / file tool tạo ([drive] parent_folder); trống = My Drive
     backup_keep: int = 7  # số bản sao lưu giữ lại ([backup] keep)
+    google_owner: str = ""  # website người dùng tự thêm bằng Google của họ: email tool của người đó
+    paid_ok: bool = True  # website đó được dùng tính năng tốn tiền (DataForSEO, AI): Owner / Admin bật
 
 
 def load_config(path: str | Path = "config.toml") -> Config:

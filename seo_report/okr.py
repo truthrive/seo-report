@@ -43,12 +43,27 @@ CREATE TABLE IF NOT EXISTS okr_extensions (  -- mỗi lần gia hạn một hạ
     id INTEGER PRIMARY KEY, uid TEXT NOT NULL, old_end TEXT, new_end TEXT NOT NULL, at TEXT NOT NULL,
     by TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS okr_waits (      -- mỗi lần một hạng mục chuyển sang "Đang chờ": chờ ai, từ ngày nào
+    id INTEGER PRIMARY KEY, uid TEXT NOT NULL, who TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+    start TEXT NOT NULL, end TEXT, by TEXT NOT NULL DEFAULT '', days INTEGER
+);
+CREATE TABLE IF NOT EXISTS okr_updates (    -- nhật ký cập nhật của hạng mục: ai ghi gì, lúc nào (dòng mới nhất ghi lên sheet)
+    id INTEGER PRIMARY KEY, uid TEXT NOT NULL, at TEXT NOT NULL, by TEXT NOT NULL DEFAULT '', text TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS okr_cycles (     -- đợt OKR do tool quản lý (khi OKR đã chuyển sang tool)
     name TEXT PRIMARY KEY, start TEXT, end TEXT, sort INTEGER NOT NULL DEFAULT 0
 );
 """
-DONE, DOING, TODO, OTHER = "done", "doing", "todo", "other"
-STATUS_LABEL = {DONE: "Hoàn thành", DOING: "Đang làm", TODO: "Chưa bắt đầu", OTHER: "Khác"}
+DONE, DOING, TODO, OTHER, WAIT, PAUSE = "done", "doing", "todo", "other", "wait", "pause"
+STATUS_LABEL = {DONE: "Hoàn thành", DOING: "Đang làm", TODO: "Chưa bắt đầu", OTHER: "Khác", WAIT: "Đang chờ",
+                PAUSE: "Tạm hoãn"}
+# "Tạm hoãn" (pending): lead / khách chủ động dừng hoặc để sau. Không tính trễ, không nhắc, không tính vào % hoàn thành
+# của đợt; mở lại thì chọn hạn mới.
+ACTIVE_EXCLUDED = (PAUSE,)
+# "Đang chờ": việc kẹt vì lý do ngoài chuyên môn. Trong lúc chờ không tính trễ hạn (ngưng đếm ngày); hết chờ thì hạn tự
+# dời thêm đúng số ngày đã chờ, ghi vào nhật ký gia hạn.
+WAIT_WHO = {"client": "khách duyệt", "vendor": "bên thứ ba", "internal": "bộ phận khác"}
+WAIT_REMIND_DAYS = 5  # chờ bấy nhiêu ngày thì nhắc người phụ trách đi hỏi
 CODE_RE = re.compile(r"^O\d+(\.\d+)?$")
 
 
@@ -68,6 +83,10 @@ def norm_status(text: str) -> str:
     t = (text or "").strip().lower()
     if not t:
         return TODO
+    if "hoãn" in t or "tạm dừng" in t or "pending" in t or "pause" in t:
+        return PAUSE
+    if "chờ" in t or "wait" in t:
+        return WAIT
     if "hoàn thành" in t or "xong" in t or "done" in t:
         return DONE
     if "đang" in t or "doing" in t or "progress" in t:
@@ -340,11 +359,169 @@ def sync_info(con: sqlite3.Connection) -> dict | None:
 
 # ---- Đọc để hiển thị / báo cáo ----
 
-def items(con: sqlite3.Connection) -> list[dict]:
+def items(con: sqlite3.Connection, today: date | None = None) -> list[dict]:
+    """Mọi mục tiêu / hạng mục; hạng mục "Đang chờ" có thêm "wait" = {"who", "who_label", "note", "start", "days",
+    "by"} (các mục khác: None)."""
     ensure_tables(con)
     cur = con.execute("SELECT * FROM okr_items ORDER BY sort")
     names = [d[0] for d in cur.description]
-    return [dict(zip(names, r)) for r in cur.fetchall()]
+    out = [dict(zip(names, r)) for r in cur.fetchall()]
+    waits = open_waits(con, today)
+    for i in out:
+        i["wait"] = waits.get(i["uid"]) if i.get("status") == WAIT else None
+    return out
+
+
+def open_waits(con, today: date | None = None) -> dict[str, dict]:
+    today = today or date.today()
+    out = {}
+    for uid, who, note, start, by in con.execute(
+            "SELECT uid, who, note, start, by FROM okr_waits WHERE end IS NULL ORDER BY id"):
+        out[uid] = {"who": who, "who_label": WAIT_WHO.get(who, who), "note": note, "start": start, "by": by,
+                    "days": max(0, (today - date.fromisoformat(start)).days)}
+    return out
+
+
+def wait_text(w: dict | None) -> str:
+    """"Chờ khách duyệt 6 ngày" (kèm ghi chú nếu có)."""
+    if not w:
+        return "Đang chờ"
+    return f"Chờ {w['who_label']} {w['days']} ngày" + (f": {w['note']}" if w.get("note") else "")
+
+
+def start_wait(con, uids: list[str], who: str, note: str = "", by: str = "", today: date | None = None) -> int:
+    """Chuyển hạng mục sang "Đang chờ" (đang chờ ai + ghi chú). Đang chờ sẵn thì chỉ sửa ai / ghi chú. Hạng mục đã
+    xong hoặc là mục tiêu thì bỏ qua. Trả số hạng mục đã chuyển / sửa."""
+    if who not in WAIT_WHO:
+        raise ValueError("Chọn đang chờ ai")
+    today = today or date.today()
+    ensure_tables(con)
+    n = 0
+    with con:
+        for uid in uids:
+            row = con.execute("SELECT status, is_objective FROM okr_items WHERE uid = ?", (uid,)).fetchone()
+            if not row or row[1] or row[0] == DONE:
+                continue
+            if row[0] == WAIT and con.execute("SELECT 1 FROM okr_waits WHERE uid = ? AND end IS NULL",
+                                              (uid,)).fetchone():
+                con.execute("UPDATE okr_waits SET who = ?, note = ? WHERE uid = ? AND end IS NULL",
+                            (who, (note or "").strip(), uid))
+            else:
+                con.execute("INSERT INTO okr_waits (uid, who, note, start, by) VALUES (?, ?, ?, ?, ?)",
+                            (uid, who, (note or "").strip(), today.isoformat(), str(by)))
+                con.execute("UPDATE okr_items SET status = ?, status_raw = ? WHERE uid = ?",
+                            (WAIT, STATUS_LABEL[WAIT], uid))
+                con.execute("INSERT OR REPLACE INTO okr_status_log VALUES (?, ?, ?)", (today.isoformat(), uid, WAIT))
+            n += 1
+    if n:
+        _touch(con)
+    return n
+
+
+def _end_wait(con, uid: str, today: date, by: str = "") -> int:
+    """Hết chờ: đóng lần chờ đang mở; hạn dời thêm đúng số ngày đã chờ (ghi nhật ký gia hạn). Trả số ngày đã chờ."""
+    r = con.execute("SELECT id, who, note, start FROM okr_waits WHERE uid = ? AND end IS NULL ORDER BY id DESC",
+                    (uid,)).fetchone()
+    if not r:
+        return 0
+    wid, who, note, start = r
+    days = max(0, (today - date.fromisoformat(start)).days)
+    con.execute("UPDATE okr_waits SET end = ?, days = ? WHERE id = ?", (today.isoformat(), days, wid))
+    old = con.execute("SELECT end FROM okr_items WHERE uid = ?", (uid,)).fetchone()[0]
+    if days and old:
+        new = (date.fromisoformat(old) + timedelta(days=days)).isoformat()
+        con.execute("UPDATE okr_items SET end = ? WHERE uid = ?", (new, uid))
+        con.execute("INSERT INTO okr_extensions (uid, old_end, new_end, at, by, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                    (uid, old, new, datetime.now(timezone.utc).isoformat(timespec="seconds"), str(by) or "tự động",
+                     f"Chờ {WAIT_WHO.get(who, who)} {days} ngày" + (f": {note}" if note else "")))
+    return days
+
+
+def add_update(con, uid: str, text: str, by: str = "") -> None:
+    """Ghi một dòng nhật ký cập nhật cho hạng mục; dòng mới nhất cũng là ghi chú của hạng mục (cột Cảnh báo trên sheet)."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Chưa có nội dung cập nhật")
+    ensure_tables(con)
+    with con:
+        if not con.execute("SELECT 1 FROM okr_items WHERE uid = ?", (uid,)).fetchone():
+            raise ValueError("Không thấy hạng mục")
+        con.execute("INSERT INTO okr_updates (uid, at, by, text) VALUES (?, ?, ?, ?)",
+                    (uid, datetime.now(timezone.utc).isoformat(timespec="seconds"), str(by), text[:2000]))
+        con.execute("UPDATE okr_items SET note = ? WHERE uid = ?", (text[:500], uid))
+    _touch(con)
+
+
+def updates(con, uid: str) -> list[dict]:
+    """Nhật ký cập nhật của một hạng mục, mới trước."""
+    ensure_tables(con)
+    return [{"at": a, "by": b, "text": t} for a, b, t in con.execute(
+        "SELECT at, by, text FROM okr_updates WHERE uid = ? ORDER BY id DESC", (uid,))]
+
+
+def last_updates(con) -> dict[str, dict]:
+    """Dòng nhật ký cập nhật mới nhất của từng hạng mục: {uid: {"at", "by", "text"}}."""
+    ensure_tables(con)
+    out = {}
+    for uid, at, by, text in con.execute(
+            "SELECT u.uid, u.at, u.by, u.text FROM okr_updates u JOIN (SELECT uid, MAX(id) m FROM okr_updates "
+            "GROUP BY uid) x ON x.m = u.id"):
+        out[uid] = {"at": at, "by": by, "text": text}
+    return out
+
+
+def progress_of(it: dict) -> float:
+    """% tiến độ để hiển thị: hạng mục đã Hoàn thành mà chưa ghi % (dữ liệu cũ từ sheet) thì là 100%."""
+    p = it.get("progress")
+    if it.get("status") == DONE and not p:
+        return 100.0
+    return float(p or 0)
+
+
+def update_counts(con) -> dict[str, int]:
+    ensure_tables(con)
+    return dict(con.execute("SELECT uid, COUNT(*) FROM okr_updates GROUP BY uid"))
+
+
+# Link bằng chứng đi vào thuộc tính của thẻ <a>: chỉ nhận http(s), không dấu nháy, ngoặc nhọn, dấu huyền, gạch chéo ngược
+# hay khoảng trắng (đã có lỗi chèn thuộc tính qua dấu nháy kép).
+_SAFE_LINK = re.compile(r"^https?://[^\s\"'<>`\\]+$", re.I)
+MAX_LINK = 2000
+
+
+def safe_link(u: str) -> bool:
+    return bool(u) and len(u) <= MAX_LINK and bool(_SAFE_LINK.match(u))
+
+
+def links(it: dict) -> list[str]:
+    """Các link bằng chứng của hạng mục (lưu mỗi dòng một link trong cột link). Link không an toàn (có thể do
+    đồng bộ từ Sheet hoặc dữ liệu cũ) bị bỏ khi đọc, nên không bao giờ tới giao diện."""
+    return [x for x in (y.strip() for y in re.split(r"[\r\n]+", it.get("link") or "")) if safe_link(x)]
+
+
+def _clean_links(urls: list[str]) -> list[str]:
+    clean = []
+    for u in urls:
+        u = (u or "").strip()
+        if not u:
+            continue
+        if not safe_link(u):
+            raise ValueError("Link phải bắt đầu bằng http:// hoặc https://, không có khoảng trắng hay dấu nháy "
+                             f"({u[:40]})")
+        if u not in clean:
+            clean.append(u)
+    return clean
+
+
+def set_links(con, uid: str, urls: list[str]) -> None:
+    update_item(con, uid, link="\n".join(_clean_links(urls)))
+
+
+def wait_log(con, uid: str) -> list[dict]:
+    ensure_tables(con)
+    return [{"who": w, "who_label": WAIT_WHO.get(w, w), "note": n, "start": s_, "end": e_, "days": d, "by": b}
+            for w, n, s_, e_, d, b in con.execute(
+                "SELECT who, note, start, end, days, by FROM okr_waits WHERE uid = ? ORDER BY id", (uid,))]
 
 
 def tasks(con: sqlite3.Connection) -> list[dict]:
@@ -389,29 +566,34 @@ def cycle_at(cs: list[dict], day: date) -> str | None:
 
 
 def is_late(it: dict, today: date) -> bool:
-    return bool(it.get("end") and it["status"] != DONE and date.fromisoformat(it["end"]) < today)
+    """Quá hạn mà chưa xong. Hạng mục "Đang chờ" không tính trễ (ngưng đếm ngày trong lúc chờ bên ngoài)."""
+    return bool(it.get("end") and it["status"] not in (DONE, WAIT, PAUSE) and date.fromisoformat(it["end"]) < today)
 
 
 def overview(con: sqlite3.Connection, today: date, period: tuple[date, date] | None = None,
              cycle: str | None = None) -> dict:
     """Số tổng, theo mục tiêu, và danh sách cho một kỳ (tuần/tháng): đến hạn trong kỳ, hoàn thành trong kỳ, trễ hạn,
     kỳ tới. Chỉ tính một đợt OKR: `cycle`, mặc định đợt chứa cuối kỳ (hoặc hôm nay)."""
-    every = items(con)
+    every = items(con, today)
     cs = cycle_list(con, every, today)
     cycle = cycle if cycle in {c["name"] for c in cs} else cycle_at(cs, period[1] if period else today)
     all_items = [i for i in every if i["cycle"] == cycle]
     objs = [i for i in all_items if i["is_objective"]]
     leaf = [i for i in all_items if not i["is_objective"]]
-    counts = {s: sum(1 for i in leaf if i["status"] == s) for s in (DONE, DOING, TODO, OTHER)}
+    counts = {s: sum(1 for i in leaf if i["status"] == s) for s in (DONE, DOING, WAIT, PAUSE, TODO, OTHER)}
+    paused = [i for i in leaf if i["status"] == PAUSE]
     late = [i for i in leaf if is_late(i, today)]
+    waiting = sorted((i for i in leaf if i["status"] == WAIT), key=lambda i: -((i["wait"] or {}).get("days") or 0))
     per_obj = []
     for o in objs:
-        kids = [i for i in leaf if i["objective"] == o["uid"]]
+        kids = [i for i in leaf if i["objective"] == o["uid"] and i["status"] != PAUSE]  # tạm hoãn: không tính %
         done = sum(1 for i in kids if i["status"] == DONE)
         per_obj.append({**o, "total": len(kids), "done": done, "doing": sum(1 for i in kids if i["status"] == DOING),
                         "late": sum(1 for i in kids if is_late(i, today)),
+                        "waiting": sum(1 for i in kids if i["status"] == WAIT),
                         "pct": done / len(kids) if kids else None})
-    out = {"total": len(leaf), "counts": counts, "late": late, "objectives": per_obj, "items": leaf,
+    out = {"total": len(leaf) - len(paused), "counts": counts, "late": late, "waiting": waiting, "paused": paused,
+           "objectives": per_obj, "items": leaf,
            "cycle": cycle, "cycles": cs}
     if period:
         s, e = period
@@ -422,23 +604,73 @@ def overview(con: sqlite3.Connection, today: date, period: tuple[date, date] | N
         def overlaps(i, a, b):
             return i["start"] and i["end"] and i["start"] <= b.isoformat() and i["end"] >= a.isoformat()
 
+        act = [i for i in leaf if i["status"] != PAUSE]  # tạm hoãn: không vào danh sách đến hạn / kỳ tới
         out["period"] = {
-            "due": [i for i in leaf if i["end"] and s.isoformat() <= i["end"] <= e.isoformat()],
-            "active": [i for i in leaf if overlaps(i, s, e)],
+            "due": [i for i in act if i["end"] and s.isoformat() <= i["end"] <= e.isoformat()],
+            "active": [i for i in act if overlaps(i, s, e)],
             # Xong trước khi tool bắt đầu theo dõi (thấy "Hoàn thành" ngay lần chụp đầu) thì không biết ngày xong:
             # chỉ tính vào kỳ nếu ngày kết thúc kế hoạch nằm trong kỳ.
             "done": [i for i in leaf if i["status"] == DONE and dd.get(i["uid"]) and (
                 (dd[i["uid"]] != first and s.isoformat() <= dd[i["uid"]] <= e.isoformat()) or
                 (dd[i["uid"]] == first and i["end"] and s.isoformat() <= i["end"] <= e.isoformat()))],
-            "next": [i for i in leaf if i["status"] != DONE and overlaps(i, *nxt)],
+            "next": [i for i in act if i["status"] != DONE and overlaps(i, *nxt)],
             "tracking_since": first,
         }
     return out
 
 
+def end_as_of(exts: list[dict], current_end: str | None, day: date) -> str | None:
+    """Ngày kết thúc của hạng mục vào ngày `day` (trước các lần gia hạn sau ngày đó)."""
+    before = [x for x in exts if x["at"] and x["at"][:10] <= day.isoformat()]
+    if before:
+        return before[-1]["new_end"]
+    return exts[0]["old_end"] if exts else current_end
+
+
+def week_history(con, today: date, cycle: str | None = None) -> list[dict]:
+    """Từng tuần (thứ Hai – Chủ nhật) của đợt, từ tuần đầu tới tuần này, mới trước: đến hạn, hoàn thành trong tuần,
+    trễ hạn tính đến cuối tuần (theo hạn lúc đó: trước các lần gia hạn sau tuần đó; tuần đang chạy: tính đến hôm nay),
+    số task tuần. [{"start", "end", "due", "done", "late", "next", "tasks", "current"}]"""
+    ov = overview(con, today, cycle=cycle)
+    cyc = next((c for c in ov["cycles"] if c["name"] == ov["cycle"]), None) or {}
+    leaf = [i for i in ov["items"] if i["status"] != PAUSE]
+    starts = [date.fromisoformat(i["start"]) for i in leaf if i["start"]]
+    first = date.fromisoformat(cyc["start"]) if cyc.get("start") else (min(starts) if starts else today)
+    mon = first - timedelta(days=first.weekday())
+    this_mon = today - timedelta(days=today.weekday())
+    dd = done_dates(con)
+    first_seen = first_snapshot(con)
+    for i in leaf:  # xong trước khi tool bắt đầu theo dõi: không biết ngày xong thật, coi như xong đúng hạn
+        if dd.get(i["uid"]) and dd[i["uid"]] == first_seen and i["end"]:
+            dd[i["uid"]] = min(dd[i["uid"]], i["end"])
+    ext: dict[str, list[dict]] = {}
+    for uid, o, n, at in con.execute("SELECT uid, old_end, new_end, at FROM okr_extensions ORDER BY id"):
+        ext.setdefault(uid, []).append({"old_end": o, "new_end": n, "at": at})
+    task_weeks: dict[str, int] = {}
+    for (w,) in con.execute("SELECT week FROM okr_tasks"):
+        task_weeks[w] = task_weeks.get(w, 0) + 1
+    out = []
+    while mon <= this_mon:
+        s, e = mon, mon + timedelta(days=6)
+        p = overview(con, today, (s, e), cycle=ov["cycle"])["period"]
+        if e >= today:
+            late = ov["late"]
+        else:
+            late = []
+            for i in leaf:
+                end = end_as_of(ext.get(i["uid"], []), i["end"], e)
+                if end and end <= e.isoformat() and not (dd.get(i["uid"]) and dd[i["uid"]] <= e.isoformat()):
+                    late.append(i)
+        out.append({"start": s, "end": e, "due": p["due"], "done": p["done"], "late": late, "next": p["next"],
+                    "tracking_since": p["tracking_since"], "tasks": task_weeks.get(s.isoformat(), 0),
+                    "current": s == this_mon})
+        mon += timedelta(days=7)
+    return out[::-1]
+
+
 # ---- OKR do tool quản lý (tạo / sửa trên tool, tool ghi đè tab OKRs trên sheet dự án) ----
 
-STATUSES = (TODO, DOING, DONE)  # trạng thái chọn trên tool
+STATUSES = (TODO, DOING, WAIT, PAUSE, DONE)  # trạng thái chọn trên tool ("Đang chờ" chọn qua start_wait: phải nói chờ ai)
 FIELDS = ("grp", "title", "details", "qty", "unit", "month_text", "start", "end", "pic", "status", "progress", "link",
           "note")
 
@@ -629,16 +861,22 @@ def add_item(con, objective_uid: str, title: str, **fields) -> str:
     return uid
 
 
-def update_item(con, uid: str, today: date | None = None, **fields) -> None:
+def update_item(con, uid: str, today: date | None = None, by: str = "", **fields) -> None:
     """Sửa các trường của mục tiêu / hạng mục. Đổi trạng thái thì ghi nhật ký ngày (để biết ngày hoàn thành)."""
     fields = {k: v for k, v in fields.items() if k in FIELDS}
     if "title" in fields and not (fields["title"] or "").strip():
         raise ValueError("Tên không được để trống")
+    if "link" in fields:  # mọi đường ghi link (hộp thêm link, hộp chi tiết) đều qua cùng một bộ kiểm tra
+        fields["link"] = "\n".join(_clean_links(re.split(r"[\r\n]+", fields["link"] or "")))
     if fields.get("start") and fields.get("end") and fields["start"] > fields["end"]:
         raise ValueError("Ngày bắt đầu sau ngày kết thúc")
     if "status" in fields:
         if fields["status"] not in STATUSES:
             raise ValueError("Trạng thái không hợp lệ")
+        if fields["status"] == WAIT:
+            cur = con.execute("SELECT status FROM okr_items WHERE uid = ?", (uid,)).fetchone()
+            if not cur or cur[0] != WAIT:
+                raise ValueError("Chọn đang chờ ai (dùng start_wait)")
         fields["status_raw"] = STATUS_LABEL[fields["status"]]
         if fields["status"] == DONE and "progress" not in fields:
             fields["progress"] = 100.0
@@ -646,12 +884,21 @@ def update_item(con, uid: str, today: date | None = None, **fields) -> None:
         fields["progress"] = max(0.0, min(100.0, float(fields["progress"])))
     if not fields:
         return
+    today = today or date.today()
     with con:
+        if fields.get("status") and fields["status"] != WAIT:
+            cur = con.execute("SELECT status FROM okr_items WHERE uid = ?", (uid,)).fetchone()
+            if cur and cur[0] == WAIT:  # hết chờ: hạn dời thêm số ngày đã chờ (trừ khi người dùng sửa hạn cùng lúc)
+                if "end" in fields:
+                    con.execute("UPDATE okr_waits SET end = ?, days = ? WHERE uid = ? AND end IS NULL",
+                                (today.isoformat(), 0, uid))
+                else:
+                    _end_wait(con, uid, today, by)
         con.execute(f"UPDATE okr_items SET {', '.join(f'{k} = ?' for k in fields)} WHERE uid = ?",
                     (*fields.values(), uid))
         if "status" in fields:
             con.execute("INSERT OR REPLACE INTO okr_status_log VALUES (?, ?, ?)",
-                        ((today or date.today()).isoformat(), uid, fields["status"]))
+                        (today.isoformat(), uid, fields["status"]))
     _touch(con)
 
 
@@ -681,8 +928,8 @@ def sheet_rows(con, cycle: str, note: str, stamp: str, today: date | None = None
     def vn(d):
         return f"{d[8:10]}/{d[5:7]}/{d[:4]}" if d else ""
     c = next((x for x in cycle_list(con) if x["name"] == cycle), {"start": None, "end": None})
-    its = [i for i in items(con) if i["cycle"] == cycle]
-    leaf = [i for i in its if not i["is_objective"]]
+    its = [i for i in items(con, today) if i["cycle"] == cycle]
+    leaf = [i for i in its if not i["is_objective"] and i["status"] != PAUSE]
     done = sum(1 for i in leaf if i["status"] == DONE)
     ext = extension_counts(con)
     rows = [[f"OKR · {cycle}" + (f" · {vn(c['start'])} – {vn(c['end'])}" if c["start"] else "")
@@ -695,7 +942,8 @@ def sheet_rows(con, cycle: str, note: str, stamp: str, today: date | None = None
                      "" if i["is_objective"] else STATUS_LABEL.get(i["status"], i["status_raw"] or ""),
                      "" if i["progress"] is None else round(i["progress"]) / 100,
                      i["link"] or "", " · ".join(x for x in (
-                         "Trễ hạn" if late else "", f"Gia hạn {ext[i['uid']]} lần" if ext.get(i["uid"]) else "",
+                         "Trễ hạn" if late else "", wait_text(i.get("wait")) if i["status"] == WAIT else "",
+                         f"Gia hạn {ext[i['uid']]} lần" if ext.get(i["uid"]) else "",
                          i["note"] or "") if x)])
     return rows
 
@@ -823,10 +1071,12 @@ def alerts(con, today: date | None = None, cycle: str | None = None) -> dict[str
     """Việc cần để ý của một đợt (mặc định đợt đang chạy): trễ hạn, đến hạn trong 3 ngày tới, đã tới ngày bắt đầu mà
     chưa bắt đầu. Hạng mục đã xong thì không báo."""
     today = today or date.today()
-    every = items(con)
+    every = items(con, today)
     cs = cycle_list(con, every, today)
     cycle = cycle if cycle in {c["name"] for c in cs} else cycle_at(cs, today)
-    leaf = [i for i in every if i["cycle"] == cycle and not i["is_objective"] and i["status"] != DONE]
+    leaf_all = [i for i in every if i["cycle"] == cycle and not i["is_objective"] and i["status"] != DONE]
+    waiting = sorted((i for i in leaf_all if i["status"] == WAIT), key=lambda i: -((i["wait"] or {}).get("days") or 0))
+    leaf = [i for i in leaf_all if i["status"] not in (WAIT, PAUSE)]
     t, soon = today.isoformat(), (today + timedelta(days=DUE_SOON_DAYS)).isoformat()
     ext = extension_counts(con)
     for i in leaf:
@@ -835,7 +1085,9 @@ def alerts(con, today: date | None = None, cycle: str | None = None) -> dict[str
     due = sorted((i for i in leaf if i["end"] and t <= i["end"] <= soon), key=lambda i: i["end"])
     idle = sorted((i for i in leaf if i["status"] == TODO and i["start"] and i["start"] <= t
                    and not (i["end"] and i["end"] < t)), key=lambda i: i["start"])
-    return {"cycle": cycle, "late": late, "due_soon": due, "not_started": idle}
+    for i in waiting:
+        i["extended"] = ext.get(i["uid"], 0)
+    return {"cycle": cycle, "late": late, "due_soon": due, "not_started": idle, "waiting": waiting}
 
 
 def extend(con, uids: list[str], *, days: int | None = None, new_end: str | None = None, by: str = "",
@@ -889,11 +1141,13 @@ def delete_items(con, uids: list[str]) -> int:
         for uid in uids:
             n += con.execute("DELETE FROM okr_items WHERE uid = ? OR (objective = ? AND is_objective = 0)",
                              (uid, uid)).rowcount
-        con.execute(f"DELETE FROM okr_extensions WHERE uid NOT IN (SELECT uid FROM okr_items)")
+        con.execute("DELETE FROM okr_extensions WHERE uid NOT IN (SELECT uid FROM okr_items)")
+        con.execute("DELETE FROM okr_waits WHERE uid NOT IN (SELECT uid FROM okr_items)")
+        con.execute("DELETE FROM okr_updates WHERE uid NOT IN (SELECT uid FROM okr_items)")
     _touch(con)
     return n
 
 
-def set_status_many(con, uids: list[str], status: str, today: date | None = None) -> None:
+def set_status_many(con, uids: list[str], status: str, today: date | None = None, by: str = "") -> None:
     for uid in uids:
-        update_item(con, uid, today=today, status=status)
+        update_item(con, uid, today=today, by=by, status=status)

@@ -13,8 +13,7 @@ def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
     def short(url):
         return (url or "").replace(site.rstrip("/"), "") or ("/" if url else "")
 
-    ui.label("URL mục tiêu là trang bạn muốn xếp hạng cho từ khóa. Tool không tự gán: từ khóa cam kết lấy URL trong "
-             "sheet Từ khóa cam kết, từ khóa khác do team gán ở đây.").classes("text-sm muted")
+    ui.label("URL mục tiêu là trang bạn muốn lên hạng cho từ khóa.").classes("text-sm muted")
     with ui.row().classes("items-end gap-3"):
         search = ui.input("Tìm từ khóa").props("clearable dense outlined").classes("w-72")
         only_empty = ui.checkbox("Chỉ từ khóa chưa có URL mục tiêu", on_change=lambda: refresh()).props("dense")
@@ -56,8 +55,7 @@ def build_target_panel(ui, cfg, connect, user: str, site: str) -> None:
 
     with ui.dialog() as dialog, ui.card().style("min-width: 560px; border-radius: 14px"):
         title = ui.label().classes("text-lg font-semibold")
-        ui.label("Chọn một gợi ý (trang có click / hiển thị cho từ khóa này trên GSC 90 ngày qua, hoặc URL Google "
-                 "đang xếp hạng), hoặc dán URL.").classes("text-sm muted")
+        ui.label("Chọn một gợi ý hoặc dán URL.").classes("text-sm muted")
         picks = ui.column().classes("w-full gap-1")
         url_in = ui.input("URL mục tiêu", placeholder=f"https://{R.domain(site)}/trang-muc-tieu/").props(
             "outlined dense clearable").classes("w-full")

@@ -88,16 +88,19 @@ def build_dashboard(ui, cfg, connect, user, open_set, new_set) -> None:
             with ui.element("div").classes("sr-rd-kpi"):
                 with ui.row().classes("items-center gap-1 no-wrap"):
                     ui.label("Từ khóa theo dõi").classes("sr-rd-lab")
-                    T.info_icon(ui, "Từ khóa theo dõi", (
+                    T.info_icon(ui, "Từ khóa theo dõi", ((
+                        "Số từ khóa duy nhất: một từ khóa nằm ở nhiều bộ chỉ tính một lần.",) if T.client_view() else (
                         "Số từ khóa duy nhất trong phạm vi: một từ khóa nằm ở nhiều bộ chỉ tính một lần (ưu tiên bộ "
                         "Cam kết). Không tính bộ Nháp. Từ khóa / bộ đang tạm dừng vẫn tính theo lần check gần nhất.",
-                        "Lượt theo dõi = tổng số dòng từ khóa của các bộ."))
+                        "Lượt theo dõi = tổng số dòng từ khóa của các bộ.")))
                 ui.label(f"{tot:,}".replace(",", ".")).classes("sr-rd-num")
                 ui.label(f"{n_sets} bộ · {rows} lượt theo dõi").classes("sr-rd-sub")
                 n_paused = sum(1 for x in kws_ if x["paused"])
+                if T.client_view():  # khách hàng: không số vận hành (tạm dừng, chưa check)
+                    n_paused = 0
                 if n_paused:
                     ui.label(f"{n_paused} đang tạm dừng · giữ số lần check gần nhất").classes("sr-rd-sub neutral")
-                if k["new"] or k["unchecked"]:
+                if (k["new"] or k["unchecked"]) and not T.client_view():
                     ui.label(" · ".join(x for x in (f"{k['new']} mới kiểm tra" if k["new"] else "",
                                                      f"{k['unchecked']} chưa check" if k["unchecked"] else "")
                                         if x)).classes("sr-rd-sub neutral")

@@ -140,7 +140,9 @@ CREATE TABLE IF NOT EXISTS intent_runs (
 
 
 def ensure_tables(con) -> None:
+    from .spend import add_by_column
     con.executescript(SCHEMA)
+    add_by_column(con, "intent_runs")
 
 
 def _key(kw: str) -> str:
@@ -160,9 +162,14 @@ def stored(con, language: str) -> dict[str, dict]:
                                           "WHERE language = ?", (language,))}
 
 
-def fetch_missing(con, cfg, creds, log=print, post=None) -> int:
+GAP_HOURS = 20      # mỗi lượt gọi tốn phí cố định ~0,01 USD: gom từ khóa mới, khoảng một ngày gọi một lần
+BIG_BATCH = 200     # đủ chừng này từ khóa chưa có ý định thì gọi luôn, không chờ
+
+
+def fetch_missing(con, cfg, creds, log=print, post=None, now=None) -> int:
     """Lấy ý định cho các từ khóa (mọi bộ, kể cả Nháp) chưa có. Dự án tạm ngưng check hoặc hết ngân sách: bỏ qua.
-    Trả số từ khóa đã lấy. post(body) -> phản hồi JSON (để test)."""
+    Gom theo ngày: lần gọi trước chưa quá GAP_HOURS giờ và ít hơn BIG_BATCH từ khóa chờ thì để lượt sau (trong lúc
+    chờ, cột ý định dùng cách đoán theo chữ, miễn phí). Trả số từ khóa đã lấy. post(body) -> phản hồi JSON (để test)."""
     from datetime import date, datetime, timezone
 
     from . import rank as R
@@ -175,6 +182,11 @@ def fetch_missing(con, cfg, creds, log=print, post=None) -> int:
     want = sorted({_key(k) for (k,) in con.execute(
         "SELECT keyword FROM rank_keywords WHERE site = ? AND removed_at IS NULL", (cfg.site_url,))} - set(have))
     if not want:
+        return 0
+    from datetime import timedelta
+    last = con.execute("SELECT MAX(run_at) FROM intent_runs").fetchone()[0]
+    now_ = now or datetime.now(timezone.utc)
+    if last and len(want) < BIG_BATCH and datetime.fromisoformat(last) > now_ - timedelta(hours=GAP_HOURS):
         return 0
     cost_est = 0.012 * math.ceil(len(want) / BATCH) + 0.00012 * len(want)
     if R.spent_this_month(con, date.today()) + cost_est > s.monthly_budget_usd:
@@ -197,7 +209,9 @@ def fetch_missing(con, cfg, creds, log=print, post=None) -> int:
             log(f"DataForSEO không trả ý định tìm kiếm: {task.get('status_message')}")
             break
         with con:
-            con.execute("INSERT INTO intent_runs VALUES (?, ?, ?)", (now, len(chunk), task.get("cost") or 0))
+            from .spend import current
+            con.execute("INSERT INTO intent_runs (run_at, keywords, cost, by_user) VALUES (?, ?, ?, ?)",
+                        (now, len(chunk), task.get("cost") or 0, current()))
             for it in (task.get("result") or [{}])[0].get("items") or []:
                 main = it.get("keyword_intent") or {}
                 code = CODES.get(main.get("label"))

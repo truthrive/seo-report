@@ -191,8 +191,13 @@ def _add_columns(con: sqlite3.Connection) -> None:
         con.execute("ALTER TABLE rank_sets ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
     if "state" not in set_cols:  # bộ đã có trước đây coi như đã chốt
         con.execute("ALTER TABLE rank_sets ADD COLUMN state TEXT NOT NULL DEFAULT 'active'")
-    if "by_user" not in {c[1] for c in con.execute("PRAGMA table_info(rank_tasks)")}:  # ai bấm check / "lịch"
+    task_cols = {c[1] for c in con.execute("PRAGMA table_info(rank_tasks)")}
+    if "by_user" not in task_cols:  # ai bấm check / "lịch"
         con.execute("ALTER TABLE rank_tasks ADD COLUMN by_user TEXT")
+    if "shallow" not in task_cols:  # 1: lượt theo lịch check nông (top 10) vì từ khóa đứng vững top 5
+        con.execute("ALTER TABLE rank_tasks ADD COLUMN shallow INTEGER NOT NULL DEFAULT 0")
+    if "aio" not in task_cols:  # 1: có tải AI Overview hiện chậm (lượt theo lịch); 0: không (bấm check tay, đỡ tiền)
+        con.execute("ALTER TABLE rank_tasks ADD COLUMN aio INTEGER NOT NULL DEFAULT 1")
     serp_cols = {c[1] for c in con.execute("PRAGMA table_info(rank_serp)")}
     if "aio_text" not in serp_cols:  # nội dung chữ AI Overview
         con.execute("ALTER TABLE rank_serp ADD COLUMN aio_text TEXT")
@@ -710,8 +715,29 @@ def cost_by_month(con: sqlite3.Connection, months: list[str]) -> dict[str, dict]
     return out
 
 
+BACKLINK_RUNS = {"history": "Lịch sử backlink theo tháng", "summary": "Tổng quan backlink",
+                 "domains": "Danh sách website trỏ về", "changes": "Link mới / mất 30 ngày",
+                 "anchors": "Anchor text", "pages": "Trang được link nhiều nhất",
+                 "gap": "Backlink GAP: website trỏ về đối thủ mà chưa trỏ về mình",
+                 "gap_links": "Backlink GAP: link cụ thể của một website",
+                 "gap_multi": "Backlink GAP nhanh: website trỏ về từ 2 đối thủ",
+                 "links": "Toàn bộ backlink (mỗi link một dòng)"}
+# API thực gọi của từng khoản chi (để biết call từ API nào)
+API_NAMES = {"rank": "DataForSEO SERP · google/organic/task_post",
+             "serp": "DataForSEO SERP · google/organic/live/advanced",
+             "volume": "DataForSEO Keywords Data · google_ads/search_volume",
+             "volume_ads": "Google Ads API · Keyword Planner (miễn phí)",
+             "intent": "DataForSEO Labs · google/search_intent"}
+BACKLINK_ENDPOINTS = {"history": "history", "summary": "summary", "domains": "referring_domains",
+                      "changes": "backlinks", "anchors": "anchors", "pages": "domain_pages",
+                      "gap": "domain_intersection", "gap_links": "backlinks", "gap_multi": "domain_intersection", "links": "backlinks"}
 SPEND_KINDS = {"rank": "Check rank", "volume": "Volume từ khóa", "backlinks": "Backlink", "intent": "Ý định từ khóa",
                "serp": "Xem kết quả Google"}
+
+
+def _runner() -> str:
+    from .spend import current
+    return current()
 
 
 def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
@@ -736,26 +762,27 @@ def spend_log(con: sqlite3.Connection, month: str) -> list[dict]:
         deleted = any(x == "" for x in (names or "").split(","))
         where = ", ".join(sets_) + (" + bộ đã xóa" if deleted and sets_ else "bộ đã xóa" if deleted else "")
         tops = "/".join(f"top {d}" for d in sorted({int(x) for x in (depths or "").split(",") if x}))
-        out.append({"at": at, "kind": "rank", "qty": n, "cost": cost or 0.0, "by": by or "",
+        out.append({"at": at, "kind": "rank", "qty": n, "cost": cost or 0.0, "by": by or "", "api": API_NAMES["rank"],
                     "detail": f"{n} từ khóa · {where} · {tops}" if where else f"{n} từ khóa · {tops}"})
-    for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM volume_runs WHERE substr(run_at, 1, 7) = ?",
-                                   (month,)):
-        out.append({"at": at, "kind": "volume", "qty": n, "cost": cost or 0.0, "by": "",
+    for at, n, cost, by, api in con.execute("SELECT run_at, keywords, cost, by_user, api FROM volume_runs "
+                                            "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        api = api or ("google_ads" if not cost else "dataforseo")  # dòng cũ chưa ghi nguồn
+        out.append({"at": at, "kind": "volume", "qty": n, "cost": cost or 0.0, "by": by or "",
+                    "api": API_NAMES["volume_ads" if api == "google_ads" else "volume"],
                     "detail": f"Lượng tìm kiếm của {n} từ khóa"})
-    for at, kind, cost in con.execute("SELECT run_at, kind, cost FROM backlink_runs WHERE substr(run_at, 1, 7) = ?",
-                                      (month,)):
-        out.append({"at": at, "kind": "backlinks", "qty": 1, "cost": cost or 0.0, "by": "",
-                    "detail": {"history": "Lịch sử backlink theo tháng", "summary": "Tổng quan backlink",
-                               "domains": "Danh sách website trỏ về", "changes": "Link mới / mất 30 ngày",
-                               "anchors": "Anchor text", "pages": "Trang được link nhiều nhất"}.get(kind, kind)})
-    for at, n, cost in con.execute("SELECT run_at, keywords, cost FROM intent_runs WHERE substr(run_at, 1, 7) = ?",
-                                   (month,)):
-        out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": "",
-                    "detail": f"Ý định tìm kiếm của {n} từ khóa"})
+    for at, kind, cost, by in con.execute("SELECT run_at, kind, cost, by_user FROM backlink_runs "
+                                          "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        out.append({"at": at, "kind": "backlinks", "qty": 1, "cost": cost or 0.0, "by": by or "",
+                    "api": f"DataForSEO Backlinks · {BACKLINK_ENDPOINTS.get(kind, kind)}",
+                    "detail": BACKLINK_RUNS.get(kind, kind)})
+    for at, n, cost, by in con.execute("SELECT run_at, keywords, cost, by_user FROM intent_runs "
+                                       "WHERE substr(run_at, 1, 7) = ?", (month,)):
+        out.append({"at": at, "kind": "intent", "qty": n, "cost": cost or 0.0, "by": by or "",
+                    "api": API_NAMES["intent"], "detail": f"Ý định tìm kiếm của {n} từ khóa"})
     con.execute(SERP_LOOKUP_SCHEMA)
     for at, kw, cost, by in con.execute("SELECT run_at, keyword, cost, by_user FROM serp_lookups "
                                         "WHERE substr(run_at, 1, 7) = ?", (month,)):
-        out.append({"at": at, "kind": "serp", "qty": 1, "cost": cost or 0.0, "by": by or "",
+        out.append({"at": at, "kind": "serp", "qty": 1, "cost": cost or 0.0, "by": by or "", "api": API_NAMES["serp"],
                     "detail": f"Trang kết quả Google của “{kw}” (Tổng quan từ khóa)"})
     out.sort(key=lambda r: r["at"], reverse=True)
     return out
@@ -1340,7 +1367,36 @@ def due(con: sqlite3.Connection, site: str, end: date, today: date, now: datetim
         last = max(filter(None, [k["date"], pending]), default=None)
         if last is None or date.fromisoformat(last) < sched_day:
             out.append(k)
+        elif pending is None or pending < (k["date"] or ""):  # đang chờ lượt check lại: không gửi thêm
+            if _shallow_miss(con, k):  # check nông không thấy trong top 10: check lại sâu ngay
+                out.append(k)
     return out
+
+
+STABLE_TOP = 5        # hai lần check gần nhất đều trong top này: lượt theo lịch chỉ check top 10
+SHALLOW_DEPTH = 10
+
+
+def economize(con, todo: list[dict]) -> list[dict]:
+    """Lượt theo lịch: từ khóa đứng vững top 5 (hai lần check gần nhất) chỉ check top 10 (rẻ bằng nửa top 20).
+    Không thấy trong top 10 thì due() cho check lại ngay theo độ sâu của bộ trong ngày."""
+    out = []
+    for k in todo:
+        if (k.get("depth") or 0) > SHALLOW_DEPTH:
+            last2 = [r for (r,) in con.execute("SELECT rank FROM rank_checks WHERE keyword_id = ? "
+                                               "ORDER BY check_date DESC LIMIT 2", (k["id"],))]
+            if len(last2) == 2 and all(r is not None and r <= STABLE_TOP for r in last2):
+                k = dict(k, depth=SHALLOW_DEPTH, full_depth=k["depth"])
+        out.append(k)
+    return out
+
+
+def _shallow_miss(con, k: dict) -> bool:
+    """Lượt theo lịch check nông hôm nay không thấy từ khóa trong top 10: cần check lại theo độ sâu của bộ."""
+    if k["rank"] is not None or not k["date"] or (k["last_depth"] or 0) >= (k["depth"] or 0):
+        return False
+    return con.execute("SELECT 1 FROM rank_tasks WHERE keyword_id = ? AND check_date = ? AND shallow = 1",
+                       (k["id"], k["date"])).fetchone() is not None
 
 
 def _where_key(s: RankSettings, k: dict) -> tuple:
@@ -1350,8 +1406,9 @@ def _where_key(s: RankSettings, k: dict) -> tuple:
 
 
 def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date, log=print,
-         by: str | None = None) -> int:
-    """Gửi DataForSEO các từ khóa cần check. Cùng từ khóa + cùng nơi check: chỉ gửi một task (độ sâu lớn nhất), các
+         by: str | None = None, aio: bool = True) -> int:
+    """Gửi DataForSEO các từ khóa cần check. aio: tải cả AI Overview hiện chậm (+0,0006 USD mỗi từ khóa có AI
+    Overview); lượt theo lịch bật, bấm check tay tắt (AI Overview vẫn có số mỗi tuần từ lượt theo lịch). Cùng từ khóa + cùng nơi check: chỉ gửi một task (độ sâu lớn nhất), các
     dòng còn lại nhận chung kết quả; đã có task hôm nay ở bộ khác (đủ sâu) thì dùng lại, không trả tiền lần hai.
     Trả số dòng từ khóa đã gửi hoặc đã gắn vào task dùng chung."""
     todo = [k for k in todo if not k.get("draft")]
@@ -1364,12 +1421,12 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
     need = {key: max(k["depth"] for k in ks) for key, ks in groups.items()}
     reuse: dict[tuple, tuple[str, str]] = {}  # key → (task_id, status) của task hôm nay dùng lại được
     by_set = {x["id"]: x for x in sets(con, site)}
-    for task_id, depth, status, kid, kw, sid in con.execute(
-            "SELECT t.task_id, t.depth, t.status, k.id, k.keyword, k.set_id FROM rank_tasks t "
+    for task_id, depth, status, kid, kw, sid, t_aio in con.execute(
+            "SELECT t.task_id, t.depth, t.status, k.id, k.keyword, k.set_id, t.aio FROM rank_tasks t "
             "JOIN rank_keywords k ON k.id = t.keyword_id WHERE t.check_date = ? AND t.status IN ('posted', 'done') "
             "AND k.site = ? ORDER BY t.status = 'done' DESC, t.posted_at DESC", (day, site)).fetchall():
         key = _where_key(s, {"keyword": kw, "set": by_set.get(sid)})
-        if key in groups and key not in reuse and depth >= need[key] and \
+        if key in groups and key not in reuse and depth >= need[key] and (t_aio or not aio) and \
                 all(k["id"] != kid for k in groups[key]):  # check lại chính dòng đó trong ngày: gửi mới
             reuse[key] = (task_id, status)
     to_post = [(key, ks) for key, ks in groups.items() if key not in reuse]
@@ -1406,7 +1463,7 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
                           "language_code": w.language_code, "device": w.device, "se_domain": w.se_domain,
                           "depth": need[key], "tag": str(ks[0]["id"]),
                           # tải cả AI Overview hiện chậm (+0,0006 USD, hoàn lại nếu từ khóa không có AI Overview)
-                          "load_async_ai_overview": True})
+                          "load_async_ai_overview": bool(aio)})
         with con:
             for (key, ks), t in zip(to_post, client.post(tasks)):
                 if t.get("status_code") != 20100:
@@ -1414,8 +1471,10 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
                         k["keyword"] for k in ks)
                     continue
                 con.execute("INSERT INTO rank_tasks (task_id, keyword_id, depth, check_date, posted_at, cost, "
-                            "status, by_user) VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)",
-                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0), by))
+                            "status, by_user, aio, shallow) VALUES (?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?)",
+                            (t["id"], ks[0]["id"], need[key], day, _now(), t.get("cost", 0),
+                             by if by is not None else _runner(), int(bool(aio)),
+                             int(need[key] < max(k.get("full_depth") or k["depth"] for k in ks))))
                 for k in ks[1:]:
                     con.execute("INSERT OR REPLACE INTO rank_task_links VALUES (?, ?, ?, ?, 'posted')",
                                 (t["id"], k["id"], day, _now()))
@@ -1431,8 +1490,9 @@ def post(con, site: str, s: RankSettings, client, todo: list[dict], today: date,
 
 def _save_links(con, site: str, task_id: str, task: dict) -> int:
     """Ghi kết quả của một task cho các dòng từ khóa dùng chung (mỗi dòng theo URL mục tiêu của nó), chi phí 0."""
-    row = con.execute("SELECT depth FROM rank_tasks WHERE task_id = ?", (task_id,)).fetchone()
+    row = con.execute("SELECT depth, aio FROM rank_tasks WHERE task_id = ?", (task_id,)).fetchone()
     depth = row[0] if row else 10
+    aio_loaded = bool(row[1]) if row else True
     rows = con.execute("SELECT l.keyword_id, l.check_date, u.url FROM rank_task_links l JOIN rank_keywords k ON "
                        "k.id = l.keyword_id LEFT JOIN urls u ON u.id = k.url_id WHERE l.task_id = ? AND "
                        "l.status = 'posted'", (task_id,)).fetchall()
@@ -1441,7 +1501,7 @@ def _save_links(con, site: str, task_id: str, task: dict) -> int:
         rank, ranking_url, target_rank = parse_rank(task, site, target)
         con.execute("INSERT OR REPLACE INTO rank_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (kid, day, depth, rank, ranking_url, target_rank, 0, _now()))
-        save_serp(con, kid, day, serp)
+        save_serp(con, kid, day, serp, aio_loaded)
         con.execute("UPDATE rank_task_links SET status = 'done' WHERE task_id = ? AND keyword_id = ?",
                     (task_id, kid))
     return len(rows)
@@ -1544,11 +1604,14 @@ def parse_serp(task: dict, site: str) -> dict:
             "features": sorted(features), "aio_text": "\n".join(text) if aio else ""}
 
 
-def save_serp(con, keyword_id: int, check_date: str, serp: dict) -> None:
+def save_serp(con, keyword_id: int, check_date: str, serp: dict, aio_loaded: bool = True) -> None:
+    """aio_loaded False (check không tải AI Overview hiện chậm) mà không thấy AI Overview: ghi aio NULL = chưa biết,
+    các trang AI Overview dùng lần check gần nhất có đọc phần này."""
+    unknown = not aio_loaded and (not serp["aio"] or serp["aio_cited"] is None)  # không có / chỉ thấy ô tải chậm
     con.execute("INSERT OR REPLACE INTO rank_serp (keyword_id, check_date, aio, aio_cited, aio_refs, top10, features, "
                 "aio_text, organic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (keyword_id, check_date, int(serp["aio"]),
-                 None if serp["aio_cited"] is None else int(serp["aio_cited"]),
+                (keyword_id, check_date, None if unknown else int(serp["aio"]),
+                 None if unknown or serp["aio_cited"] is None else int(serp["aio_cited"]),
                  json.dumps(serp["aio_refs"], ensure_ascii=False), json.dumps(serp["top10"], ensure_ascii=False),
                  json.dumps(serp["features"]), serp.get("aio_text") or None,
                  json.dumps(serp["organic"], ensure_ascii=False) if serp.get("organic") is not None else None))
@@ -1556,14 +1619,14 @@ def save_serp(con, keyword_id: int, check_date: str, serp: dict) -> None:
 
 def collect(con, site: str, client, log=print) -> int:
     pending = con.execute(
-        "SELECT t.task_id, t.keyword_id, t.depth, t.check_date, t.cost, u.url FROM rank_tasks t "
+        "SELECT t.task_id, t.keyword_id, t.depth, t.check_date, t.cost, u.url, t.aio FROM rank_tasks t "
         "JOIN rank_keywords k ON k.id = t.keyword_id LEFT JOIN urls u ON u.id = k.url_id "
         "WHERE t.status = 'posted' AND k.site = ?", (site,)).fetchall()
     if not pending:
         return 0
     ready = client.ready_ids()
     done = 0
-    for task_id, kid, depth, check_date, cost, target in pending:
+    for task_id, kid, depth, check_date, cost, target, t_aio in pending:
         if task_id not in ready:
             continue
         task = client.get(task_id)
@@ -1574,7 +1637,7 @@ def collect(con, site: str, client, log=print) -> int:
         with con:
             con.execute("INSERT OR REPLACE INTO rank_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (kid, check_date, depth, rank, ranking_url, target_rank, cost, _now()))
-            save_serp(con, kid, check_date, parse_serp(task, site))
+            save_serp(con, kid, check_date, parse_serp(task, site), bool(t_aio))
             con.execute("UPDATE rank_tasks SET status = 'done' WHERE task_id = ?", (task_id,))
             _save_links(con, site, task_id, task)
         done += 1
@@ -1585,12 +1648,13 @@ def reparse(con, site: str, client, since: date, log=print) -> int:
     """Đọc lại kết quả các lần check đã xong từ `since` (DataForSEO giữ kết quả task 30 ngày, đọc lại không tốn tiền)
     và tính lại rank. Dùng khi sửa cách đọc kết quả. Trả số lần check có số thay đổi."""
     rows = con.execute(
-        "SELECT t.task_id, t.keyword_id, t.check_date, u.url, c.rank, c.ranking_url, c.target_rank FROM rank_tasks t "
+        "SELECT t.task_id, t.keyword_id, t.check_date, u.url, c.rank, c.ranking_url, c.target_rank, t.aio "
+        "FROM rank_tasks t "
         "JOIN rank_keywords k ON k.id = t.keyword_id LEFT JOIN urls u ON u.id = k.url_id "
         "JOIN rank_checks c ON c.keyword_id = t.keyword_id AND c.check_date = t.check_date "
         "WHERE t.status = 'done' AND k.site = ? AND t.check_date >= ?", (site, since.isoformat())).fetchall()
     changed, skipped = 0, {}
-    for task_id, kid, check_date, target, old_rank, old_url, old_target in rows:
+    for task_id, kid, check_date, target, old_rank, old_url, old_target, t_aio in rows:
         try:
             task = client.get(task_id)
         except Exception as e:  # noqa: BLE001
@@ -1602,7 +1666,7 @@ def reparse(con, site: str, client, since: date, log=print) -> int:
             continue
         new = parse_rank(task, site, target)
         with con:  # đọc lại cũng lưu AI Overview / đối thủ (lần check cũ chưa có phần này)
-            save_serp(con, kid, check_date, parse_serp(task, site))
+            save_serp(con, kid, check_date, parse_serp(task, site), bool(t_aio))
         if new != (old_rank, old_url, old_target):
             with con:
                 con.execute("UPDATE rank_checks SET rank = ?, ranking_url = ?, target_rank = ? "
@@ -1640,7 +1704,7 @@ def run(con, site: str, s: RankSettings, client, end: date, today: date | None =
     if only_ids is not None:
         todo = [k for k in keywords(con, site, end) if k["id"] in set(only_ids)]
     else:
-        todo = due(con, site, end, today, now)
+        todo = economize(con, due(con, site, end, today, now))
     post(con, site, s, client, todo, today, log)
     wait_and_collect(con, site, client, wait_minutes, log, sleep)
 

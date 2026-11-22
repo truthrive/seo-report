@@ -4,6 +4,7 @@ từ khóa ở trang Research."""
 from datetime import datetime
 from urllib.parse import quote
 
+from . import points as PT
 from . import access as A
 from . import keyword_overview as KO
 from . import keyword_research as KR
@@ -36,7 +37,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         d = state["data"] if not state["loading"] and not state["err"] else None
         with ui.row().classes("w-full items-end gap-2 no-wrap"):
             with ui.column().classes("gap-0 col").style("min-width:0"):
-                ui.html('<h1 class="sr-title" style="margin:0">Tổng quan từ khóa'
+                ui.html('<h1 class="sr-title" style="margin:0">Keyword Overview'
                         + (f': <span class="soft">{_esc(state["kw"])}</span>' if state["kw"] else "") + "</h1>")
                 if d:
                     at = datetime.fromisoformat(d["at"]).astimezone()
@@ -45,12 +46,20 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                         ui.label(f"{d['currency']} · số Google Ads lấy lúc {at:%H:%M %d/%m/%Y} (lưu 7 ngày)").classes(
                             "text-sm muted")
                 else:
-                    ui.label("Phân tích một từ khóa: volume Việt Nam và thế giới, xu hướng 12 tháng, CPC, mục đích, "
-                             "biến thể, câu hỏi, nhóm chủ đề và trang kết quả Google. Số từ Google Ads (miễn phí)."
+                    ui.label("Volume, xu hướng, CPC, câu hỏi liên quan và ai đang ở top Google cho một từ khóa."
                              ).classes("text-sm muted")
             if d:
                 from .web_export import export_menu
                 if ed:
+                    def ai_brief():
+                        from .web_ai_research import brief_dialog
+                        brief_dialog(ui, connect, cfg, user, state["data"])
+                    from . import ai_settings as AIS
+                    ui.button("AI viết brief", icon="auto_awesome", on_click=ai_brief).props(
+                        "unelevated dense no-caps color=deep-purple-1 text-color=deep-purple-9").tooltip(
+                        "AI viết dàn ý bài cho từ khóa này" + (f" · {PT.cost('ai_kwbrief')} credit"
+                                                            if PT.member(user) else "")).set_visibility(
+                        AIS.enabled(cfg.site_url, "kw_brief"))
                     ui.button(icon="refresh", on_click=lambda: load(True)).props(
                         'flat round dense aria-label="Lấy số mới từ Google Ads"').tooltip("Lấy số mới từ Google Ads")
                 export_menu(ui, cfg, connect, f"tong-quan-tu-khoa_{_slug(d['keyword'])}", make_xlsx, user=user,
@@ -88,8 +97,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                 recent = KO.recent(c)
             if not recent:
                 T.empty_state(ui, "query_stats", "Gõ một từ khóa rồi bấm Phân tích",
-                              "Volume Việt Nam và thế giới, xu hướng, CPC, ý định, biến thể, câu hỏi, nhóm chủ đề và "
-                              "trang kết quả Google (khi từ khóa đang được theo dõi hạng).")
+                              "Xem volume, xu hướng, câu hỏi liên quan và ai đang ở top Google.")
                 return
             with ui.element("div").classes("sr-card q-pa-md w-full"):
                 ui.label("Từ khóa đã phân tích gần đây").classes("text-base font-semibold q-mb-sm")
@@ -225,7 +233,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         kwq = quote(d["keyword"])
         with ui.element("div").classes("sr-card sr-ko-ideas-box w-full q-mt-md"):
             with ui.row().classes("w-full items-center gap-2"):
-                ui.label("Ý tưởng từ khóa").classes("text-base font-semibold col")
+                ui.label("Keyword Ideas").classes("text-base font-semibold col")
                 ui.link("Mở tab Ý tưởng →", f"/research?kw={kwq}").classes("sr-ko-more q-mt-none")
             with ui.element("div").classes("sr-ko-ipanels"):
                 for icon, title, rows, more, grp in (
@@ -369,15 +377,15 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                 if sp and sp.get("live") and ed:
                     ui.button(icon="refresh", on_click=lambda: live_serp()).props(
                         'flat round dense aria-label="Lấy lại trang kết quả"').tooltip(
+                        f"Lấy lại ({PT.cost('serp')} credit)" if PT.member(user) else
                         f"Lấy lại (khoảng {KO.LIVE_EST_USD:.3f} USD)".replace(".", ","))
             if not sp or not sp.get("date"):
                 with ui.element("div").classes("sr-ko-serp-empty"):
                     ui.icon("travel_explore", size="28px").classes("muted")
                     with ui.column().classes("gap-1 col"):
                         ui.label("Chưa có trang kết quả Google cho từ khóa này").classes("text-sm font-semibold")
-                        ui.label("Xem ngay top 10, AI Overview và các ô đặc biệt (một lần, khoảng "
-                                 f"{KO.LIVE_EST_USD:.3f} USD, tính vào ngân sách DataForSEO), hoặc theo dõi hạng để "
-                                 "có số mỗi lần check.".replace("0.002", "0,002")).classes("text-sm muted")
+                        ui.label((f"Xem top 10 Google và AI Overview ngay ({PT.cost('serp')} credit), hoặc theo dõi hạng.") if PT.member(user) else
+                                 "Xem top 10 Google và AI Overview ngay, hoặc theo dõi hạng.").classes("text-sm muted")
                     if ed:
                         with ui.row().classes("gap-2 items-center"):
                             ui.button("Xem kết quả Google", icon="travel_explore", on_click=lambda: live_serp()).props(
@@ -474,6 +482,9 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "serp", detail=state["kw"])
+        if _pt is False:
+            return
         note = ui.notification("Đang lấy trang kết quả Google…", spinner=True, timeout=None, type="ongoing",
                                position="bottom-right")
 
@@ -485,6 +496,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
             state["data"] = await run.io_bound(work)
             body.refresh()
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(str(ex), type="warning", multi_line=True, position="bottom-right")
         finally:
             note.dismiss()
@@ -493,11 +505,15 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "research", detail=state["kw"])
+        if _pt is False:
+            return
         try:
             with closing(db.connect(cfg.db_path)) as c:
                 rec = KR.research(c, cfg, "keywords", state["kw"], str(user))
             ui.navigate.to(f"/research?id={rec['id']}")
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(str(ex), type="warning")
 
     def add_to_set() -> None:
@@ -514,6 +530,8 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
                             value=sets[0]["id"], label="Bộ từ khóa").props("outlined dense").classes("w-full")
 
             def do():
+                if PT.take(ui, user, cfg, "volume", detail=state["kw"]) is False:
+                    return
                 with connect() as c:
                     res = R.add_keywords(c, site, cfg.rank, K.latest_date(c, site), [(state["kw"], None)],
                                          str(user), set_id=sel.value)
@@ -529,6 +547,14 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        with closing(db.connect(cfg.db_path)) as c:
+            need = refresh or not KO.cached(c, state["kw"])
+        _pt = PT.take(ui, user, cfg, "overview", detail=state["kw"]) if need else None
+        if _pt is False:
+            state["err"] = "Không đủ credit để phân tích từ khóa mới tháng này."
+            head.refresh()
+            body.refresh()
+            return
         state["loading"], state["err"] = True, ""
         head.refresh()
         body.refresh()
@@ -539,6 +565,7 @@ def build_overview_page(ui, cfg, connect, user, kw: str = "") -> None:
         try:
             state["data"] = await run.io_bound(work)
         except Exception as ex:  # noqa: BLE001
+            PT.give_back(_pt)
             state["err"] = str(ex)
         state["loading"] = False
         head.refresh()

@@ -168,7 +168,7 @@ class ScheduleTest(unittest.TestCase):
 
     def test_estimate(self):
         self.assertAlmostEqual(BL.monthly_estimate({"paused": False, "every_days": 30, "lists": ["domains"]}),
-                               BL.COST_SUMMARY + BL.COST_LIST)
+                               BL.COST_SUMMARY + BL.COST_LIST + BL.COST_LINKS)
         with self.assertRaises(ValueError):
             BL.save_settings(self.con, SITE, 3, False, [])
 
@@ -243,7 +243,8 @@ class ExportTest(unittest.TestCase):
         BL.refresh(con, SITE, cfg(), today=date(2026, 11, 4), client=FakeClient(), log=lambda m: None)
         ls, latest = BL.lists(con, SITE), BL.latest(con, SITE)
         wb = load_workbook(_io.BytesIO(BX.build(ls, latest, ["example"], SITE)))
-        self.assertEqual(wb.sheetnames[:3], ["Tổng quan", "Lịch sử 12 tháng", "Audit"])
+        self.assertEqual(wb.sheetnames[:2], ["Tổng quan", "Audit"])
+        self.assertEqual(wb.sheetnames[-1], "Lịch sử 12 tháng")  # lịch sử để cuối file
         for name in ("Website trỏ về", "Link mới - mất", "Anchor text", "Trang được link"):
             self.assertIn(name, wb.sheetnames)
         self.assertEqual(wb["Tổng quan"]["B2"].value, 120)  # website trỏ về
@@ -256,6 +257,26 @@ class ExportTest(unittest.TestCase):
                          {"Anchor có điểm spam cao", "Cơ cấu anchor"})
         au = load_workbook(_io.BytesIO(BX.build(ls, latest, [], SITE, "audit")))
         self.assertEqual(au.sheetnames[0], "Audit")
+        # file nội bộ còn nêu nguồn; file cho khách không có tên nhà cung cấp dữ liệu ở bất kỳ ô / tên sheet nào
+        self.assertIn("DataForSEO", self._all_text(wb))
+        cl = load_workbook(_io.BytesIO(BX.build(ls, latest, ["example"], SITE, client=True)))
+        text = self._all_text(cl)
+        for vendor in ("DataForSEO", "Semrush", "DFS"):
+            self.assertNotIn(vendor, text)
+
+    @staticmethod
+    def _all_text(wb) -> str:
+        return " ".join(wb.sheetnames + [str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row
+                                         if c.value is not None])
+
+    def test_neutral_text(self):
+        from seo_report import backlink_export as BX
+        self.assertEqual(BX.neutral_text("DataForSEO"), "Nguồn 1")
+        self.assertEqual(BX.neutral_text("Link DataForSEO"), "Link nguồn 1")
+        self.assertEqual(BX.neutral_text("Page ascore (Semrush)"), "Điểm trang (nguồn 2)")
+        self.assertEqual(BX.neutral_text("Uy tín (DFS)"), "Uy tín (nguồn 1)")
+        self.assertEqual(BX.neutral_text("Website: x.vn · nguồn DataForSEO Backlinks API"),
+                         "Website: x.vn · nguồn dữ liệu backlink")
 
 
 class AnchorTypeTest(unittest.TestCase):

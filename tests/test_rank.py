@@ -199,3 +199,55 @@ class EstimateAddTest(unittest.TestCase):
         self.assertAlmostEqual(e["per_check"], 2 * 3 * 0.0006)
         self.assertAlmostEqual(e["monthly_add"], 2 * 3 * 0.0006 * 30 / 7)  # lịch mặc định: thứ Ba hằng tuần
         self.assertAlmostEqual(e["monthly_total"], 3 * 3 * 0.0006 * 30 / 7)
+
+
+class AioOnScheduleTest(unittest.TestCase):
+    def test_manual_check_keeps_last_known_aio(self):
+        from seo_report import db
+        con = db.connect(":memory:")
+        R.ensure_tables(con)
+        serp_with = {"aio": True, "aio_cited": True, "aio_refs": [], "top10": [], "features": ["ai_overview"],
+                     "organic": []}
+        serp_none = {"aio": False, "aio_cited": False, "aio_refs": [], "top10": [], "features": [], "organic": []}
+        serp_async = {"aio": True, "aio_cited": None, "aio_refs": [], "top10": [], "features": [], "organic": []}
+        R.save_serp(con, 1, "2026-11-01", serp_with)                 # lượt theo lịch
+        R.save_serp(con, 1, "2026-11-03", serp_none, aio_loaded=False)  # check tay, không tải: chưa biết
+        R.save_serp(con, 1, "2026-11-04", serp_async, aio_loaded=False)  # chỉ thấy ô tải chậm: chưa biết
+        rows = con.execute("SELECT check_date, aio FROM rank_serp ORDER BY check_date").fetchall()
+        self.assertEqual(rows, [("2026-11-01", 1), ("2026-11-03", None), ("2026-11-04", None)])
+        self.assertEqual(R.serp_flags(con, [1])[1], (True, True))  # vẫn theo lượt có đọc AI Overview
+        R.save_serp(con, 1, "2026-11-05", serp_none)                 # lượt theo lịch: không có AI Overview
+        self.assertEqual(R.serp_flags(con, [1])[1][0], False)
+
+
+class ShallowTest(unittest.TestCase):
+    def test_stable_top5_checked_shallow_then_deep_when_missing(self):
+        from datetime import timedelta
+
+        class Fake(FakeDataForSEO):
+            def get(self, tid):  # chỉ trả số kết quả theo độ sâu đã gửi
+                res = super().get(tid)
+                res["result"][0]["items"] = res["result"][0]["items"][:self.tasks[tid]["depth"]]
+                return res
+        con = db.connect(":memory:")
+        db.replace_day(con, SITE, "2026-10-20", [], [q(A, "gọng kính", 4.0)])
+        U.assign_urls(con, SITE)
+        s = RankSettings(monthly_budget_usd=20)
+        R.add_keywords(con, SITE, s, END, R.parse_lines(f"gọng kính | {A}"), "test")
+        top = [("vidushop.com", A)] + [(f"x{i}.vn", f"https://x{i}.vn/") for i in range(25)]
+        fake = Fake({"gọng kính": top})
+        run(con, s, fake, date(2026, 10, 26))
+        run(con, s, fake, TUE)
+        nxt = TUE + timedelta(days=7)
+        run(con, s, fake, nxt)  # hai lần gần nhất đều hạng 1: lượt theo lịch chỉ check top 10
+        self.assertEqual([t["depth"] for t in fake.posted], [30, 20, 10])
+        fake.serps["gọng kính"] = top[1:13] + [("vidushop.com", A)] + top[13:]  # rớt xuống hạng 13
+        nxt2 = nxt + timedelta(days=7)
+        run(con, s, fake, nxt2)  # check nông không thấy trong top 10 → cùng lượt chưa gửi thêm
+        self.assertEqual(fake.posted[-1]["depth"], 10)
+        run(con, s, fake, nxt2)  # lượt sau trong ngày: check lại theo độ sâu của bộ
+        self.assertEqual(fake.posted[-1]["depth"], 30)  # độ sâu tự động: lần trước không thấy → top 30
+        k = R.keywords(con, SITE, END)[0]
+        self.assertEqual((k["rank"], k["last_depth"]), (13, 30))
+        run(con, s, fake, nxt2)  # đã có số sâu: không gửi nữa
+        self.assertEqual(len(fake.posted), 5)

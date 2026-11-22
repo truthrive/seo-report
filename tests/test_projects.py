@@ -172,7 +172,7 @@ class BudgetTest(unittest.TestCase):
         cols = "(task_id, keyword_id, depth, check_date, posted_at, cost, status)"
         con.execute(f"INSERT INTO rank_tasks {cols} VALUES ('t1', 1, 10, '2026-01-05', 'x', 0.01, 'done')")
         con.execute(f"INSERT INTO rank_tasks {cols} VALUES ('t2', 1, 30, '2026-02-05', 'x', 0.03, 'done')")
-        con.execute("INSERT INTO volume_runs VALUES ('2026-02-01T00:00:00', 10, 0.075)")
+        con.execute("INSERT INTO volume_runs (run_at, keywords, cost) VALUES ('2026-02-01T00:00:00', 10, 0.075)")
         got = R.cost_by_month(con, ["2026-01", "2026-02"])
         self.assertEqual(got["2026-01"]["checks"], 1)
         self.assertAlmostEqual(got["2026-02"]["total"], 0.105)
@@ -199,9 +199,9 @@ class BudgetTest(unittest.TestCase):
         con.execute(ins, ("t2", 2, 30, "2026-11-05T07:15:40+00:00", 0.0024, "an"))
         con.execute(ins, ("t3", 0, 20, "2026-11-04T01:00:00+00:00", 0.0018, None))  # bộ đã xóa, lịch cũ
         con.execute(ins, ("t4", 1, 20, "2026-10-30T01:00:00+00:00", 0.0018, None))  # tháng khác
-        con.execute("INSERT INTO volume_runs VALUES ('2026-11-06T01:06:43+00:00', 48, 0.09)")
-        con.execute("INSERT INTO backlink_runs VALUES ('2026-11-04T08:57:15+00:00', ?, 'history', 0.0244)", (SITE,))
-        con.execute("INSERT INTO intent_runs VALUES ('2026-11-05T07:48:31+00:00', 69, 0.0203)")
+        con.execute("INSERT INTO volume_runs (run_at, keywords, cost) VALUES ('2026-11-06T01:06:43+00:00', 48, 0.09)")
+        con.execute("INSERT INTO backlink_runs (run_at, site, kind, cost) VALUES ('2026-11-04T08:57:15+00:00', ?, 'history', 0.0244)", (SITE,))
+        con.execute("INSERT INTO intent_runs (run_at, keywords, cost) VALUES ('2026-11-05T07:48:31+00:00', 69, 0.0203)")
         log = R.spend_log(con, "2026-11")
         self.assertEqual([x["kind"] for x in log], ["volume", "intent", "rank", "backlinks", "rank"])
         batch = log[2]
@@ -314,3 +314,31 @@ class LogoSafetyTest(unittest.TestCase):
         with mock.patch.object(urllib.request.OpenerDirector, "open", fake_open):
             self.assertIsNone(PJ.fetch_logo("https://example.test/"))
         self.assertFalse([u for u in opened if u.startswith("file:")])
+
+
+class SpendRunnerTest(unittest.TestCase):
+    def test_runner_recorded_and_gap_named(self):
+        import sqlite3
+
+        from seo_report import backlinks as BL
+        from seo_report import rank as R
+        from seo_report import spend as SP
+        from seo_report import volume as V
+        con = sqlite3.connect(":memory:")
+        V.ensure_tables(con)
+        BL.ensure_tables(con)
+        con.execute("INSERT INTO volume_runs (run_at, keywords, cost) VALUES ('2026-11-01T00:00:00', 1, 0.1)")
+        con.execute("INSERT INTO volume_runs (run_at, keywords, cost, by_user) VALUES "
+                    "('2026-11-02T00:00:00', 2, 0.2, ?)", (SP.current(),))
+        with SP.runner("a@b.c"):
+            con.execute("INSERT INTO backlink_runs (run_at, site, kind, cost, by_user) VALUES "
+                        "('2026-11-03T00:00:00', 's', 'gap', 0.2, ?)", (SP.current(),))
+        log = {x["at"][:10]: x for x in R.spend_log(con, "2026-11")}
+        self.assertEqual(log["2026-11-01"]["by"], "")  # dòng cũ: không rõ
+        self.assertEqual(log["2026-11-02"]["by"], "lịch")
+        self.assertEqual(log["2026-11-03"]["by"], "a@b.c")
+        self.assertTrue(log["2026-11-03"]["detail"].startswith("Backlink GAP"))
+        self.assertIn("domain_intersection", log["2026-11-03"]["api"])
+        self.assertIn("search_volume", log["2026-11-01"]["api"])  # dòng cũ có tiền: DataForSEO
+        con.execute("INSERT INTO volume_runs (run_at, keywords, cost) VALUES ('2026-11-04T00:00:00', 1, 0)")
+        self.assertIn("Google Ads API", {x["at"][:10]: x for x in R.spend_log(con, "2026-11")}["2026-11-04"]["api"])

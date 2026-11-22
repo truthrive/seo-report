@@ -130,15 +130,21 @@ _WEB_FLOWS: dict[str, tuple[object, float]] = {}
 FLOW_TTL = 600
 
 
-def web_login_url(cfg: Config, redirect_uri: str, switch_account: bool = False) -> str:
-    """Link trang đăng nhập Google xin đủ quyền của tool. switch_account: cho chọn tài khoản Google khác."""
+def web_login_url(cfg: Config, redirect_uri: str, switch_account: bool = False, client_config: dict | None = None
+                  ) -> str:
+    """Link trang đăng nhập Google xin đủ quyền của tool. switch_account: cho chọn tài khoản Google khác.
+    client_config: OAuth client "Web application" (mở qua tên miền); không có thì dùng client máy tính (localhost)."""
     import time
 
     from google_auth_oauthlib.flow import Flow
-    if not cfg.client_secret.exists():
-        raise ValueError(f"Không tìm thấy {cfg.client_secret}. Xem README, mục 'Tạo OAuth client'.")
-    flow = Flow.from_client_secrets_file(str(cfg.client_secret), scopes=SCOPES, redirect_uri=redirect_uri,
-                                         autogenerate_code_verifier=True)
+    if client_config:
+        flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri,
+                                       autogenerate_code_verifier=True)
+    else:
+        if not cfg.client_secret.exists():
+            raise ValueError(f"Không tìm thấy {cfg.client_secret}. Xem README, mục 'Tạo OAuth client'.")
+        flow = Flow.from_client_secrets_file(str(cfg.client_secret), scopes=SCOPES, redirect_uri=redirect_uri,
+                                             autogenerate_code_verifier=True)
     url, state = flow.authorization_url(access_type="offline",
                                         prompt="select_account consent" if switch_account else "consent")
     now = time.monotonic()
@@ -158,7 +164,10 @@ def web_login_finish(cfg: Config, state: str, callback_url: str) -> Credentials:
         raise ValueError("Phiên đăng nhập Google đã hết hạn hoặc không hợp lệ. Bấm Kết nối Google lại.")
     flow = item[0]
     os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")  # người dùng có thể bỏ tích vài quyền: báo sau
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # quay về http://localhost (chỉ trên máy chạy tool)
+    if flow.redirect_uri.startswith("https://") and callback_url.startswith("http://"):
+        callback_url = "https://" + callback_url.removeprefix("http://")  # sau proxy (Cloudflare): máy nhận http
+    else:
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # quay về http://localhost (chỉ trên máy chạy tool)
     flow.fetch_token(authorization_response=callback_url)
     creds = flow.credentials
     if not creds.refresh_token:

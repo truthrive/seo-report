@@ -4,4 +4,5 @@ google-auth-oauthlib>=1.1
 nicegui>=3.0
 openpyxl>=3.1
 python-pptx>=1.0
+Pillow>=10.0
 anthropic>=2.0

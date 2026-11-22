@@ -10,16 +10,14 @@ Ba cách được nhận là một người dùng:
 - Lớp đăng nhập phía trước đã xác minh email: Cloudflare Access (chỉ khi đã khai team_domain + aud để kiểm tra chữ
   ký JWT, không tin header email trần) hoặc Tailscale Serve (header Tailscale-User-Login, không qua Cloudflare).
 
-Nhiều dự án (website). Tài khoản có hai loại:
-- Chủ tool (`editors` trong config.toml, duy nhất là quản trị): mọi dự án, được sửa, quản lý Dự án, Phân quyền và
-  Ngân sách. Chủ máy (mở thẳng trên máy chạy tool) cũng có toàn quyền. Tài khoản tên đăng nhập (không cần email)
-  được dùng cho mọi loại trừ Chủ tool.
-- Theo dự án (`viewer` trong access_users, hoặc `viewers` trong config.toml): chỉ vào được các dự án được gắn trong
-  bảng project_members, mỗi dự án một quyền: `editor` được sửa, `viewer` team xem (mọi màn, không sửa), `client` khách
-  hàng (chỉ các màn báo cáo). Email trong `viewers` của config.toml được xem dự án đầu tiên (cách dùng cũ khi tool chỉ có một site).
-
-Quyền trong dự án: `editor` được sửa (check rank tốn tiền, sửa nhóm URL/keyword, nhập file, nhận xét, đồng bộ, xuất
-lên Drive); `viewer` chỉ xem và tải file về máy; `client` như viewer nhưng chỉ thấy Tổng quan, Báo cáo, KPI, Công việc.
+Nhiều dự án (website). Bốn nhóm tài khoản:
+- Owner (`editors` trong config.toml) và chủ máy (mở thẳng trên máy chạy tool): toàn quyền, thêm Cài đặt tích hợp,
+  hạn mức ngân sách, xóa dự án, cấp / gỡ Admin.
+- Admin (loại tài khoản "admin" trên màn Phân quyền, chỉ Owner cấp): mọi dự án, được sửa, quản lý dự án và Member /
+  Guest, xem ngân sách.
+- Member (quyền `editor` trong dự án được gắn, hoặc Member mọi dự án): mọi màn của dự án, được sửa và chạy tác vụ;
+  mỗi tác vụ bấm tay trừ credit trong hạn mức tháng (points.py). "Team xem" cũ đã gộp vào Member.
+- Guest (quyền `client`): khách hàng, chỉ các màn báo cáo, không thấy số nội bộ / chi phí.
 """
 import base64
 import hashlib
@@ -32,9 +30,16 @@ import urllib.request
 from dataclasses import dataclass, field
 
 LOCAL, EDITOR, VIEWER, CLIENT = "local", "editor", "viewer", "client"
-# Loại tài khoản (cột role của access_users): EDITOR = quản trị mọi dự án, VIEWER = chỉ các dự án được gắn.
-ADMIN, MEMBER = EDITOR, VIEWER
-PROJECT_ROLES = {CLIENT: "Khách hàng", VIEWER: "Team xem", EDITOR: "Được sửa"}  # quyền trong một dự án
+# Bốn nhóm tài khoản:
+# - Owner: email `editors` trong config.toml (cột role = EDITOR) và chủ máy (LOCAL). Toàn quyền: Cài đặt tích hợp,
+#   hạn mức ngân sách, xóa dự án, cấp / gỡ Admin.
+# - Admin: cột role = "admin". Mọi dự án, được sửa, quản lý dự án và Member / Guest, xem ngân sách.
+# - Member: quyền "editor" trong dự án được gắn (Team xem cũ đã gộp vào Member). Có hạn mức credit hằng tháng.
+# - Guest: quyền "client" trong dự án được gắn: chỉ các màn báo cáo.
+OWNER, ADMIN_ACCT = EDITOR, "admin"
+ADMIN, MEMBER = ADMIN_ACCT, VIEWER  # loại tài khoản lưu ở access_users.role: admin / theo dự án
+GROUPS = {"owner": "Owner", "admin": "Admin", "member": "Member", "guest": "Guest"}
+PROJECT_ROLES = {EDITOR: "Member", CLIENT: "Guest"}  # quyền trong một dự án
 CLIENT_PAGES = ("/", "/report", "/kpi", "/okr", "/rank", "/doi-thu", "/aio", "/backlink", "/local", "/merchant",
                 "/toc-do", "/nguon", "/ai", "/yeu-cau", "/tai-khoan")  # màn khách hàng được mở
 MAX_FAILED, LOCK_MINUTES, MIN_PASSWORD = 5, 15, 10
@@ -46,6 +51,7 @@ class AccessSettings:
     viewers: list[str] = field(default_factory=list)
     team_domain: str = ""  # ví dụ "congty.cloudflareaccess.com": có thì kiểm tra chữ ký JWT của Access
     aud: str = ""  # Application Audience (AUD) tag của ứng dụng trong Cloudflare Access
+    admins: list[str] = field(default_factory=list)  # tài khoản Admin (quản lý trên màn Phân quyền)
 
 
 class User(str):
@@ -54,13 +60,15 @@ class User(str):
     preview: bool = False  # chủ máy đang xem thử giao diện của người chỉ xem
     must_change: bool = False  # đang dùng mật khẩu tạm: phải đổi trước khi dùng tool
     via: str = ""  # "password" khi đăng nhập bằng mật khẩu (có nút Đăng xuất)
-    admin: bool = False  # quản trị mọi dự án (giữ nguyên khi role đã đổi thành quyền trong một dự án)
+    admin: bool = False  # Owner hoặc Admin: mọi dự án (giữ nguyên khi role đã đổi thành quyền trong một dự án)
+    owner: bool = False  # Owner (chủ máy / email editors trong config.toml)
 
     def __new__(cls, name: str, role: str, preview: bool = False, must_change: bool = False, via: str = "",
-                admin: bool | None = None):
+                admin: bool | None = None, owner: bool | None = None):
         obj = super().__new__(cls, name)
         obj.role, obj.preview, obj.must_change, obj.via = role, preview, must_change, via
-        obj.admin = role in (LOCAL, EDITOR) if admin is None else admin
+        obj.owner = role in (LOCAL, EDITOR) if owner is None else owner
+        obj.admin = role in (LOCAL, EDITOR, ADMIN_ACCT) if admin is None else admin
         return obj
 
 
@@ -69,8 +77,27 @@ def can_edit(user) -> bool:
 
 
 def is_admin(user) -> bool:
-    """Quản trị mọi dự án: thêm / sửa dự án, phân quyền. Người được sửa trong một dự án không phải quản trị."""
+    """Owner hoặc Admin: mọi dự án, quản lý dự án, phân quyền Member / Guest, xem ngân sách."""
     return bool(getattr(user, "admin", False)) and not getattr(user, "preview", False)
+
+
+def is_owner(user) -> bool:
+    """Owner: Cài đặt tích hợp, hạn mức ngân sách, xóa dự án, cấp / gỡ Admin."""
+    return bool(getattr(user, "owner", False)) and not getattr(user, "preview", False)
+
+
+def is_member(user) -> bool:
+    """Member: được sửa trong dự án nhưng không phải Owner / Admin (dùng hạn mức credit)."""
+    return isinstance(user, User) and can_edit(user) and not user.admin
+
+
+def group(user) -> str:
+    """owner · admin · member · guest của người đang mở trang."""
+    if is_owner(user):
+        return "owner"
+    if getattr(user, "admin", False):
+        return "admin"
+    return "guest" if is_client(user) else "member"
 
 
 def is_client(user) -> bool:
@@ -146,10 +173,12 @@ PASSWORD_COLS = {"pw_hash": "TEXT", "pw_set_at": "TEXT", "must_change": "INTEGER
                  "team_role": "TEXT",
                  "last_seen": "TEXT",  # lúc đóng trang tool gần nhất (chấm trạng thái: "offline · lần cuối …")
                  # hồ sơ do chính người dùng sửa ở màn Hồ sơ: tên hiển thị và ảnh đại diện (data URI PNG nhỏ)
-                 "display_name": "TEXT NOT NULL DEFAULT ''", "avatar": "TEXT NOT NULL DEFAULT ''"}
+                 "display_name": "TEXT NOT NULL DEFAULT ''", "avatar": "TEXT NOT NULL DEFAULT ''",
+                 "google_login": "TEXT",
+                 "google_asked": "TEXT"}  # lúc tool hỏi người này có muốn kết nối Google (GSC / GA4) của họ  # lần đăng nhập bằng Google gần nhất (màn Phân quyền: ai chưa chuyển)
 EMAIL_RE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 USERNAME_RE = r"^[a-z0-9][a-z0-9._-]{2,31}$"  # tài khoản không cần email: tên đăng nhập 3–32 ký tự
-ROLE_LABEL = {EDITOR: "Chủ tool", VIEWER: "Theo dự án"}  # loại tài khoản
+ROLE_LABEL = {EDITOR: "Owner", ADMIN_ACCT: "Admin", VIEWER: "Theo dự án"}  # loại tài khoản
 MEMBERS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS project_members (
     email TEXT NOT NULL,
@@ -170,7 +199,7 @@ CREATE TABLE IF NOT EXISTS access_log (
     detail TEXT NOT NULL DEFAULT ''
 );
 """
-TEAM_ROLES = {VIEWER: "Team xem", EDITOR: "Được sửa"}  # quyền chung của Team mọi dự án
+TEAM_ROLES = {EDITOR: "Member"}  # quyền chung của Team mọi dự án
 KEEP = object()  # set_user: giữ nguyên giá trị cũ
 
 
@@ -196,7 +225,7 @@ def _ensure(con) -> None:
 
 
 _COLS = ("email, role, note, added_by, added_at, removed_at, pw_hash IS NOT NULL, pw_set_at, must_change, "
-         "locked_until, last_login, title, team_role, removed_by, last_seen")
+         "locked_until, last_login, title, team_role, removed_by, last_seen, google_login")
 
 
 def users(con, settings: AccessSettings) -> list[dict]:
@@ -216,8 +245,8 @@ def users(con, settings: AccessSettings) -> list[dict]:
     owners = _norm(settings.editors)
     for e, r in rows.items():
         if r[5] is None:  # chỉ email `editors` trong config.toml là Chủ tool; quản trị thêm trên màn cũ: hạ ở adopt_config
-            out[e] = {"email": e, "role": r[1] if e in owners else VIEWER, "source": "tool", "note": r[2],
-                      "added_by": r[3], "added_at": r[4]}
+            role = r[1] if e in owners else ADMIN_ACCT if r[1] == ADMIN_ACCT else VIEWER
+            out[e] = {"email": e, "role": role, "source": "tool", "note": r[2], "added_by": r[3], "added_at": r[4]}
     for e in _norm(settings.editors):
         out[e] = {"email": e, "role": EDITOR, "source": "config", "note": out.get(e, {}).get("note", ""),
                   "added_by": "config.toml", "added_at": None}
@@ -227,8 +256,9 @@ def users(con, settings: AccessSettings) -> list[dict]:
                   "must_change": bool(r and r[8]), "locked_until": r[9] if r else None,
                   "last_login": r[10] if r else None, "title": (r[11] if r else "") or "",
                   "team_role": (r[12] if r and u["role"] == VIEWER else None),
-                  "last_seen": (r[14] if r else None) or (r[10] if r else None)})
-    return sorted(out.values(), key=lambda u: (u["role"] != EDITOR, u["email"]))
+                  "last_seen": (r[14] if r else None) or (r[10] if r else None),
+                  "google_login": r[15] if r else None})
+    return sorted(out.values(), key=lambda u: ({EDITOR: 0, ADMIN_ACCT: 1}.get(u["role"], 2), u["email"]))
 
 
 MAX_NAME = 60
@@ -278,8 +308,10 @@ def removed_users(con) -> list[dict]:
 
 
 def kind(u: dict, mine: dict[str, str]) -> str:
-    """Nhóm hiển thị: admin (quản trị) · team (người trong team) · client (khách hàng: chỉ có quyền Khách hàng)."""
+    """Nhóm hiển thị: owner · admin · team (Member) · client (Guest: chỉ có quyền Guest)."""
     if u["role"] == EDITOR:
+        return "owner"
+    if u["role"] == ADMIN_ACCT:
         return "admin"
     if u.get("team_role") or any(r != CLIENT for r in mine.values()) or (not mine and u["source"] == "config"):
         return "team"
@@ -302,7 +334,8 @@ def effective(con, settings: AccessSettings) -> AccessSettings:
     us = users(con, settings)
     return AccessSettings(editors=[u["email"] for u in us if u["role"] == EDITOR],
                           viewers=[u["email"] for u in us if u["role"] == VIEWER],
-                          team_domain=settings.team_domain, aud=settings.aud)
+                          team_domain=settings.team_domain, aud=settings.aud,
+                          admins=[u["email"] for u in us if u["role"] == ADMIN_ACCT])
 
 
 def _clean_email(email: str) -> str:
@@ -319,19 +352,39 @@ def is_username(login: str) -> bool:
     return "@" not in str(login)
 
 
-def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, team_role=KEEP) -> str:
+def _require_manage(con, settings, email: str, by, *, grant_admin: bool = False) -> None:
+    """Chốt ở tầng dữ liệu: Admin không sửa được Chủ tool hay Admin khác (kể cả khi gõ email vào ô "Thêm người"),
+    không cấp quyền Admin. Chỉ Owner làm được những việc đó. Chỉ áp dụng khi `by` là người đang mở trang (User);
+    lệnh CLI và test truyền chuỗi thường thì không bị chặn. Người tự sửa chính mình thì được."""
+    if not isinstance(by, User) or is_owner(by):
+        return
+    email = str(email or "").strip().lower()
+    if email == str(by).strip().lower() and not grant_admin:
+        return
+    if grant_admin:
+        raise ValueError("Chỉ Owner cấp quyền Admin")
+    if settings is not None and email in _norm(settings.editors):
+        raise ValueError("Chỉ Owner sửa được tài khoản Owner")
+    row = con.execute("SELECT role FROM access_users WHERE email = ? AND removed_at IS NULL", (email,)).fetchone()
+    if row and row[0] in (ADMIN_ACCT, EDITOR):
+        raise ValueError("Chỉ Owner sửa được tài khoản Admin")
+
+
+def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, team_role=KEEP,
+             settings: "AccessSettings | None" = None) -> str:
     """Thêm hoặc sửa tài khoản (loại tài khoản, ghi chú, chức danh, quyền Team mọi dự án). Ghi nhật ký thay đổi."""
     email = _clean_email(email)
-    if role not in (EDITOR, VIEWER):
+    if role not in (ADMIN_ACCT, VIEWER):
         raise ValueError("Quyền không hợp lệ")
     if team_role is not KEEP and team_role not in (None, *TEAM_ROLES):
         raise ValueError("Quyền Team không hợp lệ")
     _ensure(con)
+    _require_manage(con, settings, email, by, grant_admin=(role == ADMIN_ACCT))
     old = con.execute("SELECT role, removed_at, title, team_role FROM access_users WHERE email = ?",
                       (email,)).fetchone()
     title = (old[2] if old else "") if title is KEEP else (title or "").strip()
     team_role = (old[3] if old else None) if team_role is KEEP else team_role
-    if role == EDITOR:
+    if role == ADMIN_ACCT:
         team_role = None
     with con:
         con.execute("INSERT INTO access_users (email, role, note, added_by, added_at, title, team_role) "
@@ -354,10 +407,11 @@ def set_user(con, email: str, role: str, by: str, note: str = "", title=KEEP, te
     return email
 
 
-def remove_user(con, email: str, by: str) -> None:
+def remove_user(con, email: str, by: str, settings: "AccessSettings | None" = None) -> None:
     """Gỡ quyền (đánh dấu, giữ lịch sử). Phiên đăng nhập của người đó hết hiệu lực ngay ở lần mở trang kế tiếp."""
     _ensure(con)
     email = email.strip().lower()
+    _require_manage(con, settings, email, by)
     with con:
         n = con.execute("UPDATE access_users SET removed_by = ?, removed_at = ?, pw_hash = NULL, pw_set_at = NULL "
                         "WHERE email = ? AND removed_at IS NULL", (str(by), _now(), email)).rowcount
@@ -373,6 +427,7 @@ def purge_user(con, settings: AccessSettings, email: str, by: str) -> None:
     email = (email or "").strip().lower()
     if email in _norm(settings.editors):
         raise ValueError("Tài khoản Chủ tool khai báo trong config.toml: bỏ trong file đó, không xóa ở đây được")
+    _require_manage(con, settings, email, by)
     if email in _norm(settings.viewers):  # xóa ở đây thì lần mở sau lại hiện từ config.toml
         raise ValueError("Tài khoản này còn khai báo trong config.toml (viewers): bỏ trong file đó trước")
     if email == str(by).strip().lower():
@@ -396,12 +451,14 @@ def members(con) -> dict[str, dict[str, str]]:
     return out
 
 
-def set_member(con, email: str, project: str, role: str, by: str) -> None:
+def set_member(con, email: str, project: str, role: str, by: str,
+               settings: "AccessSettings | None" = None) -> None:
     """Gắn (hoặc đổi quyền) một tài khoản vào một dự án."""
     email = _clean_email(email)
     if role not in PROJECT_ROLES:
         raise ValueError("Quyền trong dự án không hợp lệ")
     _ensure(con)
+    _require_manage(con, settings, email, by)
     old = con.execute("SELECT role FROM project_members WHERE email = ? AND project = ? AND removed_at IS NULL",
                       (email, project)).fetchone()
     if old and old[0] == role:
@@ -415,10 +472,11 @@ def set_member(con, email: str, project: str, role: str, by: str) -> None:
              f"{project}: {PROJECT_ROLES[old[0]] + ' → ' if old else ''}{PROJECT_ROLES[role]}")
 
 
-def remove_member(con, email: str, project: str, by: str) -> None:
+def remove_member(con, email: str, project: str, by: str, settings: "AccessSettings | None" = None) -> None:
     """Gỡ một dự án khỏi tài khoản (đánh dấu, giữ lịch sử). Có hiệu lực ở lần mở trang kế tiếp của người đó."""
     _ensure(con)
     email = email.strip().lower()
+    _require_manage(con, settings, email, by)
     with con:
         n = con.execute("UPDATE project_members SET removed_by = ?, removed_at = ? WHERE email = ? AND project = ? "
                         "AND removed_at IS NULL", (str(by), _now(), email, project)).rowcount
@@ -446,7 +504,7 @@ def adopt_config(con, settings: AccessSettings, first_project: str | None) -> in
             continue
         set_user(con, e, MEMBER, "config.toml")
         if first_project and first_project not in members(con).get(e, {}):
-            set_member(con, e, first_project, VIEWER, "config.toml")
+            set_member(con, e, first_project, EDITOR, "config.toml")
         n += 1
     return n
 
@@ -462,14 +520,26 @@ def migrate_members(con, settings: AccessSettings, first_project: str) -> int:
     n = 0
     for u in users(con, settings):
         if u["source"] == "tool" and u["role"] == MEMBER and u["email"] not in have:
-            set_member(con, u["email"], first_project, VIEWER, "chuyển sang nhiều dự án")
+            set_member(con, u["email"], first_project, EDITOR, "chuyển sang nhiều dự án")
             n += 1
     with con:
         con.execute("INSERT INTO app_settings VALUES ('members_migrated', ?)", (_now(),))
     return n
 
 
-def project_role(con, settings: AccessSettings, user, project: str, first_project: str | None) -> str | None:
+def migrate_four_groups(con) -> int:
+    """Một lần: quyền "Team xem" cũ (viewer) ở từng dự án và ở Team mọi dự án thành Member (editor)."""
+    _ensure(con)
+    with con:
+        n = con.execute("UPDATE project_members SET role = ? WHERE role = ?", (EDITOR, VIEWER)).rowcount
+        n += con.execute("UPDATE access_users SET team_role = ? WHERE team_role = ?", (EDITOR, VIEWER)).rowcount
+        if n:
+            _log(con, "hệ thống", "", "Gộp Team xem vào Member", f"{n} quyền")
+    return n
+
+
+def project_role(con, settings: AccessSettings, user, project: str, first_project: str | None,
+                 private: bool = False) -> str | None:
     """Quyền của một người trong một dự án; None là không được vào dự án đó.
 
     Quản trị và chủ máy: mọi dự án. Tài khoản theo dự án: quyền gắn riêng cho dự án đó; không có thì quyền Team mọi
@@ -481,32 +551,34 @@ def project_role(con, settings: AccessSettings, user, project: str, first_projec
     email = str(user).strip().lower()
     role = members(con).get(email, {}).get(project)
     if role:
-        return role
+        return EDITOR if role == VIEWER else role  # Team xem cũ đã gộp vào Member
     _ensure(con)
     row = con.execute("SELECT team_role, removed_at FROM access_users WHERE email = ?", (email,)).fetchone()
-    if row and row[1] is None and row[0]:  # Team mọi dự án
-        return row[0]
+    if row and row[1] is None and row[0] and not private:  # Team mọi dự án (trừ website người khác tự thêm)
+        return EDITOR
     if (project == first_project and email in _norm(settings.viewers) and not (row and row[1])
-            and not members(con).get(email)):  # config.toml, chưa được gắn dự án nào: xem dự án đầu tiên
-        return VIEWER
+            and not members(con).get(email)):  # config.toml, chưa được gắn dự án nào: dự án đầu tiên
+        return EDITOR
     return None
 
 
-ROLE_ORDER = {"admin": 0, EDITOR: 1, VIEWER: 2, CLIENT: 3}
+ROLE_ORDER = {"owner": 0, "admin": 1, EDITOR: 2, VIEWER: 2, CLIENT: 3}
 
 
-def people_in_project(con, settings: AccessSettings, project: str, first_project: str | None) -> list[dict]:
+def people_in_project(con, settings: AccessSettings, project: str, first_project: str | None,
+                      private: bool = False) -> list[dict]:
     """Mọi tài khoản vào được một website: [{"email", "title", "role": "admin" | editor | viewer | client}], theo
     thứ tự cố định quản trị → được sửa → chỉ xem → khách hàng, rồi theo email (nhóm avatar trên thanh trên cùng)."""
     mem = members(con)
     out = []
     for u in users(con, settings):
         mine = mem.get(u["email"], {})
-        if u["role"] == EDITOR:
-            role = "admin"
+        if u["role"] in (EDITOR, ADMIN_ACCT):
+            role = "owner" if u["role"] == EDITOR else "admin"
         else:
-            role = (mine.get(project) or u.get("team_role")
-                    or (VIEWER if u["source"] == "config" and project == first_project and not mine else None))
+            role = (mine.get(project) or (None if private else u.get("team_role"))
+                    or (EDITOR if u["source"] == "config" and project == first_project and not mine else None))
+            role = EDITOR if role == VIEWER else role
         if role:
             out.append({"email": u["email"], "title": u.get("title", ""), "role": role})
     return sorted(out, key=lambda p: (ROLE_ORDER[p["role"]], p["email"]))
@@ -515,7 +587,7 @@ def people_in_project(con, settings: AccessSettings, project: str, first_project
 def in_project(user, role: str) -> "User":
     """Bản sao người dùng mang quyền trong dự án đang mở; mọi chỗ kiểm tra can_edit dùng bản này."""
     return User(str(user), role, preview=getattr(user, "preview", False), must_change=getattr(user, "must_change", False),
-                via=getattr(user, "via", ""), admin=getattr(user, "admin", False))
+                via=getattr(user, "via", ""), admin=getattr(user, "admin", False), owner=getattr(user, "owner", False))
 
 
 # ---- Mật khẩu ----
@@ -551,6 +623,7 @@ def set_password(con, settings: AccessSettings, email: str, pw: str, must_change
     u = next((x for x in users(con, settings) if x["email"] == email), None)
     if not u:
         raise ValueError("Email chưa được cấp quyền")
+    _require_manage(con, settings, email, by)
     with con:
         con.execute("INSERT INTO access_users (email, role, note, added_by, added_at) VALUES (?, ?, '', 'config.toml', ?) "
                     "ON CONFLICT(email) DO NOTHING", (email, u["role"], _now()))
@@ -589,6 +662,8 @@ def login(con, settings: AccessSettings, email: str, pw: str, now=None) -> tuple
             con.execute("UPDATE access_users SET failed = ?, locked_until = ? WHERE email = ?",
                         (0 if locked else failed, locked, email))
         return None, (f"Sai mật khẩu {MAX_FAILED} lần: tạm khóa {LOCK_MINUTES} phút" if locked else generic), None
+    if google_only(con) and u["role"] != EDITOR:  # kiểm sau mật khẩu: không lộ email nào có trong tool
+        return None, GOOGLE_ONLY_MSG, None
     with con:
         con.execute("UPDATE access_users SET failed = 0, locked_until = NULL, last_login = ? WHERE email = ?",
                     (now.isoformat(timespec="seconds"), email))
@@ -596,13 +671,55 @@ def login(con, settings: AccessSettings, email: str, pw: str, now=None) -> tuple
             {"email": email, "pw_set_at": row[4]})
 
 
+# ---- Đăng nhập bằng Google ----
+# Bật "chỉ Google" (màn Cài đặt tích hợp): mọi người đăng nhập bằng tài khoản Google; riêng Owner (email `editors`
+# trong config.toml) vẫn dùng được mật khẩu, làm đường vào dự phòng khi Google lỗi.
+GOOGLE_ONLY_KEY = "login_google_only"
+GOOGLE_ONLY_MSG = "Tài khoản này đăng nhập bằng Google: bấm nút “Đăng nhập bằng Google”"
+
+
+def google_only(con) -> bool:
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    row = con.execute("SELECT value FROM app_settings WHERE key = ?", (GOOGLE_ONLY_KEY,)).fetchone()
+    return bool(row and row[0] == "1")
+
+
+def set_google_only(con, on: bool, by) -> None:
+    con.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    with con:
+        con.execute("INSERT OR REPLACE INTO app_settings VALUES (?, ?)", (GOOGLE_ONLY_KEY, "1" if on else "0"))
+        _log(con, by, "", "Chỉ cho đăng nhập bằng Google" if on else "Cho đăng nhập bằng mật khẩu trở lại", "")
+
+
+def google_login(con, settings: AccessSettings, email: str, now=None) -> tuple["User | None", str, dict | None]:
+    """Google đã xác minh email (google_login.finish): email phải đang có quyền trong tool."""
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc)
+    email = (email or "").strip().lower()
+    u = next((x for x in users(con, settings) if x["email"] == email), None) if email else None
+    if not u:
+        return None, f"{email or 'Tài khoản Google này'} chưa được cấp quyền dùng tool", None
+    stamp = now.isoformat(timespec="seconds")
+    with con:
+        con.execute("INSERT INTO access_users (email, role, note, added_by, added_at) VALUES (?, ?, '', 'config.toml', "
+                    "?) ON CONFLICT(email) DO NOTHING", (email, u["role"], _now()))
+        con.execute("UPDATE access_users SET last_login = ?, google_login = ? WHERE email = ?", (stamp, stamp, email))
+    return User(email, u["role"], via="google"), "", {"email": email, "via": "google", "at": stamp}
+
+
 def from_session(con, settings: AccessSettings, sess: dict | None) -> "User | None":
-    """Người dùng của phiên đăng nhập đã lưu; None nếu quyền đã bị gỡ hoặc mật khẩu đã được đặt lại sau khi đăng
-    nhập."""
+    """Người dùng của phiên đăng nhập đã lưu; None nếu quyền đã bị gỡ, mật khẩu đã được đặt lại sau khi đăng nhập,
+    hoặc tool đã chuyển sang chỉ đăng nhập Google (phiên mật khẩu của người không phải Owner hết hiệu lực)."""
     if not sess or not sess.get("email"):
         return None
     u = next((x for x in users(con, settings) if x["email"] == sess["email"]), None)
-    if not u or not u["has_password"] or u["pw_set_at"] != sess.get("pw_set_at"):
+    if not u:
+        return None
+    if sess.get("via") == "google":
+        return User(u["email"], u["role"], via="google")
+    if not u["has_password"] or u["pw_set_at"] != sess.get("pw_set_at"):
+        return None
+    if u["role"] != EDITOR and google_only(con):
         return None
     return User(u["email"], u["role"], must_change=u["must_change"], via="password")
 
@@ -634,6 +751,8 @@ def _by_email(email: str, settings: AccessSettings) -> tuple[User | None, str]:
         return None, ""
     if email in _norm(settings.editors):
         return User(email, EDITOR), ""
+    if email in _norm(settings.admins):
+        return User(email, ADMIN_ACCT), ""
     if email in _norm(settings.viewers):
         return User(email, VIEWER), ""
     return None, f"{email} chưa được cấp quyền dùng tool"
@@ -677,3 +796,47 @@ def _verify(token: str, s: AccessSettings) -> str:
     if body.get("exp", 0) < time.time():
         raise ValueError("hết hạn")
     return body.get("email", "")
+
+
+# ---- Yêu cầu truy cập: đăng nhập Google được nhưng email chưa có trong Phân quyền ----
+REQUESTS_SCHEMA = """CREATE TABLE IF NOT EXISTS access_requests (
+  email TEXT PRIMARY KEY, at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  decided_by TEXT, decided_at TEXT);"""
+MAX_PENDING = 50  # chặn spam: quá số yêu cầu đang chờ thì không nhận thêm
+
+
+def add_request(con, email: str) -> str:
+    """Ghi yêu cầu (một dòng mỗi email). Trả trạng thái: new (vừa ghi), pending (đã chờ từ trước), rejected (đã bị
+    từ chối), full (quá nhiều yêu cầu đang chờ)."""
+    con.executescript(REQUESTS_SCHEMA)
+    email = (email or "").strip().lower()
+    row = con.execute("SELECT status FROM access_requests WHERE email = ?", (email,)).fetchone()
+    if row and row[0] in ("pending", "rejected"):
+        return row[0]
+    if con.execute("SELECT COUNT(*) FROM access_requests WHERE status = 'pending'").fetchone()[0] >= MAX_PENDING:
+        return "full"
+    with con:
+        con.execute("INSERT OR REPLACE INTO access_requests (email, at, status) VALUES (?, ?, 'pending')",
+                    (email, _now()))
+    return "new"
+
+
+def pending_requests(con, settings: AccessSettings | None = None) -> list[dict]:
+    """Yêu cầu đang chờ (bỏ email đã được cấp quyền bằng cách khác), mới nhất trước."""
+    con.executescript(REQUESTS_SCHEMA)
+    _ensure(con)
+    have = ({u["email"] for u in users(con, settings)} if settings is not None else
+            {r[0] for r in con.execute("SELECT email FROM access_users WHERE removed_at IS NULL")})
+    return [{"email": r[0], "at": r[1]} for r in con.execute(
+        "SELECT email, at FROM access_requests WHERE status = 'pending' ORDER BY at DESC") if r[0] not in have]
+
+
+def resolve_request(con, email: str, status: str, by) -> None:
+    """Duyệt (approved) hoặc từ chối (rejected) một yêu cầu; ghi nhật ký."""
+    con.executescript(REQUESTS_SCHEMA)
+    email = (email or "").strip().lower()
+    with con:
+        n = con.execute("UPDATE access_requests SET status = ?, decided_by = ?, decided_at = ? "
+                        "WHERE email = ? AND status = 'pending'", (status, str(by), _now(), email)).rowcount
+        if n and status == "rejected":
+            _log(con, by, email, "Từ chối yêu cầu truy cập", "")

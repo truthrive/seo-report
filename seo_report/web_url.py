@@ -1,4 +1,7 @@
 """Màn URL 3 cột: danh sách URL của nhóm ở giữa, chi tiết keyword của URL đang chọn bên phải."""
+from urllib.parse import quote
+
+from . import spend as SP
 from . import indexing as IX
 from . import keywords as K
 from . import rank as R
@@ -74,10 +77,24 @@ def organic_sessions_by_week(cfg, url: str, wks: list) -> dict[str, int]:
     return out
 
 
-def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict | None = None) -> None:
+def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict | None = None,
+                   focus: int | None = None, missing: str | None = None) -> None:
+    """focus: id URL mở sẵn (link ?u= từ trang khác). missing: URL được mở nhưng chưa thuộc nhóm URL nào."""
     from .access import can_edit
     site = cfg.site_url
     ed = can_edit(user)  # người chỉ xem: không kiểm tra index, không sửa target, không thêm keyword / gắn ★
+    if missing:
+        with ui.row().classes("w-full items-center gap-2 sr-bb-miss"):
+            ui.icon("info", size="18px")
+            ui.label(f"{_short(missing, site)} chưa thuộc nhóm URL nào nên chưa có trong danh sách.").classes(
+                "text-sm col")
+            if can_edit(user):
+                def add_here():
+                    with connect() as c:
+                        g = ctx["group"] if ctx else U.ensure_group(c, site)
+                        U.add_to_group(c, site, g, missing, str(user))
+                    ui.navigate.to("/url?u=" + quote(missing, safe=""))
+                ui.button("Thêm vào nhóm đang xem", icon="add", on_click=add_here).props("flat no-caps dense")
     with connect() as c:
         U.assign_urls(c, site)
         K.ensure_tables(c)
@@ -123,9 +140,11 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             state["url"] = rows[0]["id"] if rows else None
 
     # Cột danh sách dính trên màn và tự cuộn bên trong: danh sách dài không kéo cả trang, cột chi tiết luôn ở cạnh.
-    with ui.row().classes("w-full no-wrap items-start gap-4"):
-        with ui.column().classes("sr-card q-pa-md gap-2 no-wrap").style(
-                "width: 360px; min-width: 300px; position: sticky; top: 60px; height: calc(100vh - 80px)"):
+    # Điện thoại (< 768px): một cột kiểu danh sách → chi tiết. Bấm một URL thì danh sách ẩn, chi tiết hiện kèm nút
+    # "Danh sách URL" để quay lại (CSS .sr-url-split trong ui_theme).
+    split = ui.row().classes("w-full no-wrap items-start gap-4 sr-url-split")
+    with split:
+        with ui.column().classes("sr-card q-pa-md gap-2 no-wrap sr-url-listcol"):
             with ui.row().classes("w-full items-baseline justify-between"):
                 ui.label("URL").classes("text-xl font-semibold")
                 count_label = ui.label().classes("text-sm muted")
@@ -143,7 +162,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                             lambda: export(), "Xuất dữ liệu", user=user, category="url")
             url_list = ui.column().classes("w-full gap-1 no-wrap").style(
                 "flex: 1 1 auto; overflow-y: auto; min-height: 0; margin-right: -8px; padding-right: 6px")
-        detail = ui.column().classes("col gap-4").style("min-width: 0")
+        detail = ui.column().classes("col gap-4 sr-url-detailcol").style("min-width: 0")
 
     @ui.refreshable
     def render_list():
@@ -194,6 +213,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         if not row:
             ui.label("Chọn một URL ở cột bên trái.").classes("muted")
             return
+        ui.button("Danh sách URL", icon="arrow_back", on_click=lambda: split.classes(remove="show-detail")).props(
+            "flat no-caps dense color=grey-9").classes("sr-url-back")
         a = state["analysis"][rid]
         s, e = wks[state["week"]]
         has_prev = state["week"] + 1 < len(wks)
@@ -217,8 +238,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                     ui.button("Mọi từ khóa của URL", icon="manage_search",
                               on_click=lambda u=row["url"]: ui.navigate.to(f"/research?tra={quote(u, safe='')}")
                               ).props("flat dense no-caps size=sm color=primary").tooltip(
-                        "Mở ở trang Research: mọi từ khóa trang này đang có hạng, kèm volume, CPC, mục đích; lọc, "
-                        "sao chép, xuất file")
+                        "Xem mọi từ khóa trang này đang có hạng")
                 with ui.row().classes("gap-2"):
                     T.tag(ui, row["type"] or "Chưa phân loại", "grey")
                     if groups.get(state["group"]):
@@ -379,7 +399,7 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                         "flat dense no-caps")
             if not committed:
                 T.empty_state(ui, "flag", "Chưa có keyword cam kết cho URL này",
-                              "Bấm 'Thêm keyword SEO', hoặc gắn ★ cho keyword GSC ở khối bên dưới")
+                              "Bấm \"Thêm keyword SEO\" hoặc gắn ★ cho từ khóa bên dưới.")
             else:
                 krows = []
                 for k in committed:
@@ -430,8 +450,10 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                           <q-tooltip>Google đang xếp hạng URL khác, không phải URL này</q-tooltip></q-icon>
                       </div>
                     </q-td>""")
-                ui.label("Volume: Google Ads, Việt Nam, cập nhật mỗi tháng. Google gộp các biến thể gần nhau (ví dụ "
-                         "'giày nữ' và 'giày cho nữ') thành cùng một số.").classes("text-xs muted")
+                ui.label("Volume: lượt tìm mỗi tháng tại Việt Nam (Google Ads).").classes("text-xs muted")
+
+        from . import web_backlink_build as WBB  # backlink của URL này (website trỏ về, link đã xây)
+        WBB.url_block(ui, cfg, connect, user, row["url"])
 
         with ui.dialog() as add_dialog, ui.card().style("min-width: 560px; border-radius: 14px"):
             ui.label(f"Thêm keyword SEO cho {row['path']}").classes("text-lg font-semibold")
@@ -459,7 +481,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
                 try:
                     def work():
                         with connect() as c:
-                            return V.refresh(c, site, cfg, end, log=lambda m: None)
+                            with SP.runner(str(user)):
+                                return V.refresh(c, site, cfg, end, log=lambda m: None)
                     await nrun.io_bound(work)
                 except Exception as e:  # noqa: BLE001  (thêm keyword vẫn thành công; lượt chạy hằng ngày lấy bù)
                     ui.notify(f"Đã thêm keyword nhưng chưa lấy được volume: {e}", type="warning", multi_line=True)
@@ -477,12 +500,10 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
             render_detail.refresh()
 
         # ---- Khối 2: keyword GSC nhận diện cho URL này ----
-        with T.section(ui, "Keyword GSC nhận diện", "manage_search",
-                       f"Head và keyword phụ từ dữ liệu GSC ({cfg.keywords.window_days} ngày). ★ = đưa vào keyword "
-                       "SEO cam kết của URL này"):
+        with T.section(ui, "Từ khóa trên GSC", "manage_search",
+                       "Từ khóa chính và từ khóa phụ của trang. ★ = đưa vào từ khóa cam kết"):
             if c_now:
-                ui.label(f"Click nhìn thấy theo keyword: {_n(visible)}/{_n(c_now)} ({visible / c_now * 100:.0f}%). "
-                         "Phần còn lại thuộc các query hiếm mà Google ẩn.").classes("text-xs muted")
+                ui.label(f"Thấy được {visible / c_now * 100:.0f}% click theo từ khóa; phần còn lại Google ẩn.").classes("text-xs muted")
             rows = ([kw_row(a.head, "Head")] if a.head else []) + [kw_row(k, "Phụ") for k in a.secondary]
             kw_table = ui.table(columns=[
                 {"name": "role", "label": "Vai trò", "field": "role", "align": "left"},
@@ -517,7 +538,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
 
                         def work():
                             with connect() as c:
-                                return V.refresh(c, site, cfg, end, log=lambda m: None)
+                                with SP.runner(str(user)):
+                                    return V.refresh(c, site, cfg, end, log=lambda m: None)
                         try:
                             await nrun.io_bound(work)
                         except Exception:  # noqa: BLE001  (lượt chạy hằng ngày lấy bù)
@@ -529,48 +551,48 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
 
             if ed:
                 kw_table.on("star", on_star)
-            ui.label(f"Keyword phụ: impression ≥ {cfg.keywords.min_impressions} và position ≤ "
-                     f"{cfg.keywords.max_position:g} trong {cfg.keywords.window_days} ngày, không phải thương hiệu, "
-                     "URL này mạnh nhất cho query đó.").classes("text-xs muted")
+            ui.label("Từ khóa phụ: các truy vấn trang này mạnh nhất (không tính thương hiệu).").classes("text-xs muted")
 
-        if a.cannibal:
-            with ui.expansion(f"Cannibalization: {len(a.cannibal)} query có URL khác cùng nhận",
-                              icon="call_split").classes("w-full").props("dense"):
+        # biểu đồ 12 tuần + từ khóa trùng / bị loại: một card (không nằm trần trên nền trang)
+        with ui.element("div").classes("sr-card q-pa-md w-full column gap-2"):
+            if a.cannibal:
+                with ui.expansion(f"Cannibalization: {len(a.cannibal)} query có URL khác cùng nhận",
+                                  icon="call_split").classes("w-full").props("dense"):
+                    ui.table(columns=[
+                        {"name": "query", "label": "Query", "field": "query", "align": "left"},
+                        {"name": "clicks", "label": "Click 28 ngày (URL này)", "field": "clicks", "align": "right"},
+                        {"name": "other", "label": "URL đang mạnh hơn", "field": "other", "align": "left"},
+                    ], rows=[{"id": k.query_id, "query": k.query, "clicks": _n(k.clicks),
+                              "other": _short(k.stronger_url, site)} for k in sorted(a.cannibal, key=lambda k: -k.impressions)],
+                        row_key="id").classes("w-full").props("flat dense")
+
+            with ui.expansion(f"Keyword bị loại: {len(a.excluded)}", icon="filter_alt").classes("w-full").props("dense"):
                 ui.table(columns=[
-                    {"name": "query", "label": "Query", "field": "query", "align": "left"},
-                    {"name": "clicks", "label": "Click 28 ngày (URL này)", "field": "clicks", "align": "right"},
-                    {"name": "other", "label": "URL đang mạnh hơn", "field": "other", "align": "left"},
-                ], rows=[{"id": k.query_id, "query": k.query, "clicks": _n(k.clicks),
-                          "other": _short(k.stronger_url, site)} for k in sorted(a.cannibal, key=lambda k: -k.impressions)],
-                    row_key="id").classes("w-full").props("flat dense")
+                    {"name": "query", "label": "Query", "field": "query", "align": "left", "sortable": True},
+                    {"name": "reason", "label": "Lý do", "field": "reason", "align": "left", "sortable": True},
+                    {"name": "clicks", "label": "Click 28 ngày", "field": "clicks", "align": "right", "sortable": True},
+                    {"name": "impr", "label": "Impr 28 ngày", "field": "impr", "align": "right", "sortable": True},
+                    {"name": "pos", "label": "Pos", "field": "pos", "align": "right", "sortable": True},
+                ], rows=[{"id": k.query_id, "query": k.query, "reason": k.reason, "clicks": k.clicks,
+                          "impr": k.impressions, "pos": round(k.position, 1)} for k in a.excluded],
+                    row_key="id", pagination=20).classes("w-full").props("flat dense")
 
-        with ui.expansion(f"Keyword bị loại: {len(a.excluded)}", icon="filter_alt").classes("w-full").props("dense"):
-            ui.table(columns=[
-                {"name": "query", "label": "Query", "field": "query", "align": "left", "sortable": True},
-                {"name": "reason", "label": "Lý do", "field": "reason", "align": "left", "sortable": True},
-                {"name": "clicks", "label": "Click 28 ngày", "field": "clicks", "align": "right", "sortable": True},
-                {"name": "impr", "label": "Impr 28 ngày", "field": "impr", "align": "right", "sortable": True},
-                {"name": "pos", "label": "Pos", "field": "pos", "align": "right", "sortable": True},
-            ], rows=[{"id": k.query_id, "query": k.query, "reason": k.reason, "clicks": k.clicks,
-                      "impr": k.impressions, "pos": round(k.position, 1)} for k in a.excluded],
-                row_key="id", pagination=20).classes("w-full").props("flat dense")
-
-        ui.echart({
-            "tooltip": {"trigger": "axis"},
-            "legend": {"data": ["Click", "Impression"], "bottom": 0},
-            "grid": {"left": 48, "right": 48, "top": 24, "bottom": 48},
-            "xAxis": {"type": "category", "data": [p["week"] for p in series]},
-            "yAxis": [{"type": "value", "name": "Click"},
-                      {"type": "value", "name": "Impression", "splitLine": {"show": False}}],
-            "series": [
-                {"name": "Click", "type": "bar", "data": [p["clicks"] for p in series],
-                 "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}, **ev_marks},
-                {"name": "Impression", "type": "line", "yAxisIndex": 1, "data": [p["impressions"] for p in series],
-                 "itemStyle": {"color": "#2563EB"}, "smooth": True, "symbol": "circle", "symbolSize": 5},
-            ],
-        }).classes("w-full").style("height: 260px")
-        ui.label("12 tuần gần nhất (GSC)." + (" Vạch tím: mốc sự kiện của website (thêm ở Tổng quan → Click theo "
-                 "ngày → Mốc sự kiện)." if ev_marks else "")).classes("text-xs muted")
+            ui.echart({
+                "tooltip": {"trigger": "axis"},
+                "legend": {"data": ["Click", "Impression"], "bottom": 0},
+                "grid": {"left": 48, "right": 48, "top": 24, "bottom": 48},
+                "xAxis": {"type": "category", "data": [p["week"] for p in series]},
+                "yAxis": [{"type": "value", "name": "Click"},
+                          {"type": "value", "name": "Impression", "splitLine": {"show": False}}],
+                "series": [
+                    {"name": "Click", "type": "bar", "data": [p["clicks"] for p in series],
+                     "itemStyle": {"color": GREEN, "borderRadius": [4, 4, 0, 0]}, **ev_marks},
+                    {"name": "Impression", "type": "line", "yAxisIndex": 1, "data": [p["impressions"] for p in series],
+                     "itemStyle": {"color": "#2563EB"}, "smooth": True, "symbol": "circle", "symbolSize": 5},
+                ],
+            }).classes("w-full").style("height: 260px")
+            ui.label("12 tuần gần nhất (GSC)." + (" Vạch tím: mốc sự kiện của website (thêm ở Tổng quan → Click theo "
+                     "ngày → Mốc sự kiện)." if ev_marks else "")).classes("text-xs muted")
 
     with detail:
         render_detail()
@@ -590,6 +612,8 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         state["url"] = rid
         render_list.refresh()
         render_detail.refresh()
+        split.classes(add="show-detail")  # điện thoại: chuyển sang màn chi tiết
+        ui.run_javascript("if (innerWidth < 768) scrollTo({top: 0})")
 
     def on_group(e):
         state["group"] = e.value
@@ -608,6 +632,10 @@ def build_url_page(ui, cfg, connect, user: str, on_budget_change=None, ctx: dict
         render_list.refresh()
 
     load_group()
+    if focus and focus in {r["id"] for r in state["rows"]}:
+        state["url"] = focus
+        ui.timer(0.6, lambda: ui.run_javascript(  # cuộn danh sách tới URL vừa mở
+            "document.querySelector('.sr-url-item.selected')?.scrollIntoView({block: 'center'})"), once=True)
     render_list.refresh()
     render_detail.refresh()
     group_select.on_value_change(on_group)

@@ -65,7 +65,14 @@ class FakeSheets:
                     replies.append({})
                 elif "addProtectedRange" in r:
                     pr = r["addProtectedRange"]["protectedRange"]
-                    self.tabs[pr["range"]["sheetId"]]["protected"].append({"description": pr["description"]})
+                    self.next += 1
+                    self.tabs[pr["range"]["sheetId"]]["protected"].append({"description": pr["description"],
+                                                                           "protectedRangeId": self.next})
+                    replies.append({})
+                elif "deleteProtectedRange" in r:
+                    rid = r["deleteProtectedRange"]["protectedRangeId"]
+                    for tab in self.tabs.values():
+                        tab["protected"] = [x for x in tab["protected"] if x.get("protectedRangeId") != rid]
                     replies.append({})
                 else:
                     replies.append({})
@@ -176,12 +183,35 @@ class OkrTabsTest(unittest.TestCase):
         o = O.add_objective(self.con, "Q4/2026", "Nền tảng")
         O.add_item(self.con, o, "Audit kỹ thuật", pic="Thịnh")
 
+    def test_team_okr_tab_with_same_name_never_touched(self):
+        """Tab OKR team tự làm trùng tên đợt trên tool: tool ghi tab riêng "(tool)", không ghi / xóa / khóa tab team;
+        khóa tool gắn nhầm trước đây được gỡ; tab cũ tool từng nhận nhầm (lưu trong mapping) cũng không bị đụng."""
+        name = O.cycle_list(self.con)[0]["name"]
+        title = O.tab_title(name)
+        sh = FakeSheets({1: title, 2: "Weekly Task Tracker"})
+        team = [["ID", "team tự thiết kế"]]
+        sh.tabs[1]["values"] = team
+        sh.tabs[1]["protected"] = [{"description": SV.PROTECT_TAG, "protectedRangeId": 5}]
+        ids = O.cycle_ids(self.con)
+        SV._save(self.con, KP.sheet_id(self.con), {f"okr:{ids[name]}": 1})  # mapping cũ trỏ nhầm vào tab team
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        self.assertEqual(sh.tabs[1]["values"], team)
+        self.assertEqual(sh.tabs[1]["title"], title)
+        self.assertEqual(sh.tabs[1]["protected"], [])
+        own = sh.by_title(title + SV.OKR_SUFFIX)
+        self.assertEqual(sh.tabs[own]["values"][3], O.SHEET_HEAD)
+        O.delete_cycle(self.con, name)
+        SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
+        self.assertNotIn(own, sh.tabs)  # tab tool tạo: xóa theo đợt
+        self.assertIn(1, sh.tabs)  # tab team: còn nguyên
+
     def test_okr_tabs_follow_cycles(self):
         sh = FakeSheets({1: "OKRs 3 tháng", 2: "Weekly Task Tracker", 3: "Content"})
         team_okr, weekly = ["ID", "team tự thiết kế"], [["Tuần"], ["Ngày", "Task tuần / hành động"]]
         sh.tabs[1]["values"], sh.tabs[2]["values"] = [team_okr], weekly
         SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
-        gid = sh.by_title("OKRs Q4-2026")
+        gid = sh.by_title("OKRs Q4-2026" + SV.OKR_SUFFIX)
         rows = sh.tabs[gid]["values"]
         self.assertEqual(rows[3], O.SHEET_HEAD)
         self.assertEqual(rows[5][:3], ["O1.01", "", "Audit kỹ thuật"])
@@ -191,7 +221,7 @@ class OkrTabsTest(unittest.TestCase):
         self.assertEqual(sh.tabs[3]["protected"], [])
         O.update_cycle(self.con, "Q4/2026", "OKRs Q4 2026", "2026-10-01", "2026-12-31")
         SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
-        self.assertEqual(sh.tabs[gid]["title"], "OKRs Q4 2026")  # đổi tên đợt: cùng tab, đổi tên tab
+        self.assertEqual(sh.tabs[gid]["title"], "OKRs Q4 2026" + SV.OKR_SUFFIX)  # đổi tên đợt: cùng tab
         SV.publish(self.con, self.cfg, today=date(2026, 11, 7), sh=sh)
         self.assertEqual(len(sh.tabs[2]["protected"]), 1)  # khóa hàng tiêu đề một lần
         O.delete_cycle(self.con, "OKRs Q4 2026")

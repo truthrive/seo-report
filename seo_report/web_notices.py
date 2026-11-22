@@ -7,7 +7,8 @@ SHOW = 30  # số dòng tối đa trong cửa sổ (nặng trước)
 
 
 def bell(ui, cfg, connect, user, key) -> None:
-    """Chuông + số chưa xem; bấm mở cửa sổ thông báo (nội dung chỉ dựng khi mở, trang vẫn nhẹ)."""
+    """Chuông + số chưa xem; bấm mở cửa sổ thông báo. Nội dung dựng sẵn khi tải trang (cùng dữ liệu với số trên chuông)
+    để mở ra là thấy ngay; lúc mở mới kiểm tra lại ở luồng nền."""
     state = {"kind": "all"}
 
     def items() -> list[dict]:
@@ -35,6 +36,19 @@ def bell(ui, cfg, connect, user, key) -> None:
         panel.refresh()
         badge.refresh()
 
+    def sig(all_: list[dict]) -> tuple:
+        return tuple((n["key"], n["seen"]) for n in all_)
+
+    async def on_show() -> None:
+        """Khung đã có sẵn nội dung từ lúc tải trang (mở ra là thấy ngay). Khi mở: tính lại ở luồng nền (không chặn
+        máy chủ), chỉ vẽ lại khi danh sách thật sự đổi."""
+        from nicegui import run
+        fresh = await run.io_bound(items)
+        if sig(fresh) != state.get("sig"):
+            state["fresh"] = fresh
+            panel.refresh()
+            badge.refresh()
+
     with ui.button(on_click=lambda: None).props('flat round dense color=grey-8').classes("sr-bell") as btn:
         @ui.refreshable
         def badge() -> None:
@@ -47,9 +61,8 @@ def bell(ui, cfg, connect, user, key) -> None:
         with ui.menu().props('anchor="bottom right" self="top right" :offset="[0, 8]"').classes("sr-nt-pop") as menu:
             @ui.refreshable
             def panel() -> None:
-                if not state.get("open"):
-                    return
-                all_ = items()
+                all_ = state.pop("fresh", None) or items()  # cùng bộ nhớ tạm với số trên chuông: không tính thêm
+                state["sig"] = sig(all_)
                 new = N.unseen(all_)
                 with ui.row().classes("sr-nt-head items-center no-wrap w-full"):
                     ui.label("Thông báo").classes("text-base font-semibold")
@@ -96,6 +109,64 @@ def bell(ui, cfg, connect, user, key) -> None:
                         ui.label(f"và {len(shown) - SHOW} thông báo khác (nhẹ hơn)").classes(
                             "text-xs muted q-pa-sm")
             panel()
-        menu.on("show", lambda: (state.update(open=True), panel.refresh()))
-        menu.on("hide", lambda: state.update(open=False))
+        menu.on("show", on_show)
+        # nền phía sau tối + mờ khi mở thông báo (giống nút nổi), làm ngay trên trình duyệt
+        menu.on("before-show", js_handler="() => document.body.classList.add('sr-dim')")
+        menu.on("before-hide", js_handler="() => document.body.classList.remove('sr-dim')")
         ui.tooltip("Thông báo")
+
+    def daily_popup() -> None:
+        """Lần mở tool đầu tiên mỗi ngày: bảng tóm tắt việc cần để ý chưa xem (mỗi người, mỗi dự án, một lần/ngày)."""
+        try:
+            all_ = items()
+            with connect() as c:
+                todo = N.popup_items(c, user, all_)
+        except Exception:  # noqa: BLE001
+            return
+        if not todo:
+            return
+        high = sum(1 for n in todo if n["level"] == "high")
+
+        def go(n: dict) -> None:  # không dùng menu của chuông: phần đầu trang có thể đã được vẽ lại
+            d.close()
+            mark([n["key"]])
+            if n["href"]:
+                ui.navigate.to(n["href"])
+        with host, ui.dialog() as d, ui.card().style("width:560px; max-width:95vw; border-radius:14px"):
+            with ui.row().classes("w-full items-center no-wrap gap-2"):
+                ui.icon("notifications_active", size="22px").style(f"color:{T.GREEN}")
+                with ui.column().classes("gap-0 col"):
+                    ui.label("Việc cần để ý hôm nay").classes("text-lg font-semibold")
+                    ui.label(f"{len(todo)} thông báo chưa xem" + (f" · {high} cần xử lý" if high else "")).classes(
+                        "text-xs muted")
+                ui.button(icon="close", on_click=d.close).props('flat round dense aria-label="Đóng"')
+            with ui.element("div").classes("sr-nt-list q-mt-sm"):
+                for n in todo[:N.POPUP_MAX]:
+                    tone = N.LEVELS[n["level"]][1]
+                    row = ui.element("div").classes("sr-nt-row new").props('role="button" tabindex="0"')
+                    row.on("click", lambda _, n=n: go(n))
+                    with row:
+                        name, icon = N.KINDS[n["kind"]]
+                        ui.icon(icon, size="18px").classes("sr-nt-icon").style(
+                            f"color:{T.TONES[tone][1]};background:{T.TONES[tone][0]}").props('aria-hidden="true"')
+                        with ui.column().classes("gap-0 col").style("min-width:0"):
+                            ui.label(n["title"]).classes("text-sm sr-nt-title")
+                            ui.label(" · ".join(x for x in (N.LEVELS[n["level"]][0], name, n["detail"]) if x)
+                                     ).classes("text-xs muted sr-nt-meta")
+            if len(todo) > N.POPUP_MAX:
+                ui.label(f"và {len(todo) - N.POPUP_MAX} thông báo khác").classes("text-xs muted q-mt-xs")
+            with ui.row().classes("w-full justify-end gap-2 q-mt-md"):
+                ui.button("Để sau", on_click=d.close).props("flat no-caps")
+                ui.button("Xem tất cả thông báo", icon="notifications",  # mở chuông đang có trên trang
+                          on_click=lambda: (d.close(), ui.run_javascript(
+                              "setTimeout(() => document.querySelector('button.sr-bell')?.click(), 350)"))).props("unelevated no-caps")
+            ui.label("Bảng này hiện một lần mỗi ngày ở lần mở tool đầu tiên.").classes("text-xs muted q-mt-xs")
+        d.on("hide", d.delete)
+        d.open()
+    # gắn vào khung trang gốc: phần đầu trang có thể được vẽ lại (xóa luôn hộp thoại); mỗi trang chỉ một bộ hẹn giờ
+    client = ui.context.client
+    host = client.layout
+    if not getattr(client, "_sr_popup", False):
+        client._sr_popup = True
+        with host:
+            ui.timer(1.2, daily_popup, once=True)  # sau khi trang vẽ xong

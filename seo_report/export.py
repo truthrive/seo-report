@@ -77,7 +77,7 @@ def build_data_export(con, cfg, group_id: int, week_index: int, user: str, today
         ["", "Click theo URL gồm cả query Google ẩn, nên luôn lớn hơn tổng click của các keyword (sheet URL_Keyword)."],
         ["", "Position là trung bình có trọng số theo impression, như cách GSC tính."],
         ["", "URL đã gộp #mục và ?utm_…: một dòng URL có thể gồm nhiều dòng trong GSC."],
-        ["", "Rank thực tế: DataForSEO, mobile, Việt Nam. Rank là vị trí tốt nhất của site; nếu URL đang xếp hạng "
+        ["", "Rank thực tế: Google mobile, Việt Nam. Rank là vị trí tốt nhất của site; nếu URL đang xếp hạng "
              "khác URL đã gán, xem cột 'Đúng URL' ở sheet Rank_History_Long."],
     ]
     ws = wb.create_sheet("Thông tin")

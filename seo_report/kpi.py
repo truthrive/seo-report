@@ -91,20 +91,42 @@ def sync_info(con) -> dict | None:
 # ---- Dòng cam kết ----
 
 def line_id(line: dict) -> str:
-    """Khóa ổn định của một dòng: top3 / top5 / top10 (top3@12: chỉ tính bộ 12), level:organic, cum:ai…"""
+    """Khóa ổn định của một dòng: top3 / top5 / top10 (top3@12: chỉ tính bộ 12), own (đạt Top mục tiêu riêng),
+    level:organic, cum:ai…"""
     if line["kind"] == "rank":
-        return f"top{line['top']}" + (f"@{line['set']}" if line.get("set") else "")
+        base = "own" if line.get("mode") == "own" else f"top{line['top']}"
+        return base + (f"@{line['set']}" if line.get("set") else "")
     return f"{line['kind']}:{line['source']}"
 
 
-def rank_pool(line: dict, items: list[dict]) -> list[dict]:
-    """Từ khóa chấm cho một dòng Top N: theo bộ của dòng (nếu chọn), rồi theo Top target nếu là bộ riêng."""
-    pool = [x for x in items if not line.get("set") or x.get("set") == line["set"]]
+def claimed_sets(lines: list[dict]) -> set:
+    """Bộ từ khóa có dòng cam kết riêng (vd bộ Từ khóa thúc đẩy): từ khóa của các bộ này không tính vào dòng chung."""
+    return {ln["set"] for ln in lines if ln.get("kind") == "rank" and ln.get("set")}
+
+
+def rank_pool(line: dict, items: list[dict], claimed: set | None = None) -> list[dict]:
+    """Từ khóa chấm cho một dòng Top N: theo bộ của dòng (nếu chọn), rồi theo Top target nếu là bộ riêng. Dòng không
+    gắn bộ bỏ qua từ khóa của các bộ đã có dòng riêng (`claimed`)."""
+    pool = [x for x in items if (x.get("set") == line["set"] if line.get("set")
+                                 else x.get("set") not in (claimed or ()))]
+    if line.get("mode") == "own":  # đạt Top mục tiêu riêng: chỉ từ khóa đã đặt Top mục tiêu
+        return [x for x in pool if x.get("target")]
     return pool if line.get("mode") != "per_tier" else [x for x in pool if x["target"] == line["top"]]
+
+
+def hit(line: dict, x: dict) -> bool:
+    """Từ khóa x có tính là đạt cho dòng thứ hạng này không."""
+    if x["rank"] is None:
+        return False
+    return x["rank"] <= (x.get("target") or 0) if line.get("mode") == "own" else x["rank"] <= line["top"]
 
 
 def line_label(line: dict) -> str:
     if line["kind"] == "rank":
+        if line.get("name"):  # bộ từ khóa team tự đặt tên (bộ Cam kết riêng, mốc Top tự chọn)
+            return f"{line['name']} · Top {line['top']}"
+        if line.get("mode") == "own":
+            return "Từ khóa đạt Top mục tiêu riêng"
         return f"Từ khóa top {line['top']}" + (" · bộ riêng" if line.get("mode") == "per_tier" else "")
     src = SOURCES[line["source"]]
     return f"Phiên {src}" if line["kind"] == "level" else f"{src} tăng thêm cộng dồn"
@@ -177,6 +199,9 @@ def _line_of(lab: str, row: list, fmt: str) -> dict | None:
             return {"kind": "level", "source": "organic"}
         return None
     b, u = _cell(row, 1), _cell(row, 2)
+    if lab.startswith("top mục tiêu") or lab.startswith("top muc tieu"):
+        return {"kind": "rank", "top": 0, "mode": "own",
+                "unit": "count" if ("số" in u or "từ" in u) and "%" not in u else "pct"}
     if m and lab.startswith("top"):
         return {"kind": "rank", "top": int(m.group(1)),
                 "mode": "per_tier" if "riêng" in b or re.search(r"top\s*\d", b) else "shared",
@@ -453,9 +478,9 @@ def _judge(line: dict, row: dict, prior: tuple[int, bool] = (0, True)) -> dict:
     t = line["targets"].get(str(n))
     if line["kind"] == "rank":
         items = row["rank"]["items"]
-        pool = rank_pool(line, items)
+        pool = rank_pool(line, items, row.get("claimed"))
         total = len(pool)
-        count = sum(1 for x in pool if x["rank"] is not None and x["rank"] <= line["top"])
+        count = sum(1 for x in pool if hit(line, x))
         need, target_pct = rank_need(line, t, total)
         return {"kind": "rank", "unit": line["unit"], "target": t, "target_pct": target_pct, "need": need,
                 "count": count, "total": total, "checked": sum(1 for x in pool if x["date"] is not None),
@@ -485,7 +510,7 @@ def _judge(line: dict, row: dict, prior: tuple[int, bool] = (0, True)) -> dict:
             "gap": None if t is None or cum is None else max(0, plan_cum - cum)}
 
 
-def progress(con, site: str, today: date, sessions=None) -> dict | None:
+def progress(con, site: str, today: date, sessions=None, watch: tuple = ()) -> dict | None:
     """Tiến độ từng tháng dự án. sessions(source, s, e) -> {ngày iso: phiên} (GA4; source = organic / ai); None =
     không lấy GA4 (số phiên để trống, không hiện 0)."""
     vs = versions(con)
@@ -494,8 +519,14 @@ def progress(con, site: str, today: date, sessions=None) -> dict | None:
         return None
     lines: dict[str, dict] = {}
 
+    def with_watch(ver) -> list[dict]:
+        """watch: nguồn lượt truy cập luôn theo dõi dù không cam kết (dòng mức tháng không mục tiêu)."""
+        have = {ln.get("source") for ln in ver["lines"] if ln["kind"] != "rank"}
+        return ver["lines"] + [{"kind": "level", "source": s, "targets": {}, "watch": True}
+                               for s in watch if s not in have]
+
     def reg(ver):
-        for ln in ver["lines"]:
+        for ln in with_watch(ver):
             lines.setdefault(line_id(ln), {k: v for k, v in ln.items() if k != "targets"})
 
     def targets_of(ver, n):
@@ -525,16 +556,17 @@ def progress(con, site: str, today: date, sessions=None) -> dict | None:
         reg(ver)
         row["targets"], row["baseline"] = targets_of(ver, n), ver.get("baseline") or {}
         row["rank"] = _rank_items(con, site, ver.get("keywords", []), s, min(e, today))
+        row["claimed"] = claimed_sets(ver["lines"])
         row["days_done"] = max(0, (min(e, yesterday) - s).days + 1)
         row["days_total"] = (e - s).days + 1
         row["sessions"], row["forecast"] = {}, {}
         if sessions and s <= yesterday:
-            for src in sorted({ln["source"] for ln in ver["lines"] if ln["kind"] != "rank"}):
+            for src in sorted({ln["source"] for ln in with_watch(ver) if ln["kind"] != "rank"}):
                 row["sessions"][src] = _period_sessions(sessions, src, s, min(e, yesterday))
                 if row["status"] == "running" and row["days_done"] >= 3:
                     row["forecast"][src] = round(row["sessions"][src] / row["days_done"] * row["days_total"])
         row["checks"] = {}
-        for ln in ver["lines"]:
+        for ln in with_watch(ver):
             lid = line_id(ln)
             ch = row["checks"][lid] = _judge(ln, row, cum.get(lid, (0, True)))
             if ln["kind"] == "cum" and row["status"] == "closed":
@@ -575,11 +607,12 @@ def rank_kpi_now(con, site: str, today: date, set_id: int | None = None) -> dict
     q_targets = months[q_last].get("targets") or {}
     out = {"state": p["state"], "month": n, "from": row.get("from"), "to": row.get("to"), "quarter": q,
            "q_months": (q * 3 - 2, q_last), "q_to": months[q_last].get("to"), "rows": []}
+    claimed = claimed_sets(p["lines"])
     for ln in rank_lines:
         lid = line_id(ln)
-        pool = rank_pool(ln, items)
+        pool = rank_pool(ln, items, claimed)
         total = len(pool)
-        count = sum(1 for x in pool if x["rank"] is not None and x["rank"] <= ln["top"])
+        count = sum(1 for x in pool if hit(ln, x))
 
         def goal(t):
             need, pct = rank_need(ln, t, total)
@@ -762,7 +795,11 @@ def kpi_grid(d: dict) -> list[list]:
             [],
             ["Loại", "Nguồn / Bộ", "Đơn vị", *months, "Tổng"]]
     for ln in d["lines"]:
-        if ln["kind"] == "rank":
+        if ln["kind"] == "rank" and ln.get("mode") == "own":
+            a, b, u = "Top mục tiêu", "Từ khóa đạt Top mục tiêu riêng", UNIT_LABEL[ln["unit"]]
+        elif ln["kind"] == "rank" and ln.get("name"):
+            a, b, u = f"Top {ln['top']}", f"Bộ {ln['name']}", UNIT_LABEL[ln["unit"]]
+        elif ln["kind"] == "rank":
             a, b, u = (f"Top {ln['top']}", "Bộ chung" if ln.get("mode") != "per_tier" else f"Bộ riêng Top {ln['top']}",
                        UNIT_LABEL[ln["unit"]])
         else:

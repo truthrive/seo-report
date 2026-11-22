@@ -108,6 +108,11 @@ class Client:
     def location(self, name: str) -> dict:
         return self.info.locations().get(name=name, readMask=READ_MASK).execute()
 
+    def set_special_hours(self, name: str, periods: list[dict]) -> dict:
+        """Ghi đè danh sách giờ đặc biệt (lễ, Tết) của hồ sơ."""
+        return self.info.locations().patch(name=name, updateMask="specialHours",
+                                           body={"specialHours": {"specialHourPeriods": periods}}).execute()
+
     def daily(self, name: str, start: date, end: date) -> dict:
         return self.perf.locations().fetchMultiDailyMetricsTimeSeries(
             location=name, dailyMetrics=list(METRICS),
@@ -139,6 +144,12 @@ def explain(e: Exception) -> str:
     text = str(e)
     if "SERVICE_DISABLED" in text or "has not been used in project" in text:
         proj = (re.search(r"project[= ](\d+)", text) or [None, ""])[1]
+        if "mybusiness.googleapis.com" in text or "Google My Business API" in text:
+            # đánh giá, trả lời đánh giá, bài đăng: API v4 đời cũ, bật riêng (khác 3 API số liệu)
+            return ("Google Cloud project của tool chưa bật “Google My Business API” (cần cho đánh giá, trả lời "
+                    "đánh giá và bài đăng; khác 3 API số liệu đã bật). Vào Google Cloud Console"
+                    + (f" (project {proj})" if proj else "") + " → APIs & Services → Library, tìm “Google My "
+                    "Business API” và bấm Enable. Bật xong đợi vài phút rồi bấm lấy số mới.")
         return ("Google Cloud project của tool chưa bật API Business Profile. Vào Google Cloud Console"
                 + (f" (project {proj})" if proj else "") + " → APIs & Services → Library, bật đủ 3 API: "
                 + ", ".join(APIS.values()) + ". Bật xong đợi vài phút rồi thử lại.")
@@ -170,6 +181,92 @@ def address_text(loc: dict) -> str:
     parts = list(a.get("addressLines") or []) + [a.get("sublocality", ""), a.get("locality", ""),
                                                   a.get("administrativeArea", "")]
     return ", ".join(p for p in parts if p)
+
+
+# ---------------------------------------------------------------- giờ lễ (special hours)
+
+def _d(iso: str) -> dict:
+    d = date.fromisoformat(iso)
+    return {"year": d.year, "month": d.month, "day": d.day}
+
+
+def _iso(d: dict | None) -> str | None:
+    try:
+        return date(d["year"], d["month"], d["day"]).isoformat() if d else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _hm(t: str) -> dict:
+    h, m = (t or "0:0").split(":")[:2]
+    return {"hours": int(h), "minutes": int(m)} if int(m) else {"hours": int(h)}
+
+
+def special_periods(loc_data: dict, today: date | None = None) -> list[dict]:
+    """Giờ đặc biệt sắp tới của một hồ sơ, dạng dễ đọc: [{"start", "end", "closed", "open", "close"}]."""
+    today = today or date.today()
+    out = []
+    for p in ((loc_data or {}).get("specialHours") or {}).get("specialHourPeriods") or []:
+        s, e = _iso(p.get("startDate")), _iso(p.get("endDate")) or _iso(p.get("startDate"))
+        if not s or (e or s) < today.isoformat():
+            continue
+        fmt = lambda t: f"{(t or {}).get('hours', 0):02d}:{(t or {}).get('minutes', 0):02d}"  # noqa: E731
+        out.append({"start": s, "end": e, "closed": bool(p.get("closed")),
+                    "open": None if p.get("closed") else fmt(p.get("openTime")),
+                    "close": None if p.get("closed") else fmt(p.get("closeTime"))})
+    return sorted(out, key=lambda x: x["start"])
+
+
+def merge_special(current: list[dict], start: str, end: str, mode: str, open_t: str = "", close_t: str = "") -> list[dict]:
+    """Danh sách giờ đặc biệt mới: bỏ các khoảng trùng ngày [start, end], rồi thêm khoảng mới.
+    mode: closed (đóng cửa cả khoảng) | hours (mỗi ngày mở open_t – close_t) | remove (bỏ, mở như thường)."""
+    if start > end:
+        raise ValueError("Ngày bắt đầu sau ngày kết thúc")
+    if (date.fromisoformat(end) - date.fromisoformat(start)).days > 60:
+        raise ValueError("Mỗi lần đặt tối đa 60 ngày")
+    keep = []
+    for p in current or []:
+        s = _iso(p.get("startDate"))
+        e = _iso(p.get("endDate")) or s
+        if s and not (e < start or s > end):
+            continue  # trùng khoảng ngày đang sửa: thay bằng khoảng mới
+        keep.append(p)
+    if mode == "closed":
+        keep.append({"startDate": _d(start), "endDate": _d(end), "closed": True})
+    elif mode == "hours":
+        if not open_t or not close_t or open_t >= close_t:
+            raise ValueError("Chọn giờ mở cửa trước giờ đóng cửa")
+        d = date.fromisoformat(start)
+        while d.isoformat() <= end:
+            keep.append({"startDate": _d(d.isoformat()), "endDate": _d(d.isoformat()), "openTime": _hm(open_t),
+                         "closeTime": _hm(close_t)})
+            d += timedelta(days=1)
+    elif mode != "remove":
+        raise ValueError("Chọn đóng cửa, giờ khác hoặc bỏ giờ đặc biệt")
+    return keep
+
+
+def apply_special(con, client, names: list[str], start: str, end: str, mode: str, open_t: str = "",
+                  close_t: str = "") -> dict[str, str]:
+    """Đặt giờ lễ cho nhiều chi nhánh: đọc giờ đặc biệt hiện có của từng hồ sơ (giữ các ngày khác), ghi lại.
+    Trả {chi nhánh: "" (xong) | lỗi}."""
+    out = {}
+    for name in names:
+        try:
+            data = client.location(name)
+            periods = merge_special(((data.get("specialHours") or {}).get("specialHourPeriods")) or [], start, end,
+                                    mode, open_t, close_t)
+            client.set_special_hours(name, periods)
+            data["specialHours"] = {"specialHourPeriods": periods}
+            with con:
+                con.execute("UPDATE gbp_locations SET data = ?, fetched_at = ? WHERE name = ?",
+                            (json.dumps(data, ensure_ascii=False), _now(), name))
+            out[name] = ""
+        except ValueError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            out[name] = explain(e)
+    return out
 
 
 # ---------------------------------------------------------------- lưu / đọc
@@ -251,9 +348,13 @@ def refresh(con, cfg, today: date | None = None, client=None, log=print) -> dict
     locs = linked(con)
     if not locs:
         return {"locations": 0, "days": 0, "months": 0}
+    review_client = None
     if client is None:
         from . import auth
-        client = Client(auth.get_credentials(cfg, need=(auth.BUSINESS_SCOPE,)))
+        from . import gbp_reviews as GR
+        creds = auth.get_credentials(cfg, need=(auth.BUSINESS_SCOPE,))
+        client = Client(creds)
+        review_client = GR.Client(creds)
     days = months = 0
     end = today - timedelta(days=1)
     for loc in locs:
@@ -282,8 +383,17 @@ def refresh(con, cfg, today: date | None = None, client=None, log=print) -> dict
             except Exception as e:  # noqa: BLE001
                 log(f"Không lấy được từ khóa {loc['title']} tháng {m}/{y}: {explain(e)}")
                 break
+    reviews = 0
+    if review_client is not None:  # đánh giá Google Maps (My Business API v4)
+        from . import gbp_reviews as GR
+        reviews = GR.refresh(con, locs, review_client, log)
+        from . import gbp_posts as GP  # bài đăng trên Google (cả bài team đăng thẳng trên Google)
+        try:
+            GP.import_from_google(con, locs, GP.Client(None, session=review_client.s), log)
+        except Exception as e:  # noqa: BLE001
+            log(f"Không đọc được bài đăng: {explain(e)}")
     log(f"Đã lấy số Google Business Profile của {len(locs)} hồ sơ.")
-    return {"locations": len(locs), "days": days, "months": months}
+    return {"locations": len(locs), "days": days, "months": months, "reviews": reviews}
 
 
 # ---------------------------------------------------------------- tính số cho trang
@@ -319,6 +429,39 @@ def series(con, names: list[str], start: date, end: date, by: str = "week") -> l
         if metric in VIEWS:
             b["views"] += v or 0
     return [buckets[k] for k in sorted(buckets)]
+
+
+def complete_day(con) -> str | None:
+    """Ngày cuối có số đầy đủ. Google trả lượt xem của 1–3 ngày gần nhất còn thiếu (0 hoặc rất thấp), nên bỏ các ngày
+    cuối có lượt xem dưới một nửa mức thường (trung vị các ngày trước đó) để biểu đồ không tụt giả."""
+    ensure_tables(con)
+    rows = con.execute("SELECT day, SUM(value) FROM gbp_daily WHERE metric LIKE 'BUSINESS_IMPRESSIONS%' "
+                       "GROUP BY day ORDER BY day DESC LIMIT 14").fetchall()
+    if len(rows) < 5:
+        return last_day(con)
+    base = sorted(v or 0 for _, v in rows[3:])
+    ref = base[len(base) // 2]
+    for day, v in rows[:3]:
+        if (v or 0) >= ref * 0.5:
+            return day
+    return rows[3][0]
+
+
+def daily(con, names: list[str], start: date, end: date) -> dict[str, dict]:
+    """Số theo ngày (cộng các chi nhánh): {"YYYY-MM-DD": {"views", <metric>: số}}; ngày chưa có số thì không có khóa."""
+    ensure_tables(con)
+    if not names:
+        return {}
+    marks = ",".join("?" * len(names))
+    out: dict[str, dict] = {}
+    for day, metric, v in con.execute(f"SELECT day, metric, SUM(value) FROM gbp_daily WHERE location IN ({marks}) "
+                                      "AND day BETWEEN ? AND ? GROUP BY day, metric",
+                                      (*names, start.isoformat(), end.isoformat())):
+        b = out.setdefault(day, {"views": 0, **{m: 0 for m in METRICS}})
+        b[metric] = v or 0
+        if metric in VIEWS:
+            b["views"] += v or 0
+    return out
 
 
 def keyword_rows(con, names: list[str], months: list[str]) -> list[dict]:

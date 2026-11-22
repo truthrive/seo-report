@@ -5,7 +5,7 @@ tháng thêm xu hướng 12 tháng, theo loại trang, top URL và top query.
 Số GSC/rank/index đọc từ SQLite nên hiện ngay; số GA4 tải trong luồng nền rồi điền vào khối AI.
 """
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from . import ai_format as F
 from . import kpi as KP
@@ -81,7 +81,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 await with_ai()
                 return await run.io_bound(lambda: build_report_pptx(rep, user))
 
-            export_menu(ui, cfg, connect, slides_filename(rep), make_xlsx, make_pptx, "Xuất báo cáo", user=user,
+            export_menu(ui, cfg, connect, slides_filename(rep), make_xlsx, make_pptx, "Xuất báo cáo", user=user, report=True,
                         category="report")
         else:
             ui.button("Bản báo cáo", icon="summarize", on_click=lambda: ui.navigate.to("/report")).props(
@@ -119,9 +119,143 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 rep.note = note.value or ""
                 if plan is not None:
                     rep.plan = plan.value or ""
+                from datetime import datetime as _dt
+                saved_at["t"] = f"{_dt.now():%H:%M}"
+                paint_state()
                 ui.notify(f"Đã lưu nhận xét cho {unit} này", type="positive")
 
-            ui.button("Lưu nhận xét", icon="save", on_click=save).props("flat no-caps")
+            saved_at = {"t": ""}
+
+            def dirty() -> bool:
+                return (note.value or "") != (rep.note or "") or (plan is not None and (plan.value or "") != (rep.plan or ""))
+
+            def paint_state(_=None) -> None:
+                """Trạng thái lưu cạnh nút: có thay đổi chưa lưu (cam) / đã lưu (xanh) / chưa có nhận xét."""
+                if dirty():
+                    save_state.text, icon_, color = "Có thay đổi chưa lưu", "edit", T.AMBER_TEXT
+                    save_btn.props("unelevated color=primary")
+                    save_btn.enable()
+                elif rep.note or (plan is not None and rep.plan):
+                    save_state.text = f"Đã lưu lúc {saved_at['t']}" if saved_at["t"] else "Đã lưu"
+                    icon_, color = "check_circle", T.GREEN
+                    save_btn.props(remove="unelevated color=primary")
+                    save_btn.disable()
+                else:
+                    save_state.text, icon_, color = "", "", T.MUTED
+                    save_btn.props(remove="unelevated color=primary")
+                    save_btn.disable()
+                save_icon.name = icon_ or "check_circle"
+                save_icon.set_visibility(bool(icon_))
+                save_icon.style(f"color:{color}")
+                save_state.style(f"color:{color}")
+
+            async def ai_draft(btn, force: bool = False) -> None:
+                """AI viết nháp nhận xét (và kế hoạch tháng sau) vào ô; người dùng đọc lại rồi bấm Lưu nhận xét."""
+                from nicegui import run
+
+                from . import ai_http as AH
+                from . import ai_writer as AW
+                from . import points as PT
+                if not force and ((note.value or "").strip() or (plan is not None and (plan.value or "").strip())):
+                    with ui.dialog() as d, ui.card().style("max-width: 420px; border-radius: 14px"):
+                        ui.label("Thay nội dung đang có?").classes("text-lg font-semibold")
+                        ui.label("Ô nhận xét đã có chữ. AI viết nháp sẽ thay nội dung trong ô (chưa lưu cho đến khi "
+                                 "bạn bấm Lưu nhận xét).").classes("text-sm")
+                        with ui.row().classes("w-full justify-end gap-2"):
+                            ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                            async def ok():
+                                d.close()
+                                await ai_draft(btn, force=True)
+                            ui.button("Viết nháp mới", on_click=ok).props("unelevated no-caps color=primary")
+                    d.open()
+                    return
+                from . import ai_settings as AIS
+                task = "report_month" if month else "report_week"
+                try:
+                    prov = AW.provider(cfg, task)
+                except AW.NoProvider as e:
+                    ui.notify(str(e), type="warning", multi_line=True)
+                    return
+                entry = PT.take(ui, user, cfg, "ai_report", detail=period_text(kind, (ws, we)))
+                if entry is False:
+                    return
+                btn.props("loading")
+                try:
+                    d_, used = await run.io_bound(AW.write_report, cfg, rep, prov)
+                except AH.AIError as e:
+                    PT.give_back(entry)
+                    AIS.log_call(site, task, "manual", str(user), prov, False, str(e))
+                    ui.notify(f"AI chưa viết được: {e}", type="warning", multi_line=True)
+                    return
+                finally:
+                    btn.props(remove="loading")
+                AIS.log_call(site, task, "manual", str(user), used, True,
+                             credits=PT.cost("ai_report") if PT.member(user) else 0)
+                note.value = d_["note"]
+                if plan is not None and d_["plan"]:
+                    plan.value = d_["plan"]
+                with connect() as c:
+                    AW.save(c, site, "report_note", str(note_key(rep)), d_, used, str(user))
+                ai_meta.text = "AI đã viết nháp: đọc lại, sửa rồi bấm Lưu nhận xét."
+                ui.notify("AI đã viết nháp: đọc lại rồi bấm Lưu nhận xét", type="positive")
+
+            with ui.row().classes("w-full items-center gap-2"):
+                save_btn = ui.button("Lưu nhận xét", icon="save", on_click=save).props("flat no-caps")
+                with ui.row().classes("items-center gap-1 no-wrap"):
+                    save_icon = ui.icon("check_circle", size="16px")
+                    save_state = ui.label().classes("text-xs")
+                from . import ai_settings as _AIS
+                from . import points as _PT
+                ai_btn = ui.button("AI viết nháp" + (f" · {_PT.cost('ai_report')} credit" if _PT.member(user) else ""),
+                                   icon="auto_fix_high", on_click=lambda: ai_draft(ai_btn)).props(
+                    "unelevated no-caps dense color=purple-1 text-color=deep-purple-9")
+                ai_btn.tooltip("AI đọc số liệu của kỳ này (GSC, thứ hạng, trang / truy vấn tăng giảm) và viết nháp "
+                               "nhận xét" + (" và kế hoạch tháng sau" if month else "") + "; không tự lưu")
+                ai_btn.set_visibility(_AIS.enabled(site, "report_month" if month else "report_week"))
+                ai_meta = ui.label().classes("text-xs muted")
+            note.on_value_change(paint_state)
+            if plan is not None:
+                plan.on_value_change(paint_state)
+            paint_state()
+
+            # Bản nháp lịch AI tự viết (Quản trị › AI): chờ team duyệt, không tự vào ô nhận xét
+            from . import ai_auto as _AU
+            from . import ai_writer as _AW
+            with connect() as c:
+                auto = _AW.latest(c, site, "report_note", str(note_key(rep)))
+            if auto and auto.get("by") == _AU.BY and auto.get("note") and auto["note"] != (rep.note or ""):
+                when = datetime.fromisoformat(auto["at"]).astimezone() if auto.get("at") else None
+                with ui.row().classes("w-full items-center no-wrap gap-2 sr-auto-draft") as bar:
+                    ui.icon("auto_awesome", size="18px").style("color:#7C3AED")
+                    ui.label("AI đã tự viết nháp nhận xét" + (" và kế hoạch tháng sau" if month and auto.get("plan")
+                                                             else "")
+                             + (f" lúc {when:%H:%M %d/%m}" if when else "") + ". Xem rồi bấm Dùng bản nháp, "
+                             "sửa và Lưu.").classes("text-sm col")
+
+                    def use_draft():
+                        note.value = auto["note"]
+                        if plan is not None and auto.get("plan"):
+                            plan.value = auto["plan"]
+                        bar.set_visibility(False)
+                        ui.notify("Đã đưa bản nháp vào ô: đọc lại rồi bấm Lưu nhận xét", type="positive")
+                    ui.button("Xem trước", on_click=lambda: preview()).props("flat dense no-caps color=deep-purple-9")
+                    ui.button("Dùng bản nháp", icon="south", on_click=use_draft).props(
+                        "unelevated dense no-caps color=deep-purple-1 text-color=deep-purple-9")
+
+                def preview():
+                    with ui.dialog() as d, ui.card().style("max-width: 640px; border-radius: 14px"):
+                        ui.label("Bản nháp AI").classes("text-lg font-semibold")
+                        ui.label(auto["note"]).classes("text-sm").style("white-space: pre-line")
+                        if month and auto.get("plan"):
+                            ui.label("Kế hoạch tháng sau").classes("text-sm font-semibold q-mt-sm")
+                            ui.label(auto["plan"]).classes("text-sm").style("white-space: pre-line")
+                        with ui.row().classes("w-full justify-end gap-2"):
+                            ui.button("Đóng", on_click=d.close).props("flat no-caps")
+                            ui.button("Dùng bản nháp", on_click=lambda: (use_draft(), d.close())).props(
+                                "unelevated no-caps color=deep-purple-1 text-color=deep-purple-9")
+                    d.on("hide", d.delete)
+                    d.open()
     elif ed:  # tình trạng dữ liệu là việc nội bộ: người chỉ xem không cần
         health_strip(ui, cfg, connect, rep)
 
@@ -269,8 +403,7 @@ def build_overview_page(ui, cfg, connect, user: str, ctx: dict, mode: str = "ove
                 {"key": "aio", "label": "Lượt hiện trong AI", "color": T.BLUE, "icon": "lightbulb",
                  "source": "Câu trả lời AI của Google · Nguồn: Google Search Console", **aio_metric},
             ], wl, compare_labels=cl)
-            ui.label("Cột: lượt vào site từ trợ lý AI. Đường: phần lượt hiển thị Google nằm trong câu trả lời AI. "
-                     "Hai số đo riêng, không cộng với nhau.").classes("text-xs muted")
+            ui.label("Cột: khách từ AI. Đường: lượt hiện trong câu trả lời AI của Google.").classes("text-xs muted")
 
     @ui.refreshable
     def rank_block():
@@ -476,7 +609,8 @@ def work_section(ui, rep, unit: str) -> None:
     p, cnt = k["period"], k["counts"]
     pct = cnt[O.DONE] / k["total"] * 100 if k["total"] else 0
     with T.section(ui, "Công việc", "task_alt", f"OKR · hiện có {pct:.0f}% hạng mục đã hoàn thành"
-                   + (f" · {len(k['late'])} trễ hạn" if k["late"] else ""), href="/okr", link_text="Công việc & OKR"):
+                   + (f" · {len(k['late'])} trễ hạn" if k["late"] else "")
+                   + (f" · {len(k.get('waiting') or [])} đang chờ bên ngoài" if k.get("waiting") else ""), href="/okr", link_text="Công việc & OKR"):
         with ui.element("div").classes("w-full").style(
                 "display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px"):
             for title, items, icon, color in ((f"Hoàn thành trong {unit}", p["done"], "task_alt", T.GREEN),
@@ -613,8 +747,9 @@ def health_strip(ui, cfg, connect, rep) -> None:
 
 
 def rank_section(ui, rep, site) -> None:
-    with T.section(ui, f"Rank thực tế · {len(rep.ranks)} keyword", "leaderboard",
-                   "DataForSEO, mobile toàn VN · " + ("lần check cuối trong tháng so với cuối tháng trước"
+    # khách cũng xem màn này: không nêu nhà cung cấp dữ liệu
+    with T.section(ui, f"Thứ hạng thực tế · {len(rep.ranks)} từ khóa", "leaderboard",
+                   "Google mobile toàn VN · " + ("lần check cuối trong tháng so với cuối tháng trước"
                                                       if rep.kind == "month" else
                                                       "lần check mới nhất đến hết tuần kế tiếp"), href="/rank"):
         if not rep.ranks:
@@ -676,8 +811,7 @@ def month_sections(ui, rep, site) -> None:
                              fontWeight: 600}">{{ props.value }}</span>
             </q-td>""")
 
-    with T.section(ui, "Theo loại trang", "category", "Click tháng này so với tháng trước · cộng theo URL nên tổng "
-                                                     "khác tổng toàn site"):
+    with T.section(ui, "Theo loại trang", "category", "Click tháng này so với tháng trước"):
         tbl = ui.table(columns=[
             {"name": "type", "label": "Loại trang", "field": "type", "align": "left"},
             {"name": "clicks", "label": "Click", "field": "clicks", "align": "right"},
@@ -689,7 +823,7 @@ def month_sections(ui, rep, site) -> None:
         change_slot(tbl)
     with ui.row().classes("w-full gap-4 items-stretch"):
         with ui.element("div").style("flex: 1 1 460px; min-width: 0"):
-            with T.section(ui, "Top 10 URL của tháng", "star", "Toàn site, theo click"):
+            with T.section(ui, "Top 10 trang", "star", "Toàn site, theo click"):
                 tbl = ui.table(columns=[
                     {"name": "url", "label": "URL", "field": "url", "align": "left", "classes": "ellipsis",
                      "style": "max-width: 260px", "headerStyle": "max-width: 260px"},
@@ -700,7 +834,7 @@ def month_sections(ui, rep, site) -> None:
                 T.bar_slot(tbl, "clicks", max((r["clicks"] for r in rep.top_urls), default=1))
                 change_slot(tbl)
         with ui.element("div").style("flex: 1 1 460px; min-width: 0"):
-            with T.section(ui, "Top 10 từ khóa của tháng", "search", "Query theo click · GSC ẩn query hiếm"):
+            with T.section(ui, "Top 10 từ khóa", "search", "Query theo click · GSC ẩn query hiếm"):
                 tbl = ui.table(columns=[
                     {"name": "query", "label": "Query", "field": "query", "align": "left", "classes": "ellipsis",
                      "style": "max-width: 260px", "headerStyle": "max-width: 260px"},

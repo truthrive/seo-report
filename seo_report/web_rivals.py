@@ -11,18 +11,35 @@ from . import rank_overview as RO
 
 DASHES = ["solid", "dashed", "dotted"]  # đường của mình liền; đối thủ khác nhau cả kiểu nét, không chỉ màu
 
+# Tooltip biểu đồ GAP: ECharts chèn kết quả như HTML, nên tên đối thủ (Member đặt) phải thoát ký tự trước khi ghép.
+TIP_JS = ("p => { const esc = s => String(s).replace(/[&<>\"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "
+          "'\"': '&quot;', \"'\": '&#39;'})[c]); return esc(p.name) + ': ' + p.value.toLocaleString('vi-VN') + "
+          "' website trỏ về đối thủ mà chưa trỏ về mình'; }")
+
+
+def sort_js(i: int) -> str:
+    """Hàm sắp xếp cột nhãn. NiceGUI chạy thuộc tính ':sort' như JavaScript, nên chỉ dùng số thứ tự cột (int), tuyệt
+    đối không ghép tên nhãn do người dùng đặt."""
+    i = int(i)
+    return f"(a, b, ra, rb) => (ra['_{i}'] || 0) - (rb['_{i}'] || 0)"
+
 
 def _vn(iso: str | None) -> str:
     return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else ""
 
 
-def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
+TABS = [("tong-quan", "Tổng quan"), ("xu-huong", "Xu hướng"), ("tu-khoa", "So từ khóa"),
+        ("backlink", "Backlink"), ("danh-sach", "Danh sách đối thủ")]
+
+
+def build_rivals_panel(ui, cfg, connect, user, open_set, start_tab: str = "") -> None:
     from nicegui import background_tasks
 
     from . import ui_theme as T
-    from .access import can_edit
+    from .access import can_edit, is_client
     from .web_rank import _competitors_block, icon_btn
     ed = can_edit(user)
+    cl = is_client(user)  # khách hàng: xem kết quả so sánh, không cách gọi / gợi ý nội bộ / cột ý định
     site = cfg.site_url
     with connect() as c:
         end = K.latest_date(c, site)
@@ -46,12 +63,16 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-sm"):
                 with ui.element("span").classes("sr-bx-icon").style("background:#EEF2FB"):
                     ui.icon("groups", size="16px").style("color:#2a78d6").props('aria-hidden="true"')
-                ui.label(f"Đối thủ theo dõi · {n_comp}/{AO.MAX_COMPETITORS}").classes("sr-bx-title")
-                T.info_icon(ui, "Đối thủ theo dõi", (
-                    "Một danh sách cho cả dự án, dùng chung cho thứ hạng và trang AI Overview.",
-                    "Nhận đối thủ theo tên miền trong kết quả Google; cách gọi khác dùng để nhận tên trong câu trả "
-                    "lời AI Overview (số \"Được nhắc\").",
-                    "Rê chuột lên từng tên để xem cách gọi và tên miền."))
+                ui.label(f"Đối thủ · {n_comp}" if cl else
+                         f"Đối thủ theo dõi · {n_comp}/{AO.MAX_COMPETITORS}").classes("sr-bx-title")
+                if cl:
+                    T.info_icon(ui, "Đối thủ", ("Các website đối thủ được so sánh thứ hạng với website của bạn.",))
+                else:
+                    T.info_icon(ui, "Đối thủ theo dõi", (
+                        "Một danh sách cho cả dự án, dùng chung cho thứ hạng và trang AI Overview.",
+                        "Nhận đối thủ theo tên miền trong kết quả Google; cách gọi khác dùng để nhận tên trong câu "
+                        "trả lời AI Overview (số \"Được nhắc\").",
+                        "Rê chuột lên từng tên để xem cách gọi và tên miền."))
                 ui.space()
                 if ed and not full:
                     ui.button("Thêm đối thủ", icon="add", on_click=lambda: edit(None)).props(
@@ -74,10 +95,15 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                             icon_btn(ui, "edit", f"Sửa {b['name']}", lambda _, b=b: edit(b))
                             if not b["own"]:
                                 icon_btn(ui, "close", f"Bỏ theo dõi {b['name']}", lambda _, b=b: drop(b))
-                    chip.tooltip("Cách gọi: " + (", ".join(b["aliases"]) or "chưa thêm"
-                                                 + (" (AI Overview chỉ nhận ra tên miền, bấm ✏️ để thêm)" if ed else ""))
-                                 + " · Tên miền: " + (", ".join(b["domains"]) or "chưa có"))
-            if full:
+                    if cl:  # khách: chỉ tên miền, không cách gọi (thiết lập nội bộ cho AI Overview)
+                        if b["domains"]:
+                            chip.tooltip(", ".join(b["domains"]))
+                    else:
+                        chip.tooltip("Cách gọi: " + (", ".join(b["aliases"]) or "chưa thêm"
+                                                     + (" (AI Overview chỉ nhận ra tên miền, bấm ✏️ để thêm)"
+                                                        if ed else ""))
+                                     + " · Tên miền: " + (", ".join(b["domains"]) or "chưa có"))
+            if full and not cl:
                 ui.label(f"Đã đủ {AO.MAX_COMPETITORS} đối thủ: bỏ bớt một đối thủ để thêm mới.").classes(
                     "text-xs muted q-mt-sm")
             if ed and (sug or n_comp):
@@ -107,6 +133,9 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
     def changed():
         roster.refresh()
         overview.refresh()
+        trend_view.refresh()
+        matrix_tab.refresh()
+        backlink_view.refresh()
         background_tasks.create(load_logos())
 
     def transfer_data(con) -> tuple[list[dict], list[str]]:
@@ -125,8 +154,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             with ui.row().classes("w-full items-center no-wrap"):
                 ui.label("Chọn đối thủ theo dõi").classes("text-lg font-semibold col")
                 ui.button(icon="close", on_click=dlg.close).props('flat round dense aria-label="Đóng"')
-            ui.label(f"Đánh dấu website rồi bấm Thêm / Bỏ. Tối đa {AO.MAX_COMPETITORS} đối thủ; danh sách dùng chung cho "
-                     "Thứ hạng và AI Overview.").classes("text-sm muted")
+            ui.label(f"Đánh dấu website rồi bấm Thêm / Bỏ (tối đa {AO.MAX_COMPETITORS} đối thủ).").classes("text-sm muted")
 
             def apply(direction: str, move_keys: list, _target: list) -> None:
                 if direction == "right":
@@ -150,8 +178,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 with dialog_host, ui.dialog() as cd, ui.card().style("max-width: 440px; border-radius: 14px"):
                     ui.label(f"Bỏ theo dõi {len(ids)} đối thủ?").classes("text-lg font-semibold")
                     ui.label(", ".join(names)).classes("text-sm")
-                    ui.label("Thôi so sánh ở thứ hạng và AI Overview. Thêm lại lúc nào cũng được: tên và cách gọi đã "
-                             "sửa vẫn được giữ.").classes("text-sm muted")
+                    ui.label("Thôi so sánh với đối thủ này. Thêm lại lúc nào cũng được.").classes("text-sm muted")
                     with ui.row().classes("w-full justify-end gap-2"):
                         ui.button("Hủy", on_click=cd.close).props("flat no-caps")
 
@@ -235,16 +262,29 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 ui.button("Lưu", on_click=save).props("unelevated no-caps color=primary")
         d.open()
 
-    roster()
-
     # ------------------------------------------------------------------ chọn phạm vi (đặt trong khung đối thủ)
     def scope_toggle():
         if len(sets_) < 2:
             return
         ui.label("Tính trên").classes("text-sm muted")
         ui.toggle({0: "Mọi bộ", **{x["id"]: x["name"] for x in sets_}}, value=state["set"],
-                  on_change=lambda e: (state.update(set=e.value, mx_set=e.value), overview.refresh())).props(
+                  on_change=lambda e: set_scope(e.value)).props(
             "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8").classes("sr-seg")
+
+    def set_scope(v) -> None:
+        """Phạm vi bộ từ khóa dùng chung cho các tab: đổi ở Tổng quan thì Xu hướng, So từ khóa tính lại theo."""
+        state.update(set=v, mx_set=v)
+        overview.refresh()
+        trend_view.refresh()
+        matrix_view.refresh()
+
+    def no_rivals_hint() -> None:
+        T.empty_state(ui, "groups", "Chưa có đối thủ để so sánh",
+                      "Thêm đối thủ ở tab “Danh sách đối thủ”." if ed else
+                      "Phần so sánh sẽ hiện ở đây khi có đối thủ.")
+
+    def has_rivals(comp: dict) -> bool:
+        return any(not r["brand"]["own"] for r in comp["rows"])
 
     # ------------------------------------------------------------------ tổng quan, xu hướng, so sánh
     @ui.refreshable
@@ -252,15 +292,32 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
         sid = state["set"] or None
         with connect() as c:
             comp = RO.competitors(c, cfg, end, set_id=sid)
-            trend = RO.visibility_trend(c, cfg, end, set_id=sid)
             cards = RO.set_rows(c, site, end, cfg.rank)
         _competitors_block(ui, comp, cards, lambda i: open_set(i), header_extra=scope_toggle,
-                           empty_hint="Thêm tối đa 10 đối thủ ở phần bên trên." if ed else
+                           empty_hint="Thêm tối đa 10 đối thủ ở tab “Danh sách đối thủ”." if ed else
                            "Danh sách đối thủ sẽ hiện ở đây khi được thêm.")
-        if len([r for r in comp["rows"] if not r["brand"]["own"]]) == 0:
+        if not has_rivals(comp):
             return
         sov_card(sid)
+
+    @ui.refreshable
+    def trend_view():
+        sid = state["set"] or None
+        with connect() as c:
+            comp = RO.competitors(c, cfg, end, set_id=sid)
+            trend = RO.visibility_trend(c, cfg, end, set_id=sid) if has_rivals(comp) else []
+        if not has_rivals(comp):
+            no_rivals_hint()
+            return
         trend_card(trend, comp)
+
+    @ui.refreshable
+    def matrix_tab():
+        with connect() as c:
+            n_comp = len([b for b in AO.brands(c, cfg) if not b["own"]])
+        if not n_comp:
+            no_rivals_hint()
+            return
         matrix_view()
 
     def sov_card(sid) -> None:
@@ -281,8 +338,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 T.info_icon(ui, "Thị phần lượt click ước tính", (
                     "Phần lượt click (từ kết quả tự nhiên trang 1) mỗi thương hiệu nhận được trên bộ từ khóa.",
                     "Khác độ hiển thị ở trên: từ khóa nhiều người tìm nặng ký hơn từ khóa ít người tìm.",
-                    "Click ước tính = volume tháng (Google Ads) × tỷ lệ nhấp theo vị trí ở lần check gần nhất. "
-                    "Giá trị = click × giá thầu Google Ads của từ khóa."))
+                    "Click ước tính = lượt tìm mỗi tháng × tỷ lệ nhấp theo vị trí ở lần check gần nhất."))
             ui.label(f"Tính trên {sov['keywords']}/{sov['total']} từ khóa có volume · tổng khoảng "
                      f"{sov['market']:,} click trang 1 mỗi tháng".replace(",", ".")
                      + (f" · {sov['no_volume']} từ khóa gần như không ai tìm nên không tính" if sov["no_volume"]
@@ -297,7 +353,6 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 {"name": "share", "label": "Thị phần click", "field": "share", "align": "left"},
                 {"name": "clicks", "label": "Click ước tính / tháng", "field": "clicks", "align": "right",
                  ":format": "v => v.toLocaleString('vi-VN')"},
-                {"name": "value", "label": "Giá trị / tháng", "field": "value", "align": "right"},
                 {"name": "kws", "label": "Số từ khóa có mặt", "field": "kws", "align": "right"},
             ], rows=rows, row_key="id").props("flat dense").classes("w-full sr-bl-table")
             tb.add_slot("body-cell-name", """
@@ -311,8 +366,6 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                     :class="props.row.chg > 0 ? 'up' : 'down'">{{ props.row.chg > 0 ? '▲' : '▼' }}{{
                     Math.abs(props.row.chg).toLocaleString('vi-VN') }}<q-tooltip>So với lần check trước, cùng tập từ
                     khóa (điểm phần trăm)</q-tooltip></span></div></q-td>""" % mx)
-            tb.add_slot("body-cell-value", """
-                <q-td :props="props"><span class="num">{{ props.row.value_t }}</span></q-td>""")
             most = max((p["n"] for p in trend), default=0)
             trend = [p for p in trend if p["n"] * 2 >= most]
             if len(trend) >= 2:
@@ -333,7 +386,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                                for i, b in enumerate(brands)]}).classes("w-full q-mt-sm").style("height: 260px")
 
     def trend_card(trend: list[dict], comp: dict):
-        with ui.element("div").classes("sr-card q-pa-md w-full q-mt-md"):
+        with ui.element("div").classes("sr-card q-pa-md w-full"):
             with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-sm"):
                 with ui.element("span").classes("sr-bx-icon").style("background:#EEF6EF"):
                     ui.icon("show_chart", size="16px").style("color:#1E7C31").props('aria-hidden="true"')
@@ -342,7 +395,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             most = max((p["n"] for p in trend), default=0)
             trend = [p for p in trend if p["n"] * 2 >= most]
             if len(trend) < 2:
-                ui.label("Biểu đồ hiện khi có từ 2 lần check đủ bộ từ khóa có kết quả Google.").classes(
+                ui.label("Biểu đồ hiện từ lần check thứ hai.").classes(
                     "text-sm muted")
                 return
             brands = sorted((r["brand"] for r in comp["rows"]), key=lambda b: not b["own"])  # dự án trước
@@ -360,13 +413,15 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                 "tooltip": {"trigger": "axis"},
                 "legend": {"type": "scroll", "bottom": 0},
                 "grid": {"left": 40, "right": 16, "top": 16, "bottom": 48},
-                "xAxis": {"type": "category", "data": [f"{_vn(p['date'])[:5]} ({p['n']} từ khóa)" for p in trend],
+                "xAxis": {"type": "category", "data": [_vn(p["date"])[:5] if cl else
+                                                       f"{_vn(p['date'])[:5]} ({p['n']} từ khóa)" for p in trend],
                           "axisLabel": {"color": "#6B6A5E"}},
                 "yAxis": {"type": "value", "axisLabel": {"formatter": "{value}%", "color": "#6B6A5E"},
                           "splitLine": {"lineStyle": {"color": "#EEECE4"}}},
                 "series": series}).classes("w-full").style("height: 300px")
-            ui.label("Mỗi điểm chỉ tính các từ khóa có kết quả Google ở lần check đó (số trong ngoặc).").classes(
-                "text-xs muted")
+            if not cl:
+                ui.label("Số trong ngoặc: số từ khóa có kết quả ở lần check đó.").classes(
+                    "text-xs muted")
 
     @ui.refreshable
     def matrix_view():
@@ -378,7 +433,7 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
         brands = matrix["brands"]
         own_name = next((b["name"] for b in brands if b["own"]), "dự án")
         rows = [r for r in matrix["rows"] if r["ahead"] or not state["only_ahead"]]
-        with ui.element("div").classes("sr-card q-pa-md w-full q-mt-md"):
+        with ui.element("div").classes("sr-card q-pa-md w-full"):
             with ui.row().classes("w-full items-center gap-2 q-mb-sm"):
                 with ui.element("span").classes("sr-bx-icon").style("background:#FBF1DE"):
                     ui.icon("table_rows", size="16px").style("color:#B7791F").props('aria-hidden="true"')
@@ -404,6 +459,8 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
             cols = [{"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True},
                     {"name": "volume", "label": "Volume", "field": "volume", "align": "right", "sortable": True},
                     {"name": "intent", "label": "Ý định", "field": "intent", "align": "center", "sortable": True}]
+            if cl:  # khách: bảng gọn — từ khóa, volume, vị trí từng thương hiệu
+                cols = [c_ for c_ in cols if c_["name"] != "intent"]
             for b in brands:
                 cols.append({"name": f"b{b['id']}", "label": b["name"], "field": f"b{b['id']}", "align": "center",
                              "sortable": True, "headerClasses": "sr-mx-head"})
@@ -461,13 +518,131 @@ def build_rivals_panel(ui, cfg, connect, user, open_set) -> None:
                   {{ props.value }}</span>
               </q-td>""")
             t.on("rowClick", lambda e: open_set(int(e.args[1]["set_id"])))
-            ui.label("Số = vị trí trên Google ở lần check gần nhất; – = không có trong độ sâu đã check. ✦ = từ khóa có "
-                     "AI Overview (tím đậm: website dự án được trích). Volume: lượt tìm mỗi tháng (Google Ads). Bấm một "
-                     "dòng để mở bộ chứa từ khóa. Ý định tìm kiếm: I thông tin · N tìm đúng thương hiệu / website · "
-                     "C cân nhắc mua · T sẵn sàng mua.").classes("text-xs muted")
+            ui.label("Số = vị trí trên Google · ✦ = có AI Overview. Bấm một dòng để mở bộ từ khóa.").classes("text-xs muted")
 
     def export_xlsx() -> bytes:
         with connect() as c:
             return RO.competitor_workbook(c, cfg, end)
 
-    overview()
+    # ------------------------------------------------------------------ khoảng trống backlink (từ lần chạy GAP)
+    def backlink_card() -> None:
+        """Mỗi đối thủ: số website trỏ về họ (link dofollow) mà chưa trỏ về mình. Lấy từ lần chạy Backlink GAP gần
+        nhất, không gọi API. Khách xem số; team có nút sang danh sách website nên xin link / chạy lại."""
+        from . import backlink_gap as BG
+        from .access import is_client
+        team = not is_client(user)
+        with connect() as c:
+            g = BG.by_rival(c, cfg)
+            n_rivals = len(BG.rivals(c, cfg))
+        if not n_rivals:  # nằm trong tab riêng: vẫn hiện khung với lời nhắc, không để tab trống
+            g = None
+        with ui.element("div").classes("sr-card q-pa-md w-full"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap q-mb-xs"):
+                with ui.element("span").classes("sr-bx-icon").style("background:#EEF6EF"):
+                    ui.icon("add_link", size="16px").style("color:#1E7C31").props('aria-hidden="true"')
+                ui.label("Khoảng trống backlink").classes("sr-bx-title col")
+                if team:
+                    ui.button("Xem website nên xin link" if g else "Chạy Backlink GAP", icon="arrow_forward",
+                              on_click=lambda: ui.navigate.to("/backlink?tab=gap")).props(
+                        "flat dense no-caps color=primary")
+            if not g or not g["rows"]:
+                ui.label("Chưa có số backlink của đối thủ." + (
+                    " Chạy Backlink GAP (tốn phí, có ghi giá trước khi chạy) để so sánh." if team else "")).classes(
+                    "text-sm muted")
+                return
+            ui.label(f"Số website trỏ về đối thủ (link dofollow) mà chưa trỏ về website của bạn · cập nhật "
+                     f"{_vn(g['fetched_at'])}").classes("text-xs muted")
+            rows = g["rows"][::-1]  # biểu đồ thanh ngang: nhiều nhất nằm trên
+            ui.echart({
+                "animation": False,
+                "grid": {"left": 8, "right": 48, "top": 8, "bottom": 8, "containLabel": True},
+                # tooltip dạng chuỗi được ECharts chèn như HTML: tên đối thủ do Member đặt nên phải thoát ký tự
+                "tooltip": {"trigger": "item", ":formatter": TIP_JS},
+                "xAxis": {"type": "value", "show": False},
+                "yAxis": {"type": "category", "data": [r["name"] for r in rows], "axisTick": {"show": False},
+                          "axisLine": {"show": False}, "axisLabel": {"color": "#4A4A40", "fontSize": 12}},
+                "series": [{"type": "bar", "data": [r["total"] for r in rows], "barMaxWidth": 16,
+                            "itemStyle": {"color": "#1E7C31", "borderRadius": [0, 4, 4, 0]},
+                            "label": {"show": True, "position": "right", "color": "#4A4A40", "fontSize": 12,
+                                      ":formatter": "p => p.value.toLocaleString('vi-VN')"}}],
+            }).classes("w-full").style(f"height:{40 + 30 * len(rows)}px")
+            if team:  # nhãn website (Textlink, Báo PR…) là phân loại nội bộ của team
+                label_split()
+            notes = []
+            if g["shared"] and team:
+                notes.append(f"{g['shared']:,} website uy tín trỏ về từ 2 đối thủ trở lên (không tính website spam): dễ "
+                             "xin link nhất".replace(",", "."))
+            if g["missing"]:
+                notes.append("Chưa có số: " + ", ".join(g["missing"]) + " (thêm sau lần chạy gần nhất)")
+            for n_ in notes:
+                ui.label(n_).classes("text-xs muted")
+
+    def label_split() -> None:
+        """Website trỏ về từng đối thủ theo nhãn đã gắn (Textlink, Báo PR…): đối thủ đang dựa vào loại link nào."""
+        from . import backlink_gap as BG
+        from . import site_labels as SL
+        try:
+            with SL.connect() as c:
+                table, defs = SL.all_labels(c), SL.defs(c)
+        except Exception:  # noqa: BLE001
+            return
+        with connect() as c:
+            pr = BG.pairs(c, cfg.site_url)
+        split = SL.by_rival(pr, table)
+        if not split:
+            return
+        used = [d for d in defs if any(d["name"] in v for v in split.values())]
+        rows = []
+        for rv in sorted(split, key=lambda r: -sum(x[0] for x in split[r].values())):
+            row = {"rival": rv, "total": len(pr.get(rv) or {})}
+            for i, d in enumerate(used):
+                w_, l_ = split[rv].get(d["name"], [0, 0])
+                row[d["name"]] = ("–" if not w_ else f"{w_} website" + (f" · {l_:,} link".replace(",", ".")
+                                                                        if l_ else ""))
+                row[f"_{i}"] = w_  # khóa sắp xếp theo số thứ tự cột, không dùng tên nhãn
+            rows.append(row)
+        ui.label("Theo nhãn website").classes("sr-rai-h q-mt-md")
+        ui.label("Số website đã gắn nhãn (ở bảng Backlink) trong các website trỏ về từng đối thủ mà chưa trỏ về mình. "
+                 "Một website nhiều nhãn được tính ở mỗi nhãn.").classes("text-xs muted")
+        cols = [{"name": "rival", "label": "Đối thủ", "field": "rival", "align": "left"},
+                {"name": "total", "label": "Website GAP", "field": "total", "align": "right", "sortable": True}]
+        cols += [{"name": d["name"], "label": d["name"], "field": d["name"], "align": "right", "sortable": True,
+                  ":sort": sort_js(i)} for i, d in enumerate(used)]
+        with ui.element("div").classes("w-full").style("overflow-x:auto"):
+            ui.table(columns=cols, rows=rows, row_key="rival").props("flat dense").classes("w-full sr-bl-table")
+
+    @ui.refreshable
+    def backlink_view() -> None:
+        with connect() as c:
+            n_comp = len([b for b in AO.brands(c, cfg) if not b["own"]])
+        if not n_comp:
+            no_rivals_hint()
+            return
+        backlink_card()
+
+    # ------------------------------------------------------------------ các tab
+    def pick(v: str) -> None:
+        if v not in dict(TABS):
+            return
+        state["tab"] = v
+        if state.get("panels") is not None:
+            state["panels"].set_value(v)
+        ui.run_javascript(f"history.replaceState(null, '', '/doi-thu' + ('{v}' === '{TABS[0][0]}' ? '' : '?tab={v}'))")
+
+    state["tab"] = start_tab if start_tab in dict(TABS) else TABS[0][0]
+    with ui.tabs(value=state["tab"], on_change=lambda e: pick(e.value)).props(
+            "align=left no-caps dense mobile-arrows outside-arrows").classes("w-full sr-tabs sr-bl-tabs"):
+        for k, label in TABS:
+            ui.tab(k, label)
+    with ui.tab_panels(value=state["tab"]).classes("w-full").props("animated=false") as panels:
+        with ui.tab_panel("tong-quan").classes("q-px-none"):
+            overview()
+        with ui.tab_panel("xu-huong").classes("q-px-none"):
+            trend_view()
+        with ui.tab_panel("tu-khoa").classes("q-px-none"):
+            matrix_tab()
+        with ui.tab_panel("backlink").classes("q-px-none"):
+            backlink_view()
+        with ui.tab_panel("danh-sach").classes("q-px-none"):
+            roster()
+    state["panels"] = panels

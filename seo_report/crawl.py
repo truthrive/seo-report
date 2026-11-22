@@ -1,14 +1,16 @@
 """Mở từng trang chưa phân loại được bằng quy tắc và đọc schema (JSON-LD) để biết loại trang."""
-import gzip
 import re
 import sqlite3
 import time
 from datetime import date, timedelta
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
+from . import safe_fetch as SF
 from . import urls as U
+
+MAX_PAGE_BYTES = 5_000_000
 
 # Phải xin bản nén như trình duyệt: CDN của site chỉ lưu sẵn bản nén. Không xin nén thì server phải dựng
 # lại trang, có trang mất hơn 30 giây.
@@ -36,13 +38,11 @@ def type_from_html(html: str) -> tuple[str, str]:
 def detect(url: str, timeout: int = 20) -> tuple[str | None, str]:
     """Trả về (loại, ghi chú); loại None nghĩa là lỗi mạng, để lần sau thử lại."""
     try:
-        resp = urlopen(Request(url, headers=HEADERS), timeout=timeout)
+        resp = SF.OPEN.open(Request(url, headers=HEADERS), timeout=timeout)  # chỉ tới địa chỉ công khai
         final = U.normalize(resp.geturl())
         if final != url:
             return U.LEGACY, f"Chuyển hướng tới {final}"
-        body = resp.read()
-        if resp.headers.get("Content-Encoding") == "gzip":
-            body = gzip.decompress(body)
+        body = SF.read_body(resp, MAX_PAGE_BYTES)
         html = body.decode("utf-8", "ignore")
     except HTTPError as e:
         return U.LEGACY, f"HTTP {e.code}"

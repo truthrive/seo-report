@@ -4,6 +4,7 @@ import io
 from datetime import date, datetime
 from urllib.parse import urlparse
 
+from . import points as PT
 from . import access as A
 from . import cwv as C
 from . import cwv_audit as CA
@@ -21,18 +22,18 @@ def _score_tone(s) -> str:
 
 
 TABS = (("overview", "Tổng quan"), ("field", "Người dùng thật"), ("pages", "Từng trang"))
+CLIENT_TABS = ("overview",)  # khách hàng: chỉ Tổng quan (điểm + 3 chỉ số), không bảng từng trang / việc cần sửa
 
 
 def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
     from nicegui import background_tasks, run
     ed = A.can_edit(user)
     cl = A.is_client(user)  # khách hàng: số tốc độ, không danh sách việc cần sửa / nên sửa của team
-    right = T.page_header(ui, "speed", "Tốc độ & Core Web Vitals",
-                          "Số người dùng Chrome thật (Google dùng để xếp hạng) và điểm PageSpeed của các trang quan "
-                          "trọng nhất. Tự kiểm tra mỗi tuần.")
+    right = T.page_header(ui, "speed", "Tốc độ trang & Core Web Vitals",
+                          "Website nhanh hay chậm với người dùng thật" + ("." if cl else ", trang nào cần sửa."))
     right.classes("no-wrap")  # nút Kiểm tra ngay + Xuất cùng một hàng
     state = {"form": "PHONE", "metric": "lcp", "running": False, "filter": None,
-             "tab": start if start in dict(TABS) else "overview"}
+             "tab": start if start in dict(TABS) and (not cl or start in CLIENT_TABS) else "overview"}
     has_key = bool(C.load_key(cfg))
 
     async def run_now(btn) -> None:
@@ -41,18 +42,29 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         from contextlib import closing
 
         from . import db
+        _pt = PT.take(ui, user, cfg, "pagespeed")
+        if _pt is False:
+            return
         state["running"] = True
         btn.props("loading")
-        note = ui.notification("Đang kiểm tra tốc độ các trang (vài phút)…", spinner=True, timeout=None,
+        note = ui.notification("Đang kiểm tra tốc độ các trang (khoảng 1 phút)…", spinner=True, timeout=None,
                                type="ongoing", position="bottom-right")
+        prog = {"done": 0, "total": 0}
+
+        def show():
+            if prog["total"]:
+                note.message = f"Đang kiểm tra tốc độ: xong {prog['done']}/{prog['total']} trang…"
+        poll = ui.timer(2, show)
 
         def work():
             logs: list[str] = []
             with closing(db.connect(cfg.db_path)) as c:
-                r = C.refresh(c, cfg, force=True, log=logs.append)
+                r = C.refresh(c, cfg, force=True, log=logs.append,
+                              progress=lambda d, t: prog.update(done=d, total=t))
             return r, logs
         try:
             r, logs = await run.io_bound(work)
+            poll.cancel()
             note.dismiss()
             if r is None:
                 ui.notify(logs[-1] if logs else "Chưa kiểm tra được", type="warning", position="bottom-right")
@@ -60,6 +72,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                 ui.notify(f"Đã kiểm tra {r['pages']} trang" + (f" ({r['errors']} lỗi)" if r["errors"] else ""),
                           type="warning" if r["errors"] else "positive", position="bottom-right", classes="sr-toast")
         except Exception as e:  # noqa: BLE001
+            poll.cancel()
             note.dismiss()
             ui.notify("Không kiểm tra được", caption=str(e)[:300], type="negative", position="bottom-right",
                       timeout=0, close_button="Đóng")
@@ -72,14 +85,14 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
             b = ui.button("Kiểm tra ngay", icon="refresh").props("unelevated no-caps color=primary").style(
                 "white-space:nowrap")
             b.on_click(lambda _, b=b: background_tasks.create(run_now(b)))
-            b.tooltip("Lấy lại số CrUX và chạy PageSpeed cho các trang quan trọng (miễn phí, mất vài phút)")
+            b.tooltip("Đo lại tốc độ các trang quan trọng (miễn phí)")
 
     @ui.refreshable
     def body():
         if not has_key:
             T.empty_state(ui, "key", "Chưa có Google API key",
-                          "Chủ tool vào Cài đặt tích hợp → Google API key (Core Web Vitals) để thêm key miễn phí."
-                          if ed else "Số tốc độ sẽ có sau khi tool được cấu hình.")
+                          "Owner thêm Google API key ở Cài đặt tích hợp (miễn phí)."
+                          if ed else "Đội SEO đang chuẩn bị số liệu này.")
             return
         with connect() as c:
             series = C.origin_series(c, state["form"])
@@ -94,6 +107,9 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         ui.label(f"Kiểm tra lúc {datetime.fromisoformat(last).astimezone():%H:%M %d/%m/%Y} · tự kiểm tra lại mỗi tuần") \
             .classes("text-xs muted q-mb-xs")
         checks = [] if cl else CA.audit(phone, desktop, pages)
+        if cl:  # khách hàng: chỉ phần Tổng quan, không thanh tab
+            overview_tab(CA.score(phone, desktop, pages), phone, checks)
+            return
         site_checks = [c_ for c_ in checks if not c_["pages"]]   # cả website: tab Người dùng thật
         page_checks = [c_ for c_ in checks if c_["pages"]]       # theo trang: tab Từng trang (bấm để lọc)
         badge = {"field": sum(1 for c_ in site_checks if c_["level"] == "high"),
@@ -143,8 +159,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                         ui.label(f"{int(CA.WEIGHTS[k] * 100)}%").classes("text-xs muted")
                         ui.label(str(v) if v is not None else "chưa có").classes("num text-sm font-semibold").style(
                             "min-width:52px; text-align:right")
-                ui.label("Chỉ số người dùng thật: đạt “Tốt” = 100, đúng ngưỡng “Kém” = 50. Phần chưa có số thì không "
-                         "tính.").classes("text-xs muted q-mt-xs")
+                ui.label("100 = tốt, 50 = kém.").classes("text-xs muted q-mt-xs")
             todo = [c_ for c_ in checks if c_["level"] in ("high", "medium")]
             if cl:  # khách hàng: thay "Việc cần làm" bằng 3 chỉ số Core Web Vitals hiện tại trên điện thoại
                 with T.section(ui, "Core Web Vitals trên điện thoại", "smartphone", "Người dùng Chrome thật, 28 ngày"):
@@ -213,11 +228,11 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
         state["tab"] = "pages"
         body.refresh()
         if state["filter"]:
-            ui.run_javascript("document.getElementById('cwv-pages')?.scrollIntoView({behavior:'smooth', block:'start'})")
+            T.scroll_to(ui, "cwv-pages", 150)  # đợi trang vẽ lại xong
 
     def site_block(series) -> None:
         with T.section(ui, "Cả website · người dùng thật", "groups",
-                       "Chrome UX Report: 75% lượt truy cập nhanh hơn số này, tính trên 28 ngày, cập nhật hằng tuần"):
+                       "Tốc độ người dùng thật cảm nhận (28 ngày gần nhất)."):
             with ui.row().classes("items-center gap-2"):
                 t_ = ui.toggle({"PHONE": "Điện thoại", "DESKTOP": "Máy tính"}, value=state["form"],
                                on_change=lambda e: (state.update(form=e.value), body.refresh())).props(
@@ -225,8 +240,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                     "sr-seg")
                 t_.props["aria-label"] = "Thiết bị"
             if not series:
-                ui.label("Google chưa có số người dùng thật cho website này trên thiết bị này (cần đủ lượt truy cập "
-                         "từ Chrome). Xem điểm PageSpeed ở tab Từng trang.").classes("text-sm muted q-py-sm")
+                ui.label("Google chưa có số người dùng thật trên thiết bị này. Xem điểm ở tab Từng trang.").classes("text-sm muted q-py-sm")
                 return
             now = series[-1]
             old = series[-5] if len(series) >= 5 else series[0]
@@ -345,8 +359,7 @@ def build_cwv_page(ui, cfg, connect, user, start: str = "") -> None:
                 </q-tr>""")
             by_url = {p["url"]: p for p in pages}
             tb.on("pick", lambda e: detail(by_url[e.args["url"]]))
-            ui.label("Điểm và LCP / CLS / TBT là số đo thử của Google (Lighthouse, mạng điện thoại chậm); “Người dùng "
-                     "thật” là số Chrome của chính trang đó nếu đủ lượt truy cập. TBT gần với INP: càng thấp càng tốt.") \
+            ui.label("Điểm do Google đo thử trên điện thoại. \"Người dùng thật\" là số từ Chrome.") \
                 .classes("text-xs muted")
 
     def detail(p: dict) -> None:

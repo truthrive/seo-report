@@ -7,6 +7,7 @@ import calendar
 from contextlib import closing
 from datetime import date
 
+from . import access as A
 from . import db
 from . import keywords as K
 from . import live as LIVE
@@ -73,7 +74,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
     from nicegui import app, run
 
     T.page_header(ui, "account_balance_wallet", "Ngân sách & chi phí",
-                  "Chi phí DataForSEO (check rank, volume keyword, backlink, ý định từ khóa) của từng website, tính theo tháng dương lịch.",
+                  "Chi phí dữ liệu của từng website trong tháng.",
                   eyebrow="Quản trị", tone="grey")
     today = date.today()
     months = R.last_months(today, 6)
@@ -98,8 +99,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                        (f"Có thể tiết kiệm khoảng {_usd(total)} USD/tháng mà không mất thông tin" if found else
                         "Chưa có gợi ý") + " · chỉ xét bộ team tạo đang check hằng tuần (bộ Cam kết giữ theo cam kết)"):
             if not found:
-                ui.label("Chưa có từ khóa nào nên check thưa hơn: cần ít nhất 4 lần check để biết từ khóa đứng yên, "
-                         "hoặc các bộ đang tạm dừng (không tốn tiền).").classes("text-sm muted")
+                ui.label("Bộ từ khóa mới nên check thưa hơn, hoặc đang có bộ tạm dừng.").classes("text-sm muted")
                 return
             for p, cfg, st in found:
                 items = st["items"]
@@ -145,6 +145,101 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         ui.button("Chuyển sang check hằng tháng", icon="event_repeat", on_click=apply).props(
                             "unelevated no-caps")
 
+    def points_usage() -> None:
+        """Credit tháng này: Member (có hạn mức) và Owner / Admin (không giới hạn, chỉ ghi lại), tách theo tác vụ."""
+        from . import points as PT
+        with app_connect() as c:
+            rows = PT.usage(c)
+            for r in rows:
+                r["bal"] = PT.balance(c, r["email"]) if r["member"] else None
+        with T.section(ui, "Credit tác vụ tháng này", "toll",
+                       f"Member có hạn mức credit mỗi tháng (mặc định {PT.DEFAULT_MONTHLY:,}, đặt riêng ở Phân quyền); "
+                       "mọi tác vụ bấm tay trừ credit, việc chạy theo lịch không trừ. 1 credit ≈ 0,001 USD. Owner / "
+                       "Admin không giới hạn.".replace(",", ".", 1)):
+            if not rows:
+                ui.label("Tháng này chưa ai dùng credit.").classes("text-sm muted")
+                return
+            names = {k: v[0] for k, v in PT.COSTS.items()}
+            data = [{"id": i, "email": r["email"], "group": "Member" if r["member"] else "Owner / Admin",
+                     "points": r["points"], "limit": r["bal"]["limit"] if r["bal"] else None,
+                     "left": r["bal"]["left"] if r["bal"] else None,
+                     "detail": " · ".join(f"{names.get(a, a)} {p:,}".replace(",", ".")
+                                          for a, p in sorted(r["by_action"].items(), key=lambda x: -x[1]))}
+                    for i, r in enumerate(rows)]
+            num = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
+            ui.table(columns=[
+                {"name": "email", "label": "Người dùng", "field": "email", "align": "left"},
+                {"name": "group", "label": "Nhóm", "field": "group", "align": "left"},
+                {"name": "points", "label": "Đã dùng", "field": "points", "align": "right", ":format": num,
+                 "sortable": True},
+                {"name": "limit", "label": "Hạn mức", "field": "limit", "align": "right", ":format": num},
+                {"name": "left", "label": "Còn lại", "field": "left", "align": "right", ":format": num},
+                {"name": "detail", "label": "Theo tác vụ", "field": "detail", "align": "left"},
+            ], rows=data, row_key="id").props("flat dense").classes("w-full sr-bl-table")
+
+    def ai_cost() -> None:
+        """Token AI tháng này theo tác vụ + tiền ước tính theo bảng giá cổng (không hiện tên model: chỉ ở Quản trị › AI)."""
+        from nicegui import run
+
+        from . import ai_settings as AIS
+        from . import ai_usage as AU
+        from . import integrations as I
+        month = date.today().strftime("%Y-%m")
+        with app_connect() as c:
+            rows = AU.by_task(c, month)
+        with T.section(ui, "Chi phí AI tháng này", "auto_awesome",
+                       "Số token mỗi tác vụ AI dùng (tính cả lần gọi lại và model dự phòng). Tiền là ước tính theo bảng "
+                       "giá cổng ghi kèm model, coi như giá cho 1 triệu token: đối chiếu với trang hóa đơn của cổng."):
+            if not rows:
+                ui.label("Tháng này chưa có lần gọi AI nào được ghi (bắt đầu ghi từ 12/11/2026).").classes(
+                    "text-sm muted")
+                return
+            box = ui.column().classes("w-full gap-1")
+
+            async def fill():
+                keys = {k for r in rows for k, _ in r["models"]}
+
+                def prices():
+                    out = {}
+                    for k in keys:
+                        for m in I.model_catalog(base, k):
+                            if m.get("pricing"):
+                                out[(k, m["id"])] = m["pricing"]
+                    return out
+                try:
+                    pr = await run.io_bound(prices)
+                except Exception:  # noqa: BLE001
+                    pr = {}
+                names = {k: v[0] for k, v in AIS.TASKS.items()}
+                data, total, unit = [], 0.0, ""
+                for i, r in enumerate(rows):
+                    money, u = AU.estimate(r["models"], pr)
+                    unit = unit or u
+                    total += money or 0
+                    data.append({"id": i, "task": names.get(r["task"], r["task"] or "Khác"), "uses": r["uses"],
+                                 "calls": r["calls"], "in": r["in_tok"], "out": r["out_tok"],
+                                 "money": None if money is None else round(money)})
+                num = "v => v === null || v === undefined ? '–' : v.toLocaleString('vi-VN')"
+                box.clear()
+                with box:
+                    ui.label(f"Tổng ước tính: {round(total):,} {unit}".replace(",", ".").strip() if pr else
+                             "Chưa lấy được bảng giá của cổng: chỉ hiện số token.").classes("text-sm")
+                    ui.table(columns=[
+                        {"name": "task", "label": "Tác vụ", "field": "task", "align": "left"},
+                        {"name": "uses", "label": "Lần dùng", "field": "uses", "align": "right", ":format": num,
+                         "sortable": True},
+                        {"name": "calls", "label": "Lượt gọi", "field": "calls", "align": "right", ":format": num},
+                        {"name": "in", "label": "Token vào", "field": "in", "align": "right", ":format": num,
+                         "sortable": True},
+                        {"name": "out", "label": "Token ra", "field": "out", "align": "right", ":format": num,
+                         "sortable": True},
+                        {"name": "money", "label": f"Ước tính ({unit})" if unit else "Ước tính", "field": "money",
+                         "align": "right", ":format": num, "sortable": True},
+                    ], rows=data, row_key="id").props("flat dense").classes("w-full sr-bl-table")
+            with box:
+                ui.label("Đang tính…").classes("text-sm muted")
+            ui.timer(0.1, fill, once=True)
+
     def ads_quota() -> None:
         """Hạn mức Google Ads API: lượt đã dùng hôm nay / mức trần tool tự dừng / hạn mức Basic; 14 ngày theo loại."""
         from . import google_ads as GA
@@ -166,18 +261,20 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                       hint=f"còn {max(0, limit - today_n):,} lượt hôm nay".replace(",", "."), tone="blue")
                 T.kpi(ui, "verified", "Hạn mức Google (Basic)", f"{GA.DAILY_LIMIT:,} lượt/ngày".replace(",", "."),
                       hint="không tốn tiền", tone="lime")
-            with ui.row().classes("items-end gap-2 q-mt-sm"):
+            with ui.row().classes("items-end gap-2 q-mt-sm") as cap_row:
                 box = ui.number("Mức trần mỗi ngày", value=limit, min=0, max=GA.DAILY_LIMIT, step=500,
                                 format="%.0f").props("outlined dense").classes("w-48")
 
                 def save_cap():
+                    if not A.is_owner(user):
+                        return
                     n = GA.set_cap(int(box.value or 0))
                     ui.notify(f"Tool sẽ dừng gọi Google Ads khi đạt {n:,} lượt/ngày".replace(",", "."),
                               type="positive")
                     body.refresh()
                 ui.button("Lưu", on_click=save_cap).props("unelevated no-caps")
-                ui.label("Chạm mức trần: research tạm khóa, lấy volume để hôm sau (không chuyển sang DataForSEO "
-                         "tốn tiền).").classes("text-xs muted col")
+                ui.label("Đã chạm mức trần: research tạm khóa đến tháng sau.").classes("text-xs muted col")
+            cap_row.set_visibility(A.is_owner(user))  # đổi hạn mức: chỉ Owner
             kinds = list(GA.KINDS)
             colors = [T.GREEN, T.BLUE, "#7C3AED", "#8C8A7E"]
             ui.echart({
@@ -233,8 +330,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
 
         # ---- Theo website ----
         with T.section(ui, f"Theo website · {len(rows)}", "domain",
-                       "Thanh: phần đã dùng (đậm) và dự kiến cả tháng (nhạt) so với ngân sách. Đổi ngân sách ngay "
-                       "trên dòng."):
+                       "Đã dùng và dự kiến cả tháng so với ngân sách."):
             for i, r in enumerate(rows):
                 p = r["project"]
                 text, tone, icon = STATUS[r["status"]]
@@ -268,6 +364,8 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     T.status_chip(ui, text, tone, icon)
 
                     def save(box, s_=p["slug"], name=p["name"]):
+                        if not A.is_owner(user):
+                            return
                         try:
                             with app_connect() as c:
                                 PJ.set_budget(c, s_, box.value, user)
@@ -292,7 +390,8 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     # Ô ngân sách + nút Lưu (chỉ sáng khi đã đổi số); công tắc chạy / tạm ngưng có hiệu lực ngay
                     with ui.row().classes("items-center gap-1 no-wrap"):
                         inp = ui.number(value=r["budget"], min=0, step=5, format="%.0f", suffix="USD").props(
-                            "outlined dense").classes("w-28").tooltip("Ngân sách USD/tháng")
+                            "outlined dense" + ("" if A.is_owner(user) else " readonly")).classes("w-28").tooltip(
+                            "Ngân sách USD/tháng" + ("" if A.is_owner(user) else " (chỉ Owner đổi được)"))
                         btn = ui.button(icon="check", on_click=lambda _, box=inp, f=save: f(box)).props(
                             "flat round dense color=positive").tooltip("Lưu ngân sách")
                         btn.disable()
@@ -301,8 +400,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                     with ui.row().classes("items-center gap-1 no-wrap"):
                         ui.switch(value=not r["paused"], on_change=toggle_pause).props(
                             "dense color=positive").tooltip(
-                            "Bật: check rank và lấy volume theo lịch. Tắt: tạm ngưng mọi chi phí DataForSEO của "
-                            "website này (dữ liệu cũ vẫn giữ). Có hiệu lực ngay, không cần bấm Lưu")
+                            "Bật: check theo lịch. Tắt: tạm ngưng mọi chi phí, dữ liệu cũ vẫn giữ.")
                         ui.button(icon="leaderboard", on_click=open_rank).props(
                             "flat round dense color=grey-8").tooltip("Mở Từ khóa & Thứ hạng của website này")
 
@@ -312,6 +410,8 @@ def build_budget_page(ui, base, app_connect, user) -> None:
         # ---- Google Ads API (miễn phí, giới hạn lượt gọi mỗi ngày) ----
         cost_advice(projects)
         ads_quota()
+        points_usage()
+        ai_cost()
 
         # ---- Chi phí 6 tháng ----
         labels = [f"{m[5:]}/{m[2:4]}" for m in months]
@@ -320,7 +420,7 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                    "data": [round(r["history"][m]["total"], 4) for m in months]} for i, r in enumerate(rows)]
         totals = [sum(r["history"][m]["total"] for r in rows) for m in months]
         with T.section(ui, "Chi phí 6 tháng gần nhất", "bar_chart",
-                       f"Tổng 6 tháng {_usd(sum(totals))} USD · gồm check rank, volume keyword, backlink và ý định từ khóa"):
+                       f"Tổng 6 tháng {_usd(sum(totals))} USD"):
             ui.echart({
                 "animation": False, "legend": {"bottom": 0, "icon": "roundRect", "itemWidth": 12, "itemHeight": 10,
                                                "textStyle": {"fontSize": 12, "color": "#4A4A40"}},
@@ -346,7 +446,32 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                          "tắt check rank cho website đó. Volume keyword (mỗi tháng một lần) tính chung vào ngân sách."
                          ).classes("text-sm")
 
-    log_state = {"month": today.strftime("%Y-%m"), "project": "all", "kind": "all"}
+    log_state = {"month": today.strftime("%Y-%m"), "project": "all", "kind": "all", "free": False}
+
+    def runner_labels() -> dict:
+        """email -> nhóm quyền: Owner / Admin, hoặc theo dự án (Member / Guest)."""
+        out = {"acct": {}, "proj": {}}
+        try:
+            with app_connect() as c:
+                for e, role in c.execute("SELECT email, role FROM access_users WHERE removed_at IS NULL"):
+                    out["acct"][e.lower()] = role
+                for e, proj, role in c.execute("SELECT email, project, role FROM project_members"):
+                    out["proj"][(e.lower(), proj)] = role
+        except Exception:  # noqa: BLE001  (bảng chưa có: chỉ hiện tên)
+            pass
+        return out
+    who = runner_labels()
+
+    def runner(by: str, slug: str) -> str:
+        """Người chạy hiển thị: Lịch tự động · tên · nhóm quyền; dòng cũ chưa ghi người chạy: –."""
+        if not by:
+            return "–"
+        if by == "lịch":
+            return "Lịch tự động"
+        acct = who["acct"].get(by.lower())
+        grp = {A.EDITOR: "Owner", A.ADMIN_ACCT: "Admin"}.get(acct) or \
+            {A.EDITOR: "Member", A.CLIENT: "Guest"}.get(who["proj"].get((by.lower(), slug)), "")
+        return f"{by} · {grp}" if grp else by
 
     def spend_log(rows: list[dict]) -> None:
         """Mỗi lần chi tiền DataForSEO: lúc nào, website nào, API nào (check rank / volume / backlink / ý định), cho
@@ -393,22 +518,28 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                    [[names.get(p_, p_)] + [round(v.get(k, 0), 4) for k in kinds] + [round(sum(v.values()), 4)]
                     for p_, v in per.items()])
             _sheet(wb, "Từng khoản chi", [("Thời gian (giờ VN)", 17, None), ("Website", 22, None),
-                                          ("Loại API", 16, None), ("Chi tiết", 60, None), ("Số lượng", 10, "#,##0"),
+                                          ("Loại", 16, None), ("API", 46, None), ("Chi tiết", 60, None),
+                                          ("Số lượng", 10, "#,##0"),
                                           ("Người chạy", 22, None), ("Chi phí (USD)", 14, money)],
                    [[_vn_time(x["at"], "%d/%m/%Y %H:%M"), names.get(x["project"], ""), R.SPEND_KINDS[x["kind"]],
-                     x["detail"], x["qty"], x["by"] or "", round(x["cost"], 6)] for x in items])
+                     x.get("api", ""), x["detail"], x["qty"], runner(x["by"], x["project"]).replace("–", ""), round(x["cost"], 6)]
+                    for x in items])
             buf = io.BytesIO()
             wb.save(buf)
             return buf.getvalue()
 
         @ui.refreshable
         def ledger():
-            items = items_for()
+            every = items_for()
+            free = [x for x in every if not x["cost"]]
+            items = every if log_state["free"] else [x for x in every if x["cost"]]  # lần lấy miễn phí: ẩn
             by_kind = {k: [x for x in items if x["kind"] == k] for k in R.SPEND_KINDS}
-            # tổng theo loại API: bấm để lọc bảng
+            # tổng theo loại API: bấm để lọc bảng (loại không có lần nào thì ẩn)
             with ui.element("div").classes("sr-spend-sum"):
                 for k, label in [("all", "Tất cả")] + list(R.SPEND_KINDS.items()):
                     xs = items if k == "all" else by_kind[k]
+                    if k != "all" and not xs and log_state["kind"] != k:
+                        continue
                     chip = ui.element("button").classes(
                         f"sr-spend-chip k-{k}" + (" on" if log_state["kind"] == k else "")).props('type="button"')
                     chip.on("click", lambda _, k=k: (log_state.update(kind=k), ledger.refresh()))
@@ -417,6 +548,13 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                         ui.label(f"{_usd(sum(x['cost'] for x in xs))} USD").classes("val num")
                         ui.label(f"{len(xs)} lần").classes("sub")
             shown = items if log_state["kind"] == "all" else by_kind[log_state["kind"]]
+            if free:
+                with ui.row().classes("items-center gap-1 q-mb-xs"):
+                    ui.label((f"Đang hiện {len(free)} lần lấy miễn phí (0 USD)" if log_state["free"] else
+                              f"Đã ẩn {len(free)} lần lấy miễn phí (0 USD)")).classes("text-xs muted")
+                    ui.button("Ẩn" if log_state["free"] else "Hiện", on_click=lambda: (
+                        log_state.update(free=not log_state["free"]), ledger.refresh())).props(
+                        "flat dense no-caps size=sm color=primary")
             if not shown:
                 ui.label("Không có khoản chi nào trong phạm vi đã chọn.").classes("text-sm muted q-py-md")
                 return
@@ -424,32 +562,33 @@ def build_budget_page(ui, base, app_connect, user) -> None:
                      ":sort": "(a, b, rowA, rowB) => rowA.at_iso.localeCompare(rowB.at_iso)",
                      "headerStyle": "width:120px"},
                     {"name": "project", "label": "Website", "field": "project", "align": "left", "sortable": True},
-                    {"name": "kind", "label": "Loại API", "field": "kind_label", "align": "left", "sortable": True},
+                    {"name": "kind", "label": "Loại", "field": "kind_label", "align": "left", "sortable": True},
+                    {"name": "api", "label": "API", "field": "api", "align": "left", "sortable": True},
                     {"name": "detail", "label": "Chi tiết", "field": "detail", "align": "left"},
                     {"name": "by", "label": "Người chạy", "field": "by", "align": "left", "sortable": True},
                     {"name": "cost", "label": "Chi phí (USD)", "field": "cost_txt", "align": "right",
                      "sortable": True, ":sort": "(a, b, rowA, rowB) => rowA.cost - rowB.cost",
                      "headerStyle": "width:110px"}]
             data = [{"id": i, "at": _vn_time(x["at"]), "at_iso": x["at"], "project": names.get(x["project"], ""),
-                     "kind": x["kind"], "kind_label": R.SPEND_KINDS[x["kind"]], "detail": x["detail"],
-                     "by": x["by"] or "–", "cost": x["cost"], "cost_txt": R.usd(x["cost"], 4)}
+                     "kind": x["kind"], "kind_label": R.SPEND_KINDS[x["kind"]], "api": x.get("api", ""),
+                     "detail": x["detail"],
+                     "by": runner(x["by"], x["project"]), "cost": x["cost"], "cost_txt": R.usd(x["cost"], 4)}
                     for i, x in enumerate(shown)]
             tb = ui.table(columns=cols, rows=data, row_key="id", pagination=15).props(
                 "flat dense binary-state-sort").classes("w-full")
             tb.add_slot("body-cell-at", """
                 <q-td :props="props"><span class="num">{{ props.value }}</span></q-td>""")
+            tb.add_slot("body-cell-api", """
+                <q-td :props="props"><span class="sr-spend-api">{{ props.value }}</span></q-td>""")
             tb.add_slot("body-cell-kind", """
                 <q-td :props="props"><span :class="'sr-spend-kind k-' + props.row.kind">{{ props.value }}</span>
                 </q-td>""")
             tb.add_slot("body-cell-cost", """
-                <q-td :props="props" class="text-right"><b class="num">{{ props.value }}</b></q-td>""")
+                <q-td :props="props" class="text-right"><span class="num">{{ props.value }}</span></q-td>""")
 
         months = R.last_months(today, 6)[::-1]
         with T.section(ui, "Nhật ký chi tiền", "receipt_long",
-                       "Mỗi lần gọi API DataForSEO: lúc nào, website nào, loại API nào, bao nhiêu tiền. Check rank gộp "
-                       "theo từng lượt gửi; kết quả dùng chung giữa các bộ không tốn thêm nên không có dòng riêng. "
-                       "Người chạy: tên người bấm Check, hoặc “Lịch”; “–” là chưa ghi (lần chạy trước 06/11/2026, "
-                       "hoặc volume / backlink / ý định)."):
+                       "Từng lần lấy dữ liệu: lúc nào, website nào, bao nhiêu tiền, ai chạy."):
             with ui.row().classes("items-center gap-2 w-full"):
                 ui.select({m: f"Tháng {m[5:]}/{m[:4]}" for m in months}, value=log_state["month"],
                           on_change=lambda e: (log_state.update(month=e.value), ledger.refresh())).props(

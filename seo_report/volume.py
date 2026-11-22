@@ -38,7 +38,11 @@ CREATE TABLE IF NOT EXISTS volume_runs (
 
 
 def ensure_tables(con: sqlite3.Connection) -> None:
+    from .spend import add_by_column
+    from .spend import add_column
     con.executescript(SCHEMA)
+    add_by_column(con, "volume_runs")
+    add_column(con, "volume_runs", "api")  # dataforseo | google_ads (dòng cũ trống: 0 USD = Google Ads)
 
 
 def spent_this_month(con: sqlite3.Connection, today: date) -> float:
@@ -122,7 +126,9 @@ def save(con: sqlite3.Connection, todo: list[dict], result: dict, today: date) -
             con.execute("INSERT OR REPLACE INTO keyword_volume VALUES (?, ?, ?, ?, ?)",
                         (k["id"], month, r.get("search_volume") if r else None, r.get("competition") if r else None,
                          now))
-        con.execute("INSERT INTO volume_runs VALUES (?, ?, ?)", (now, len(todo), float(result["cost"])))
+        from .spend import current
+        con.execute("INSERT INTO volume_runs (run_at, keywords, cost, by_user, api) VALUES (?, ?, ?, ?, ?)",
+                    (now, len(todo), float(result["cost"]), current(), result.get("api") or "dataforseo"))
     return len(todo)
 
 
@@ -174,7 +180,7 @@ def _refresh(con, site, cfg, end, today, only_ids, log, fetcher) -> int:
             for i in range(0, len(todo), GA_BATCH):
                 chunk = todo[i:i + GA_BATCH]
                 res = GA.historical_metrics(*ads, _texts(chunk), cfg.rank.location_code, cfg.rank.language_code)
-                saved += save(con, chunk, res, today)
+                saved += save(con, chunk, {**res, "api": "google_ads"}, today)
             log(f"Đã lấy volume cho {saved} keyword (Google Ads, miễn phí).")
             return saved
         except GA.QuotaExceeded as e:  # hết lượt miễn phí hôm nay: để mai lấy tiếp, không chuyển sang nguồn tốn tiền

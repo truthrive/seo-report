@@ -289,7 +289,7 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
     rs = rank_summary(rep, rep.committed)
     if rs["total"]:
         s = _slide(prs, "Thứ hạng từ khóa cam kết" if rs["committed"] else "Thứ hạng từ khóa theo dõi",
-                   f"{rs['total']} từ khóa · DataForSEO, Google mobile, Việt Nam · lần check mới nhất so với lần trước")
+                   f"{rs['total']} từ khóa · Google mobile, Việt Nam · lần check mới nhất so với lần trước")
         for i, n in enumerate((3, 5, 10)):
             diff = rs["now"][n] - rs["prev"][n] if rs["has_prev"] else None
             _kpi(s, x0 + gap * i, Inches(1.5), f"Top {n}", f"{rs['now'][n]}/{rs['total']}",
@@ -323,7 +323,8 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
         p, cnt = kk["period"], kk["counts"]
         pct = cnt[O.DONE] / kk["total"] * 100 if kk["total"] else 0
         s = _slide(prs, "Công việc", f"OKR · hiện có {pct:.0f}% hạng mục đã hoàn thành"
-                   + (f" · {len(kk['late'])} trễ hạn" if kk["late"] else ""))
+                   + (f" · {len(kk['late'])} trễ hạn" if kk["late"] else "")
+                   + (f" · {len(kk.get('waiting') or [])} đang chờ bên ngoài" if kk.get("waiting") else ""))
         for i, (title, its, color) in enumerate(((f"Hoàn thành trong {unit}", p["done"], GREEN),
                                                  (f"Kế hoạch {unit} sau", p["next"], INK))):
             x = x0 + Inches(6.2) * i
@@ -336,7 +337,7 @@ def build_report_pptx(rep: WeeklyReport, user: str) -> bytes:
     # ---- Phụ lục (báo cáo tháng) ----
     if month:
         if rep.ranks:
-            s = _slide(prs, "Phụ lục · Thứ hạng từng từ khóa", "DataForSEO, Google mobile, Việt Nam")
+            s = _slide(prs, "Phụ lục · Thứ hạng từng từ khóa", "Google mobile, Việt Nam")  # slide gửi khách
             rows, colors = [], []
             for r in rep.ranks[:14]:
                 text, color, _ = rank_change(r["date"], r["rank"], r["depth"], r["prev"], r["prev_depth"])

@@ -4,6 +4,7 @@ sitemap) vào một danh sách, có đánh dấu đã xem theo từng người.
 Chỉ đọc dữ liệu đã có trong file dữ liệu dự án: không gọi API nào (không tốn tiền, mở trang nhanh).
 Mỗi thông báo có `key` ổn định; key đổi khi nội dung đổi hẳn (ví dụ hạng mục được gia hạn rồi lại trễ) để thông báo
 hiện lại là chưa xem."""
+import re
 import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -11,11 +12,24 @@ from datetime import date, datetime, timedelta, timezone
 from . import access as A
 
 KINDS = {"okr": ("Công việc & OKR", "task_alt"), "support": ("Yêu cầu hỗ trợ", "support_agent"),
-         "rank": ("Thứ hạng", "leaderboard"), "seo": ("Cơ hội SEO", "insights"), "system": ("Dữ liệu & hệ thống", "dns")}
+         "rank": ("Thứ hạng", "leaderboard"), "seo": ("Cơ hội SEO", "insights"),
+         "backlink": ("Backlink", "add_link"), "traffic": ("Traffic", "trending_down"),
+         "local": ("Local SEO", "storefront"), "system": ("Dữ liệu & hệ thống", "dns")}
+# ngưỡng cảnh báo tự động (từ dữ liệu đã lấy, không gọi API)
+DROP_HOURLY = 0.3          # click 24 giờ gần nhất giảm từ 30% so với 24 giờ trước đó
+DROP_HOURLY_MIN = 50       # chỉ báo khi 24 giờ trước có từ chừng này click (site nhỏ dao động mạnh)
+DROP_RICH = 0.3            # click của một loại kết quả (đoạn trích sản phẩm…) giảm từ 30% so với 28 ngày trước
+DROP_RICH_MIN = 50
+REVIEW_DAYS = 30           # đánh giá 1–3 sao chưa trả lời trong chừng này ngày gần nhất
 LEVELS = {"high": ("Cần xử lý", "red"), "medium": ("Nên xem", "amber"), "info": ("Thông tin", "blue")}
 _ORDER = {"high": 0, "medium": 1, "info": 2}
 STALE_DAYS = 5  # GSC thường chậm 2–3 ngày; quá 5 ngày chưa có ngày mới là có vấn đề kết nối
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS notice_popup (   -- ngày đã hiện bảng tóm tắt đầu ngày cho người này
+    user TEXT NOT NULL,
+    day TEXT NOT NULL,
+    PRIMARY KEY (user, day)
+);
 CREATE TABLE IF NOT EXISTS notice_seen (
     user TEXT NOT NULL,
     key TEXT NOT NULL,
@@ -61,6 +75,14 @@ def _okr(con, today: date) -> list[dict]:
         out.append(_n("okr", "medium", f"okr-due:{i['uid']}:{i['end']}",
                       f"{i['code']} {'đến hạn hôm nay' if not left else f'còn {left} ngày'}: {i['title']}",
                       f"hạn {_vn(i['end'])} · {i['pic'] or 'chưa có PIC'}", "/okr", i["end"]))
+    for i in a.get("waiting") or []:  # chờ bên ngoài lâu: nhắc người phụ trách đi hỏi (không phải trễ hạn)
+        w = i.get("wait") or {}
+        if w.get("days", 0) < O.WAIT_REMIND_DAYS:
+            continue
+        out.append(_n("okr", "medium", f"okr-wait:{i['uid']}:{w.get('start')}:{w['days'] // 7}",
+                      f"{i['code']} đã chờ {w['who_label']} {w['days']} ngày: nên nhắc · {i['title']}",
+                      " · ".join(x for x in (w.get("note") or "", i["pic"] or "chưa có PIC",
+                                             "không tính trễ hạn trong lúc chờ") if x), "/okr", w.get("start")))
     for i in a["not_started"]:
         out.append(_n("okr", "info", f"okr-idle:{i['uid']}:{i['start']}", f"{i['code']} tới ngày mà chưa bắt đầu: "
                       f"{i['title']}", f"bắt đầu {_vn(i['start'])} · {i['pic'] or 'chưa có PIC'}", "/okr", i["start"]))
@@ -118,6 +140,56 @@ def _rank(con, cfg, end: date, today: date) -> list[dict]:
     return out
 
 
+def _ai_block(user) -> list[dict]:
+    """Model AI chính bị chặn (cổng đổi giá, hết hạn mức, khóa sai): báo Owner / Admin để vào xử lý."""
+    from . import ai_settings as AIS
+    if not A.is_admin(user):
+        return []
+    try:
+        with AIS._connect() as c:
+            b = AIS.block_status(c)
+    except Exception:  # noqa: BLE001
+        return []
+    if not b:
+        return []
+    title = ("Model AI chính bị chặn, đang chạy bằng model kế tiếp trong combo" if b.get("fallback") else
+             "Các tính năng AI đang dừng: model chính bị chặn")  # tên model: xem ở Quản trị › AI
+    return [_n("system", "medium" if b.get("fallback") else "high", f"ai_block:{b['model']}:{b['at'][:10]}", title,
+               re.sub(r"Model “[^”]*”", "Model chính", b.get("error", "")), "/quan-tri-ai", b["at"])]
+
+
+def _requests(user) -> list[dict]:
+    """Người đăng nhập Google nhưng chưa có quyền, đang chờ duyệt: báo Owner / Admin (dữ liệu ở file dữ liệu chính)."""
+    if not A.is_admin(user):
+        return []
+    from . import points as PT
+    try:
+        with PT._connect() as c:
+            reqs = A.pending_requests(c)
+    except Exception:  # noqa: BLE001
+        return []
+    if not reqs:
+        return []
+    names = ", ".join(r["email"] for r in reqs[:3]) + (f" và {len(reqs) - 3} người khác" if len(reqs) > 3 else "")
+    return [_n("system", "high", "access_req:" + ",".join(sorted(r["email"] for r in reqs)),
+               f"{len(reqs)} người xin quyền vào tool", names, "/access", reqs[0]["at"])]
+
+
+def _backlink(con, cfg) -> list[dict]:
+    """Mất link từ website mạnh, link spam mới tăng, link đã xây bị mất / đổi: từ dữ liệu đã lưu, không gọi API."""
+    from . import backlink_build as BB
+    from . import backlinks as BL
+    if not _has(con, "backlink_lists") and not _has(con, "backlink_built"):
+        return []
+    ls = BL.lists(con, cfg.site_url) if _has(con, "backlink_lists") else {}
+    at = max(((v or {}).get("fetched_at") or "" for v in ls.values()), default="")
+    alerts = BB.alerts(con, cfg.site_url, ls)
+    if _has(con, "backlink_link_runs") and _has(con, "backlink_built"):  # đối chiếu với danh sách toàn bộ backlink
+        from . import backlink_links as BLL
+        alerts += BB.dfs_alerts(con, cfg.site_url, BLL.latest(con, cfg.site_url))
+    return [_n("backlink", a["level"], a["key"], a["title"], a["detail"], a["href"], at) for a in alerts]
+
+
 DECAY_NOTICE_MIN = 30  # chỉ báo trang mất từ 30 click / 28 ngày (ít hơn xem ở trang Cơ hội SEO)
 
 
@@ -137,7 +209,7 @@ def _seo(con, cfg) -> list[dict]:
         run_id = (au["run"] or {}).get("id")
         for ch in [c for c in au["checks"] if c["level"] == "high"]:
             out.append(_n("seo", "high", f"audit:{run_id}:{ch['code']}:{len(ch['pages'])}",
-                          f"Audit: {ch['name']} · {len(ch['pages'])} trang", ch["fix"], "/co-hoi?tab=audit",
+                          f"Audit: {ch['name']} · {len(ch['pages'])} trang", ch["fix"], "/audit",
                           ((au["run"] or {}).get("finished_at") or "")[:10]))
     except Exception:  # noqa: BLE001 — chưa quét lần nào / thiếu bảng
         pass
@@ -194,6 +266,87 @@ def _system(con, cfg, user, today: date) -> list[dict]:
     return out
 
 
+def _traffic(con, cfg) -> list[dict]:
+    """Click tụt theo giờ (24 giờ gần nhất so với 24 giờ trước đó) và loại kết quả trên Google tụt (28 ngày)."""
+    from . import gsc_types as GT
+    out = []
+    if _has(con, "gsc_hourly"):
+        hrs = GT.hourly(con, cfg.site_url)
+        last = hrs[-24:]
+        if len(last) == 24 and all(h["prev_clicks"] is not None for h in last):
+            now, prev = sum(h["clicks"] for h in last), sum(h["prev_clicks"] for h in last)
+            if prev >= DROP_HOURLY_MIN and now <= prev * (1 - DROP_HOURLY):
+                end = last[-1]["hour"]
+                out.append(_n("traffic", "high", f"hourly:{end[:13]}",
+                              f"Click tụt {(prev - now) / prev:.0%} trong 24 giờ gần nhất",
+                              f"{now:,} click so với {prev:,} của 24 giờ trước đó (tới {end[11:16]} "
+                              f"{end[8:10]}/{end[5:7]}, giờ VN). Kiểm tra web có lỗi, bị chặn index hay rớt hạng."
+                              .replace(",", "."), "/nguon", end[:10]))
+    if _has(con, "gsc_appearance"):
+        apps, period = GT.appearance(con, cfg.site_url)
+        for a in apps:
+            pc = a["prev_clicks"] or 0
+            if pc >= DROP_RICH_MIN and a["clicks"] <= pc * (1 - DROP_RICH):
+                out.append(_n("traffic", "high", f"appearance:{a['key']}:{(period or ('', ''))[1]}",
+                              f"“{a['name']}” tụt {(pc - a['clicks']) / pc:.0%} click",
+                              f"{a['clicks']:,} click 28 ngày gần nhất so với {pc:,} kỳ trước. Thường do dữ liệu cấu "
+                              "trúc bị lỗi / thiếu: xem tab Schema ở Technical Audit.".replace(",", "."),
+                              "/audit?tab=schema", (period or ("", ""))[1]))
+    return out
+
+
+def _links(con, cfg) -> list[dict]:
+    """Từ danh sách toàn bộ backlink: website bị Google đánh dấu nguy hiểm, link spam mới so với lần lấy trước,
+    backlink trỏ về trang lỗi."""
+    from . import backlink_links as BLL
+    from . import link_audit as LA
+    if not _has(con, "backlink_link_runs"):
+        return []
+    d = BLL.latest(con, cfg.site_url)
+    if not d:
+        return []
+    items, at = d["items"], d["fetched_at"]
+    out = []
+    bad = sorted({x["d_from"] for x in items if x.get("threat")})
+    if bad:
+        out.append(_n("backlink", "high", f"links-threat:{at}:{len(bad)}",
+                      f"{len(bad)} website đặt link bị Google đánh dấu nguy hiểm",
+                      ", ".join(bad[:3]) + (" …" if len(bad) > 3 else "") + " · đưa vào file disavow",
+                      "/backlink?tab=links", at[:10]))
+    if d.get("prev"):
+        new, _ = BLL.diff(items, d["prev"]["items"])
+        spam = [x for x in new if (x.get("spam") or 0) >= LA.SPAM]
+        if spam:
+            out.append(_n("backlink", "medium", f"links-spam-new:{at}:{len(spam)}",
+                          f"{len(spam)} link spam mới so với lần lấy trước",
+                          ", ".join(sorted({x['d_from'] for x in spam})[:3]), "/backlink?tab=links", at[:10]))
+    broken = [x for x in items if x.get("broken") or (x.get("st_to") or 0) >= 400]
+    if broken:
+        pages = sorted({BLL._page(x["u_to"]) for x in broken})
+        out.append(_n("backlink", "medium", f"links-broken:{at}:{len(pages)}",
+                      f"{len(broken)} backlink trỏ về {len(pages)} trang lỗi",
+                      "Đặt redirect 301 để giữ giá trị link", "/backlink?tab=links", at[:10]))
+    return out
+
+
+def _local(con, today: date) -> list[dict]:
+    """Đánh giá Google Maps 1–3 sao chưa trả lời (30 ngày gần nhất)."""
+    if not _has(con, "gbp_reviews"):
+        return []
+    from . import gbp_reviews as GR
+    since = (today - timedelta(days=REVIEW_DAYS)).isoformat()
+    titles = dict(con.execute("SELECT name, title FROM gbp_locations")) if _has(con, "gbp_locations") else {}
+    out = []
+    for rid, loc, author, rating, comment, created in con.execute(
+            "SELECT review_id, location, author, rating, comment, created FROM gbp_reviews WHERE rating BETWEEN 1 "
+            "AND 3 AND (reply IS NULL OR reply = '') AND created >= ? ORDER BY created DESC LIMIT 10", (since,)):
+        where = f" · {titles[loc]}" if titles.get(loc) else ""
+        out.append(_n("local", "high", f"review:{rid}", f"Đánh giá {rating}★ chưa trả lời{where}: {author or 'khách'}",
+                      (GR.clean(comment) or "(không có chữ)")[:140] + " · trả lời hàng loạt ở Local SEO › Đánh giá",
+                      "/local?tab=reviews", (created or "")[:10]))
+    return out
+
+
 def _has(con, table: str) -> bool:
     return bool(con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone())
 
@@ -207,7 +360,10 @@ def collect(con, cfg, user, end: date | None = None, today: date | None = None) 
     out = _support(con, user)
     if not A.is_client(user):  # khách hàng chỉ nhận câu trả lời cho yêu cầu của mình
         for src in (lambda: _okr(con, today), lambda: _rank(con, cfg, end, today),
-                    lambda: _seo(con, cfg), lambda: _system(con, cfg, user, today)):
+                    lambda: _seo(con, cfg), lambda: _backlink(con, cfg), lambda: _ai_block(user),
+                    lambda: _requests(user),
+                    lambda: _traffic(con, cfg), lambda: _links(con, cfg), lambda: _local(con, today),
+                    lambda: _system(con, cfg, user, today)):
             try:
                 out += src()
             except Exception:  # noqa: BLE001 — một nguồn lỗi không làm mất cả trang thông báo
@@ -243,6 +399,27 @@ def unseen(items: list[dict]) -> int:
 def seen_keys(con, user) -> set[str]:
     ensure_tables(con)
     return {r[0] for r in con.execute("SELECT key FROM notice_seen WHERE user = ?", (str(user).lower(),))}
+
+
+POPUP_MAX = 6  # số việc hiện trong bảng tóm tắt đầu ngày
+
+
+def _vn_today() -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=7)).date().isoformat()
+
+
+def popup_items(con, user, items: list[dict], day: str | None = None) -> list[dict]:
+    """Lần mở tool đầu tiên trong ngày (giờ VN): các thông báo chưa xem mức Cần xử lý / Nên xem để hiện bảng tóm tắt;
+    đã hiện hôm nay hoặc không có gì đáng báo: []. Gọi là ghi nhận đã hiện (mỗi ngày một lần)."""
+    ensure_tables(con)
+    day = day or _vn_today()
+    if con.execute("SELECT 1 FROM notice_popup WHERE user = ? AND day = ?", (str(user), day)).fetchone():
+        return []
+    todo = [n for n in items if not n["seen"] and n["level"] in ("high", "medium")]
+    if todo:
+        with con:
+            con.execute("INSERT OR IGNORE INTO notice_popup VALUES (?, ?)", (str(user), day))
+    return todo
 
 
 def mark_seen(con, user, keys: list[str]) -> None:

@@ -5,16 +5,22 @@ nào đang bấm. Việc nặng (tạo file, gọi Drive) chạy bằng run.io_b
 """
 from typing import Callable
 
+from . import points as PT
+
 
 def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Callable,
                 make_pptx: Callable | None = None, label: str = "Xuất", user=None, icon_only: bool = False,
-                category: str | None = None) -> None:
+                category: str | None = None, report: bool = False) -> None:
     """name: tên file (không đuôi). make_xlsx / make_pptx: hàm (có thể async) trả về bytes. Người chỉ xem (user) chỉ
     tải file về máy, không lưu vào Drive của chủ tool. icon_only: nút chỉ có icon (tên hiện khi rê chuột).
     category: hạng mục (drive.CATEGORIES) → file lưu vào thư mục con của hạng mục đó trong folder dự án."""
     import inspect
 
     from nicegui import run
+
+    from . import ui_theme as T
+    if T.client_view() and not report:  # khách hàng: chỉ tải báo cáo tuần / tháng (trang Báo cáo)
+        return
 
     from . import drive as D
     from .access import can_edit
@@ -61,6 +67,9 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
         dlg.open()
 
     async def to_drive(kind: str):
+        _pt = PT.take(ui, user, cfg, "sheets", detail=name) if user is not None else None
+        if _pt is False:
+            return
         try:
             async def work():
                 xlsx = await produce(make_xlsx) if kind == "sheet" else None
@@ -90,6 +99,7 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
                 ui.download.content(pdf, f"{name}.pdf")
             done(links, folder_name)
         except (Exception, SystemExit) as e:  # noqa: BLE001
+            PT.give_back(_pt)
             ui.notify(f"Không lưu được lên Drive: {D.explain(e)}", type="negative", multi_line=True, timeout=12000,
                       close_button="Đóng")
 
@@ -110,8 +120,7 @@ def export_menu(ui, cfg, connect, name: str, make_xlsx: Callable[[], bytes] | Ca
         options = {root: "📁 Folder gốc của tool", **{f["id"]: f"   └ {f['name']}" for f in folders}}
         with ui.dialog() as dlg, ui.card().style("min-width: 460px; border-radius: 14px"):
             ui.label("Chọn folder Drive để lưu").classes("text-lg font-semibold")
-            ui.label("Tool chỉ thấy folder do chính nó tạo (quyền tối thiểu). Bạn có thể chia sẻ hoặc di chuyển "
-                     "folder gốc trên Drive.").classes("text-xs muted")
+            ui.label("File lưu trong thư mục của tool trên Drive.").classes("text-xs muted")
             sel = ui.select(options, value=current if current in options else root).props("outlined dense").classes(
                 "w-full")
             with ui.row().classes("w-full items-center gap-2 no-wrap"):

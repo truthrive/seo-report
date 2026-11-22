@@ -81,7 +81,8 @@ def valid_site_url(site_url: str) -> bool:
     """Đúng cách Search Console ghi property: 'sc-domain:abc.com' hoặc 'https://abc.com/' (có / cuối)."""
     s = site_url.strip()
     return bool(re.fullmatch(r"sc-domain:[a-z0-9.-]+\.[a-z]{2,}", s)
-                or re.fullmatch(r"https?://[^\s/]+\.[^\s/]+/(\S*/)?", s))
+                # không nhận dấu nháy, ngoặc nhọn, dấu huyền, gạch chéo ngược: chuỗi này từng được ghép vào mã JavaScript
+                or re.fullmatch(r"https?://[^\s/\"'<>`\\]+\.[^\s/\"'<>`\\]+/([^\s\"'<>`\\]*/)?", s))
 
 
 def _row(r: sqlite3.Row | tuple, cols: list[str]) -> dict:
@@ -113,13 +114,19 @@ def db_path(base: Config, project: dict) -> Path:
 def config_for(base: Config, project: dict) -> Config:
     """Cấu hình của một dự án: chung phần tài khoản Google, DataForSEO, phân quyền; riêng website và dữ liệu."""
     s = project["settings"]
+    owner = s.get("google_owner") or ""  # website người dùng tự thêm: lấy số bằng token Google của người đó
+    paid_ok = bool(s.get("paid_ok", True)) or not owner
+    if owner:
+        from .user_google import token_path
+        base = replace(base, token_path=token_path(base, owner))
     return replace(
         base, site_url=project["site_url"], ga4_property=project["ga4_property"], db_path=db_path(base, project),
+        google_owner=owner, paid_ok=paid_ok,
         logo=project.get("logo") or "",
         keywords=replace(base.keywords, brand_terms=tuple(s["brand_terms"])),
         rank=replace(base.rank, monthly_budget_usd=float(s["rank_budget_usd"]), location_code=int(s["location_code"]),
                      language_code=s["language_code"], device=s["device"],
-                     se_domain=s.get("se_domain") or DEFAULTS["se_domain"], paused=bool(s.get("rank_paused"))),
+                     se_domain=s.get("se_domain") or DEFAULTS["se_domain"], paused=bool(s.get("rank_paused")) or not paid_ok),
         okr=replace(base.okr, sheet=s["okr_sheet"], okr_tab=s["okr_tab"], weekly_tab=s["weekly_tab"]))
 
 
@@ -329,12 +336,11 @@ def fetch_logo(site_url: str, timeout: int = 10) -> str | None:
     from urllib.parse import urljoin, urlsplit
 
     home = f"https://{domain(site_url)}/"
-    headers = {"User-Agent": "Mozilla/5.0 (SEO Report logo fetch)"}
-    # Chỉ HTTP(S): trang chủ của website (do khách kiểm soát) không được khiến tool đọc file trên máy (file:) hay FTP
-    opener = urllib.request.OpenerDirector()
-    for h in (urllib.request.HTTPHandler, urllib.request.HTTPSHandler, urllib.request.HTTPRedirectHandler,
-              urllib.request.HTTPDefaultErrorHandler, urllib.request.HTTPErrorProcessor):
-        opener.add_handler(h())
+    # Chỉ http(s) tới địa chỉ công khai: trang chủ và domain đối thủ (do người khác chọn) không được khiến tool đọc
+    # file trên máy (file:), FTP hay dò mạng nội bộ qua chuyển hướng / icon (xem safe_fetch)
+    from . import safe_fetch as SF
+    headers = {"User-Agent": SF.BROWSER_UA}  # có thể là site đối thủ: không lộ tên tool
+    opener = SF.OPEN
 
     def get(url: str) -> tuple[bytes, str]:
         if urlsplit(url).scheme not in ("http", "https"):

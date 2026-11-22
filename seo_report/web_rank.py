@@ -6,6 +6,8 @@ import math
 from datetime import date
 from types import SimpleNamespace
 
+from . import spend as SP
+from . import points as PT
 from . import keywords as K
 from . import rank as R
 from . import ui_theme as T
@@ -32,9 +34,21 @@ def _local(iso_utc: str) -> str:
 def _short_change(text: str) -> str:
     """Chữ thay đổi gọn cho bảng: "▲ 4" → "4", "▼ rớt khỏi top 20" → "rớt", "▲ vào top 20" → "vào top 20"."""
     t = (text or "").replace("▲", "").replace("▼", "").strip()
-    if t.startswith("rớt khỏi"):
-        return "rớt"
+    for p_ in ("rớt khỏi ", "vào "):  # vào / rớt khỏi top N: giữ "top N" cho chú thích, bảng hiện nhãn Vào / Rớt
+        if t.startswith(p_):
+            return t[len(p_):]
     return t
+
+
+def _min_move(k: dict, move: int) -> int | None:
+    """Vào / rớt khỏi top N (lần kia ngoài độ sâu check, không biết vị trí thật): số bậc ÍT NHẤT đã lên / xuống.
+    Vào: trước ngoài top N (≥ N+1), nay vị trí r → lên ít nhất N+1−r. Rớt: trước vị trí p, nay ngoài top M → xuống ít
+    nhất M+1−p."""
+    if move == 100 and k["rank"] is not None and k["prev_depth"]:
+        return max(1, k["prev_depth"] + 1 - k["rank"])
+    if move == -100 and k["prev"] is not None and k["last_depth"]:
+        return max(1, k["last_depth"] + 1 - k["prev"])
+    return None
 
 
 def _pos(rank, depth) -> str:
@@ -78,6 +92,50 @@ FILTERS = {
     "paused": ("Đang tạm dừng", lambda k: k["paused"]),
     "note": ("Có ghi chú", lambda k: bool(k["note"])),
 }
+
+# Bộ lọc bảng từ khóa dạng chip theo nhóm: trong một nhóm = hoặc, khác nhóm = và
+FILTER_GROUPS = (("Thứ hạng", ("top3", "top10", "top30", "out", "unchecked")),
+                 ("Biến động", ("up", "down")),
+                 ("Cần xử lý", ("miss", "wrong", "notarget", "paused", "note")))
+CHIP_LABEL = {"top30": "Hạng 11+", "out": "Ngoài độ sâu check", "down": "Rớt hạng", "up": "Lên hạng",
+              "miss": "Chưa đạt Top mục tiêu", "wrong": "Sai URL mục tiêu", "notarget": "Chưa có URL mục tiêu",
+              "paused": "Tạm dừng", "note": "Có ghi chú"}
+GUEST_FILTERS = ("top3", "top10", "top30", "out", "up", "down")  # khách hàng: chỉ lọc theo kết quả
+
+
+def filter_keep(on: set):
+    """Hàm giữ dòng theo các chip đang bật: trong nhóm khớp một chip là đủ, phải khớp mọi nhóm có chip bật."""
+    groups = [[x for x in keys if x in on] for _, keys in FILTER_GROUPS]
+    groups = [g for g in groups if g]
+
+    def keep(k) -> bool:
+        return all(any(FILTERS[x][1](k) for x in g) for g in groups)
+    return keep
+
+
+class ChipFilter:
+    """Trạng thái chip lọc; giữ cách gọi cũ của ô chọn lọc (.value / .set_value) cho các lối tắt lọc sẵn bảng."""
+
+    def __init__(self, on_change):
+        self.on: set = set()
+        self._changed = on_change
+
+    @property
+    def value(self) -> str:
+        return "all" if not self.on else (next(iter(self.on)) if len(self.on) == 1 else "multi")
+
+    def set_value(self, key: str | None) -> None:
+        self.on = set() if key in (None, "all") or key not in FILTERS else {key}
+        self._changed()
+
+    def toggle(self, key: str) -> None:
+        (self.on.discard if key in self.on else self.on.add)(key)
+        self._changed()
+
+    def clear(self) -> None:
+        self.on = set()
+        self._changed()
+
 
 def icon_btn(ui, icon: str, tip: str, on_click=None, kind: str = "flat", color: str = "", badge=None):
     """Nút tròn chỉ có icon; tip hiện khi rê chuột và là tên đọc cho trình đọc màn hình. badge: số nhỏ ở góc."""
@@ -229,7 +287,7 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                         ui.label("Chưa có").classes("muted")
 
     def cell(area: str, title: str, info: tuple | None = None):
-        box = ui.element("section").classes("sr-bx-cell").style(f"grid-area:{area}")
+        box = ui.element("section").classes(f"sr-bx-cell a-{area}").style(f"grid-area:{area}")
         box.props["aria-label"] = title
         with box:
             with ui.row().classes("w-full items-center gap-2 no-wrap sr-bx-head"):
@@ -329,9 +387,7 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                         f"{before}</b>").classes("sr-kc-r")
                 if extra:  # thẻ Đạt mục tiêu: thêm dòng "Chưa đạt"
                     extra()
-            foot.tooltip(f"Hiện tại {value} = trước đó {before} + vào {enter} − rời {leave} + mới kiểm tra {new_in}. "
-                         f"Vào / rời: so với lần check trước của chính từng từ khóa (phần lớn ngày {d_prev}). Mới "
-                         "kiểm tra: từ khóa check lần đầu, chưa có lịch sử để so.")
+            foot.tooltip(f"Hiện tại {value} = trước {before} + vào {enter} − rời {leave} + mới {new_in}")
 
     def tier(n: int) -> tuple[int, int]:
         """(vào, rời) Top n: so vị trí lần này với lần trước của từng từ khóa (ngoài độ sâu = không ở trong nhóm)."""
@@ -388,7 +444,8 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
         else:
             with cell("hit", "Đạt Top mục tiêu", ("Chưa có từ khóa nào đặt Top mục tiêu.",)):
                 ui.label("Chưa đặt Top mục tiêu").classes("text-sm muted q-mt-sm")
-                ui.label("Đặt ở nút ✏️ trên từng từ khóa trong bảng").classes("sr-cmp-note")
+                if not T.client_view():  # khách không sửa được: không gợi ý thao tác
+                    ui.label("Đặt ở nút ✏️ trên từng từ khóa trong bảng").classes("sr-cmp-note")
 
         # ---- Hàng 2: Xu hướng thứ hạng (bảng hoặc biểu đồ, kèm mục tiêu cam kết của bộ Cam kết) ----
         unit = {"check": "lần check", "week": "tuần", "month": "tháng"}
@@ -500,6 +557,9 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                 tiers = (3, 5, 10)
                 now = _tops(h[-1])
                 if view == "table" or len(h) < 2:
+                    if view == "chart" and len(h) < 2:
+                        ui.label(f"Biểu đồ hiện từ {unit[period]} thứ hai: đang xem dạng bảng.").classes(
+                            "text-xs muted")
                     body = ""
                     for name, need in goals:  # mục tiêu cam kết: một dòng, trạng thái ngay cạnh số
                         cells = ""
@@ -536,12 +596,12 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                             "<th scope='col'>Top 5</th><th scope='col'>Top 10</th></tr></thead>"
                             f"<tbody>{body}</tbody></table>").classes("w-full")
                     return
-                time_axis = period == "check"
+                time_axis = False  # các lần check cách đều nhau trên trục: dễ đọc hơn trục ngày thật
                 marks = event_marks(h, evs or [], time=time_axis)
                 goal_now = goals[0][1] if goals else {}
-                metric = state.setdefault("metric", "avg")
+                metric = state.setdefault("metric", "top")
                 with ui.row().classes("items-center gap-2 q-mt-xs"):
-                    mt = ui.toggle({"avg": "Vị trí trung bình", "top": "Số từ khóa Top 3 / 5 / 10"}, value=metric,
+                    mt = ui.toggle({"top": "Số từ khóa Top 3 / 5 / 10", "avg": "Vị trí trung bình"}, value=metric,
                                    on_change=lambda e: (state.update(metric=e.value), line.refresh())).props(
                         "unelevated no-caps dense toggle-color=white toggle-text-color=dark text-color=grey-8"
                     ).classes("sr-seg")
@@ -594,6 +654,10 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                                   "backgroundColor": "rgba(255,255,255,.94)", "padding": [2, 6], "borderRadius": 4},
                         "data": firsts}})
                 checked_js = "[" + ",".join(str(x["checked"]) for x in h) + "]"
+                # thang trục theo số liệu (và mức cam kết), không kéo tới tổng số từ khóa: đường không bị bẹp ở đáy
+                peak = max([_tops(x)[n] for x in h for n in tiers] + list(goal_now.values()) + [1])
+                step = 5 if peak <= 50 else 10 if peak <= 200 else 50
+                y_max = min(max(total, 1), int(math.ceil(peak * 1.15 / step) * step))
                 chart = ui.echart({
                     "animation": False,
                     "grid": {"left": 34, "right": 18, "top": 44, "bottom": 26},
@@ -606,7 +670,7 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                         f"'</b> / {total} từ khóa').join('<br/>') + '<br/><span style=\"color:#6B6A5E\">Đã check: ' + "
                         f"{checked_js}[ps[0].dataIndex] + ' / {total} từ khóa</span>'")},
                     "xAxis": x_axis,
-                    "yAxis": {"type": "value", "min": 0, "max": max(total, 1), "minInterval": 1, "splitNumber": 4,
+                    "yAxis": {"type": "value", "min": 0, "max": y_max, "minInterval": 1, "splitNumber": 4,
                               "name": f"Số từ khóa nằm trong Top (trên {total}) · đường đi lên = tốt",
                               "nameLocation": "end", "nameGap": 10,
                               "nameTextStyle": {"color": "#6B6A5E", "fontSize": 11, "align": "left"},
@@ -636,7 +700,8 @@ def bento(ui, kws: list[dict], hist: list[dict], evs: list[dict], load, state: d
                     (out_label, last["out"], "#B9B6A8"), ("Chưa check", last.get("unchecked", 0), "#E4E2D9"))
                     if v]
                 n_all = sum(v for _, v, _ in groups) or 1
-                ch = T.donut(ui, [(name, v) for name, v, _ in groups], [c for _, _, c in groups], "từ khóa", 220)
+                with ui.element("div").classes("sr-bx-fill sr-bx-center"):
+                    ch = T.donut(ui, [(name, v) for name, v, _ in groups], [c for _, _, c in groups], "từ khóa", 220)
                 if ch:
                     ch.props["role"] = "img"
                     ch.props["aria-label"] = "Phân bổ thứ hạng: " + "; ".join(
@@ -726,8 +791,8 @@ def build_rank_page(ui, cfg, connect, user: str, on_budget_change=None, set_id: 
     ids = [0] + [x["id"] for x in all_sets]  # 0 = Tổng quan (mặc định), rồi từng bộ (Đối thủ: trang /doi-thu)
     state = {"sid": set_id if set_id in ids else 0, "hooks": {}}
 
-    right = T.page_header(ui, "leaderboard", "Từ khóa & Thứ hạng",
-                          "Vị trí thật trên Google của từng bộ từ khóa: đạt mục tiêu chưa, từ khóa nào vừa lên / xuống.")
+    right = T.page_header(ui, "leaderboard", "Thứ hạng từ khóa",
+                          "Vị trí trên Google của từng bộ từ khóa và từ khóa nào vừa lên / xuống.")
     with right:
         if cfg.rank.paused and not cl:
             T.status_chip(ui, "Đang tạm ngưng check rank", "amber", "pause_circle")
@@ -830,6 +895,10 @@ def _project_panel(ui, cfg, connect, user, select, open_set) -> None:
         end = K.latest_date(c, site)
         kws = RO.active_keywords(c, site, end)
         cards = RO.set_cards(c, cfg, end)
+    from .access import is_client
+    client = is_client(user)
+    if client:  # khách: chỉ bộ đang chạy (không thấy bộ nháp / tạm dừng, chi phí, lịch check nội bộ)
+        cards = [c_ for c_ in cards if not (c_["draft"] or c_["paused"])]
     ranked = [k["rank"] for k in kws if k["date"] and k["rank"] is not None]
     t10 = sum(r <= 10 for r in ranked)
     up, down = RO._moves(kws)
@@ -845,7 +914,7 @@ def _project_panel(ui, cfg, connect, user, select, open_set) -> None:
             ui.label(f"↗ {up} lên hạng").classes("sr-mini-move up")
         if down:
             ui.label(f"↘ {down} rớt hạng").classes("sr-mini-move down")
-        if nxt:
+        if nxt and not client:
             with ui.element("span").classes("muted"):
                 ui.label(f"Check tới {_vn(nxt[0].isoformat())[:5]} lúc {nxt[1] or '07:00'}")
 
@@ -898,10 +967,11 @@ def _project_panel(ui, cfg, connect, user, select, open_set) -> None:
                         if at["filter"] or cd["draft"]:
                             ui.icon("arrow_forward", size="16px").props('aria-hidden="true"')
                     note.on("click.stop", lambda _, i=cd["id"], f=at["filter"]: open_set(i, f))
-                bits = [f"Check {_vn(cd['last'])[:5]}" if cd["last"] else "Chưa check lần nào"]
-                if cd["next"]:
+                bits = [f"Cập nhật {_vn(cd['last'])[:5]}" if client and cd["last"] else
+                        f"Check {_vn(cd['last'])[:5]}" if cd["last"] else "Chưa có số"]
+                if cd["next"] and not client:
                     bits.append(f"tới {_vn(cd['next'].isoformat())[:5]} {cd['time'] or ''}".strip())
-                if cd["cost"]:
+                if cd["cost"] and not PT.member(user) and not client:
                     bits.append(f"≈ {R.usd(cd['cost'])} USD/tháng")
                 ui.label(" · ".join(bits)).classes("sr-set-card-foot")
         if can_edit(user):
@@ -929,6 +999,7 @@ def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: b
                 "Độ hiển thị: tổng tỷ lệ nhấp ước tính theo vị trí (hạng 1 ≈ 28%, hạng 2 ≈ 15%, hạng 3 ≈ 10%…) trên các "
                 "từ khóa, so với mức tối đa nếu đứng hạng 1 ở tất cả. Thị phần: phần của từng thương hiệu trong tổng "
                 "độ hiển thị.",
+                "Lấy từ lần cập nhật gần nhất của từng từ khóa." if T.client_view() else
                 "Lấy từ lần check gần nhất của từng từ khóa đang chạy, trong độ sâu đã check. Không tốn thêm phí.",
                 "Xếp trên dự án: đối thủ đứng trên website dự án, hoặc có mặt khi website dự án không có.",
                 "▲▼ ở hạng và ở Top 3 / 5 / 10: so với lần check trước, trên các từ khóa có cả hai lần check."))
@@ -1020,8 +1091,7 @@ def _competitors_block(ui, comp: dict, sets_: list[dict], select, manage_link: b
         cmp_n = comp.get("compared") or 0
         ui.label(("▲▼ so với lần check trước, tính trên " + f"{cmp_n}/{n} từ khóa đã có ít nhất 2 lần check (từ khóa "
                   "mới check 1 lần chưa so được)") if cmp_n else
-                 "▲▼ sẽ hiện từ lần check thứ hai của các từ khóa (hiện mỗi từ khóa mới có 1 lần check có kết quả "
-                 "Google).").classes("text-xs muted q-mt-sm")
+                 "▲▼ hiện từ lần check thứ hai.").classes("text-xs muted q-mt-sm")
         # ---- vừa vượt mình ----
         fresh = RO.overtaken(comp)
         if fresh:
@@ -1083,7 +1153,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         linked = (R.kpi_set(c, site) or {}).get("id")
     cur = next((x for x in all_sets if x["id"] == set_id), all_sets[0])
     hooks["new_set"] = lambda: set_dialog(None)
-    hooks["filter"] = lambda v: filt.set_value(v)  # thẻ ở Tổng quan mở bộ và lọc sẵn bảng
+    # thẻ ở Tổng quan mở bộ và lọc sẵn bảng (khách: chỉ các bộ lọc theo kết quả)
+    hooks["filter"] = lambda v: filt.set_value(v if not cl or v in GUEST_FILTERS else None)
     hooks["lock"] = lambda: lock_dialog()
     sid = cur["id"]
     # Tool là nơi quản lý từ khóa: không bộ nào còn ghi / đọc từng dòng trên sheet (sheet là nơi xem, tool ghi đè).
@@ -1118,8 +1189,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 f"color:{T.GREEN}").props('aria-hidden="true"')
         with ui.column().classes("gap-0 sr-setbar-info"):
             primary = ui.label(f"{engine} · {device}").classes("sr-setbar-title")
-            primary.tooltip(f"Tìm trên {where.se_domain}, thiết bị {device.lower()}"
-                            + ("; theo cài đặt chung của dự án" if not cur["settings"] else "; cài đặt riêng của bộ"))
+            primary.tooltip(f"Tìm trên {where.se_domain}, thiết bị {device.lower()}" + (
+                "" if cl else ("; theo cài đặt chung của dự án" if not cur["settings"] else "; cài đặt riêng của bộ")))
             ui.label(f"{lang} · {loc}" + ("" if cl else f" · {depth_txt.capitalize()}")).classes("sr-setbar-sub")
             status_row = ui.element("div").classes("sr-setbar-status")
             status_row.props["aria-live"] = "polite"
@@ -1132,7 +1203,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 resume_btn.set_visibility(False)
                 check_btn = ui.button("Kiểm tra thứ hạng", icon="play_arrow", on_click=lambda: check_now()).props(
                     "unelevated no-caps color=primary").classes("sr-setbar-cta").tooltip(
-                    "Check ngay các từ khóa đã chọn, hoặc cả bộ. Đổi trang vẫn check tiếp, xong sẽ báo.")
+                    "Check ngay các từ khóa đã chọn hoặc cả bộ")
                 check_btn.set_enabled(site not in _RUNNING and not cfg.rank.paused)
                 if draft:  # Nháp: chưa check, chưa tốn tiền; bấm Chốt để bắt đầu chạy theo lịch
                     check_btn.set_visibility(False)
@@ -1141,8 +1212,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                         "Chốt bộ: bắt đầu check theo lịch và tính tiền")
                 if cfg.rank.paused:  # tạm ngưng: không gửi yêu cầu DataForSEO nào; quản trị bật lại ở màn Ngân sách
                     check_btn.disable()
-                    check_btn.tooltip("Website đang tạm ngưng check rank. Quản trị bật lại ở màn Ngân sách check "
-                                      "rank")
+                    check_btn.tooltip("Website đang tạm ngưng check rank")
+            ai_btn_slot = ui.row().classes("items-center")  # nút AI nhận định (team), vẽ khi đã có khung kết quả
             from .web_export import export_menu
             export_menu(ui, cfg, connect, f"check-rank_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
                         label="Xuất file", user=user, icon_only=True, category="rank")
@@ -1187,8 +1258,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 if ed:
                     stop_btn = ui.button("Dừng gửi", icon="pause", on_click=lambda: stop_check()).props(
                         "flat dense no-caps size=sm color=grey-9").classes("sr-run-stop").tooltip(
-                        "Không gửi thêm từ khóa nào. Từ khóa đã gửi vẫn chạy và vẫn tính phí; từ khóa chưa gửi giữ "
-                        "lại, bấm Tiếp tục để check nốt.")
+                        "Dừng gửi thêm; từ khóa đã gửi vẫn chạy. Bấm Tiếp tục để check nốt.")
             run_bar = ui.linear_progress(0, show_value=False).props(
                 "rounded size=4px color=primary track-color=grey-3").classes("sr-run-bar")
         run_box.set_visibility(site in _RUNNING)
@@ -1241,8 +1311,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         with ui.element("div").classes("sr-danger-box w-full"):
             ui.label(f"Sẽ xóa hẳn {stats['keywords']} từ khóa của {what} cùng {stats['checks']} lần check "
                      f"(lịch sử thứ hạng, kết quả Google, AI Overview).").classes("text-sm")
-            ui.label(f"Dữ liệu đã trả {R.usd(stats['cost'], 3)} USD. Không khôi phục được; muốn giữ lịch sử thì "
-                     "dùng Tạm dừng.").classes("text-sm font-semibold")
+            ui.label(("" if PT.member(user) else f"Dữ liệu đã trả {R.usd(stats['cost'], 3)} USD. ")
+                     + "Không khôi phục được; muốn giữ lịch sử thì dùng Tạm dừng.").classes("text-sm font-semibold")
 
     def lock_dialog():
         """Chốt bộ Nháp: báo chi phí ước tính mỗi tháng trước khi bắt đầu chạy theo lịch."""
@@ -1256,7 +1326,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         with ui.dialog() as d, ui.card().style("max-width: 460px; border-radius: 14px"):
             ui.label(f"Chốt bộ “{cur['name']}”?").classes("text-lg font-semibold")
             ui.label(f"{len(kws)} từ khóa · {R.describe_schedule(sched)}").classes("text-sm")
-            ui.label(f"Ước tính khoảng {R.usd(per_month)} USD/tháng. Cả dự án: {R.usd(total)} / {budget:.0f} USD.")\
+            ui.label("Bộ check theo lịch tự động, tính vào ngân sách dự án (không trừ credit của bạn)."
+                     if PT.member(user) else
+                     f"Ước tính khoảng {R.usd(per_month)} USD/tháng. Cả dự án: {R.usd(total)} / {budget:.0f} USD.")\
                 .classes("text-sm")
             if budget and total > budget:
                 ui.label("Vượt ngân sách check rank của dự án: lượt check vượt sẽ bị dừng. Tăng ngân sách ở màn Ngân "
@@ -1328,19 +1400,16 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 at_time.props["aria-label"] = "Giờ check theo giờ Việt Nam"
             depth = ui.select({x: ("Tự động" if x == "auto" else f"Top {x}") for x in R.DEPTHS}, value=sc["depth"],
                               label="Độ sâu check").props("dense outlined").classes("w-48")
-            ui.label("Tự động: lần đầu check top 30; sau đó theo vị trí lần trước (≤ 18 → top 20, còn "
-                     "lại top 30). Check sâu hơn tốn tiền hơn.").classes("text-xs muted")
+            ui.label("Tự động: tool chọn độ sâu hợp lý theo vị trí lần trước. Check sâu hơn tốn hơn.").classes("text-xs muted")
             if st:
-                ui.label("Đổi nơi check thì các lần check sau có thể lệch so với trước (Google trả kết quả khác theo "
-                         "nơi tìm), không phải do website lên / xuống hạng.").classes("text-xs").style(
+                ui.label("Đổi nơi check có thể làm số lệch so với trước.").classes("text-xs").style(
                     f"color:{T.AMBER_TEXT}")
 
             pause_sw = ui.switch("Tạm dừng cả bộ (không check, không tính tiền; lịch sử vẫn giữ)",
                                  value=bool((st or {}).get("paused"))).props("dense") if st else None
             est_box = ui.element("div").classes("sr-cost-box w-full")
             if not st:
-                ui.label("Bộ mới ở dạng Nháp: thêm từ khóa thoải mái, chưa check và chưa tốn tiền. Bấm Chốt bộ khi "
-                         "sẵn sàng.").classes("text-xs muted")
+                ui.label("Bộ Nháp: thêm từ khóa thoải mái, chưa check, chưa tốn tiền. Bấm Chốt bộ khi sẵn sàng.").classes("text-xs muted")
 
             def sched_now() -> dict:
                 return {"type": kind.value, "weekdays": [i for i, cb in enumerate(day_checks) if cb.selected],
@@ -1359,9 +1428,10 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                     total = R.estimate_all(c, site, cfg.rank, end) - old + (0 if st["draft"] else mine)
                 budget = cfg.rank.monthly_budget_usd
                 with est_box:
-                    ui.label(f"Ước tính bộ này: {R.usd(mine)} USD/tháng ({len(kws)} từ khóa)"
-                             + (", tính khi Chốt bộ" if st["draft"] else "")
-                             + f" · cả dự án {R.usd(total)} / {budget:.0f} USD").classes("text-sm")
+                    if not PT.member(user):
+                        ui.label(f"Ước tính bộ này: {R.usd(mine)} USD/tháng ({len(kws)} từ khóa)"
+                                 + (", tính khi Chốt bộ" if st["draft"] else "")
+                                 + f" · cả dự án {R.usd(total)} / {budget:.0f} USD").classes("text-sm")
                     if budget and total > budget:
                         ui.label("Vượt ngân sách check rank của dự án: lượt check vượt sẽ bị dừng.").classes(
                             "text-sm").style(f"color:{T.RED}")
@@ -1446,22 +1516,75 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             if ed:
                 ui.button("Chốt bộ", icon="lock", on_click=lambda: lock_dialog()).props("unelevated no-caps")
     # ---- Bento tổng quan của bộ ----
+    # ---- AI (chỉ team): nhận định cả bộ, chẩn đoán, gợi ý URL mục tiêu, việc cần làm (web_ai_rank) ----
+    from types import SimpleNamespace as _NS
+
+    from . import web_ai_rank as WAR
+
+    def _goals():
+        if not commit_set:
+            return []
+        try:
+            with connect() as c:
+                kn = KP.rank_kpi_now(c, site, date.today(), sid)
+        except Exception:  # noqa: BLE001
+            return []
+        out = []
+        for key, name in (("month", f"Cam kết tháng {kn['month']}"), ("quarter", f"Cam kết quý {kn['quarter']}")):
+            need = {r["top"]: r[key]["need"] for r in kn["rows"] if r[key]["need"] is not None}
+            if need:
+                out.append((name, need))
+        return out if kn else []
+    ai_team = ed and not cl
+    ai_ctx = _NS(cfg=cfg, connect=connect, user=user, site=site, sid=sid, set_name=cur["name"], end=end, goals=_goals,
+                 save_keyword=lambda *a, **k: save_keyword(*a, **k), sync_sheet=lambda: _sync_sheet(),
+                 is_kpi=is_kpi, refresh=lambda: refresh())
+    ai_box = ui.element("div").classes("w-full")
+    if ai_team:
+        with ai_btn_slot:
+            WAR.insight_button(ui, ai_ctx, ai_box)
     bento_box = ui.element("div").classes("w-full")
     view_state = {"period": "check"}  # kỳ đang xem ở biểu đồ tăng trưởng
 
     # ---- Bảng: tìm, lọc, thùng rác; chọn nhiều thì hiện thanh thao tác hàng loạt ----
-    with ui.row().classes("w-full items-center gap-2 q-mt-sm"):
+    # Cả phần danh sách (tiêu đề, chip lọc, thanh chọn, bảng) nằm trong một card: các khối tạo rời bên dưới, rồi
+    # chuyển vào card theo đúng thứ tự (xem kw_card.move ở sau khi tạo bảng)
+    kw_card = ui.element("div").classes("sr-card sr-kw-card w-full")
+    with ui.row().classes("w-full items-center gap-2") as kw_head:
         ui.label(f"Danh sách keyword · {cur['name']}").classes("sr-section-title")
         ui.space()
-        search = ui.input(placeholder="Tìm từ khóa, URL, ghi chú…").props("dense outlined clearable").classes(
+        if ed and not cl:
+            ui.button("AI gợi ý URL mục tiêu", icon="auto_awesome", on_click=lambda: WAR.target_dialog(
+                ui, ai_ctx, [r for r in table.rows if not r.get("target_full")])).props(
+                "flat no-caps dense color=deep-purple-9").tooltip("AI chọn trang đích cho từ khóa chưa có URL mục tiêu")
+        search = ui.input(placeholder="Tìm từ khóa, URL…" if cl else "Tìm từ khóa, URL, ghi chú…").props("dense outlined clearable").classes(
             "w-64")
         search.props["prepend-icon"] = "search"
+        # nút Lọc: ẩn / hiện bộ chip (nhớ theo người dùng), số trên nút = số chip đang bật
+        try:
+            from nicegui import app as _app
+            _show_f = bool(_app.storage.user.get("rank_filters_open", False))
+        except Exception:  # noqa: BLE001
+            _app, _show_f = None, False
+        f_btn = ui.button("Lọc", icon="filter_list").props("outline no-caps dense color=grey-9").classes(
+            "sr-kf-btn")
+
+        def toggle_filters():
+            chip_slot.set_visibility(not chip_slot.visible)
+            f_btn.props(f'aria-expanded="{str(chip_slot.visible).lower()}"')
+            if _app:
+                try:
+                    _app.storage.user["rank_filters_open"] = chip_slot.visible
+                except Exception:  # noqa: BLE001
+                    pass
+        f_btn.on_click(toggle_filters)
         from .web_export import export_menu as _export_menu
         _export_menu(ui, cfg, connect, f"tu-khoa_{cur['name']}_{date.today():%Y-%m-%d}", lambda: export(),
                      label="Xuất bảng (Excel)", user=user, icon_only=True, category="rank")
-        filt = ui.select({k: v[0] for k, v in FILTERS.items() if not (cl and k == "note")}, value="all", label="Lọc",
-                         on_change=lambda: refresh()).props("dense outlined options-dense").classes("w-56")
+        filt = ChipFilter(lambda: refresh())
         trash_slot = ui.row()  # nút thùng rác (có số), vẽ lại khi làm mới
+    chip_slot = ui.element("div").classes("w-full sr-kchips")  # chip lọc theo nhóm (vẽ lại cùng bảng: có số đếm)
+    chip_slot.set_visibility(_show_f)
     wrong_box = ui.row().classes("w-full")
     selection_bar = ui.row().classes("w-full items-center gap-2 sr-bulk-bar")
     with selection_bar:
@@ -1480,6 +1603,11 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                         with ui.menu_item(on_click=fn).classes("items-center gap-3"):
                             ui.icon(icon, size="18px").classes("muted")
                             ui.label(label).classes("text-sm")
+        if ed and not cl:
+            ui.button("AI việc cần làm", icon="auto_awesome", on_click=lambda: WAR.actions_dialog(
+                ui, ai_ctx, list(table.selected))).props(
+                "unelevated no-caps dense color=deep-purple-1 text-color=deep-purple-9").tooltip(
+                "AI lập việc cụ thể để đưa các từ khóa đã chọn lên hạng (tối đa 15)")
         if owner:
             icon_btn(ui, "delete_forever", "Xóa vĩnh viễn (cả lịch sử, không khôi phục được)", lambda: remove(),
                      color="negative")
@@ -1495,30 +1623,34 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     def rank_sort(field: str) -> str:  # sắp theo hạng: ">20" (ngoài độ sâu) sau mọi số, ô trống cuối cùng
         return (f"(a, b, rowA, rowB) => (rowA.{field}_n ?? 9999) - (rowB.{field}_n ?? 9999)")
     cols = [
-        {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True, **w(230)},
+        {"name": "keyword", "label": "Từ khóa", "field": "keyword", "align": "left", "sortable": True,
+         "headerStyle": "min-width:180px"},  # cột co giãn: nhận phần rộng còn lại
         {"name": "pos", "label": "Vị trí", "field": "pos", "align": "center", "sortable": True,
-         ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos", **w(72)},
+         ":sort": "(a, b, rowA, rowB) => rowA.sort_pos - rowB.sort_pos", **w(84)},
         {"name": "change", "label": "Thay đổi", "field": "change", "align": "center", "sortable": True,
-         ":sort": "(a, b, rowA, rowB) => rowA.move - rowB.move", **w(100)},
+         ":sort": "(a, b, rowA, rowB) => rowA.move - rowB.move", **w(76)},
         {"name": "prev_pos", "label": "Trước", "field": "prev_pos", "align": "center", "sortable": True,
          ":sort": rank_sort("prev_pos"), **w(56)},
         {"name": "best", "label": "Tốt nhất", "field": "best", "align": "center", "sortable": True,
-         ":sort": rank_sort("best"), **w(68)},
+         ":sort": rank_sort("best"), **w(62)},
         {"name": "first_pos", "label": "Ban đầu", "field": "first_pos", "align": "center", "sortable": True,
-         ":sort": rank_sort("first_pos"), **w(72)},
+         ":sort": rank_sort("first_pos"), **w(64)},
         {"name": "aio", "label": "AIO", "field": "aio_rank", "align": "center", "sortable": True, **w(42)},
-        {"name": "intent", "label": "Ý định", "field": "intent", "align": "center", "sortable": True, **w(56)},
-        {"name": "volume", "label": "Volume", "field": "volume", "align": "center", "sortable": True, **w(66)},
-        {"name": "top", "label": "Mục tiêu", "field": "top", "align": "center", "sortable": True, **w(74),
+        {"name": "intent", "label": "Ý định", "field": "intent", "align": "center", "sortable": True, **w(54)},
+        {"name": "volume", "label": "Volume", "field": "volume", "align": "center", "sortable": True, **w(70)},
+        {"name": "top", "label": "Mục tiêu", "field": "top", "align": "center", "sortable": True, **w(78),
          ":sort": "(a, b, rowA, rowB) => (rowA.top_n || 999) - (rowB.top_n || 999)"},
         {"name": "checked_at", "label": "Check lúc", "field": "checked_at", "align": "center", "sortable": True,
-         **w(84), ":sort": "(a, b, rowA, rowB) => (rowA.checked_iso || '').localeCompare(rowB.checked_iso || '')"},
-        {"name": "link", "label": "URL", "field": "link", "align": "left", "sortable": False,
-         "headerStyle": "min-width:150px"},  # cột co giãn: nhận phần rộng còn lại thay cho cột Từ khóa
-        {"name": "chart", "label": "", "field": "id", "align": "center", **w(60)},
+         **w(88), ":sort": "(a, b, rowA, rowB) => (rowA.checked_iso || '').localeCompare(rowB.checked_iso || '')"},
+        {"name": "link", "label": "URL", "field": "link", "align": "left", "sortable": False, **w(180)},
+        {"name": "chart", "label": "", "field": "id", "align": "center", **w(84)},  # tạm dừng · sửa · biểu đồ
     ]
-    table = ui.table(columns=cols, rows=[], row_key="id", selection="multiple" if ed else "none",
+    if cl:  # khách hàng: bảng gọn — từ khóa, vị trí, thay đổi, volume, URL đang xếp hạng (không cột vận hành)
+        cols = [x for x in cols if x["name"] in ("keyword", "pos", "change", "volume", "link", "chart")]
+    table =ui.table(columns=cols, rows=[], row_key="id", selection="multiple" if ed else "none",
                      pagination=50).classes("w-full sr-kw-table").props("flat bordered dense binary-state-sort")
+    for el_ in (kw_head, chip_slot, wrong_box, selection_bar, table):
+        el_.move(kw_card)
     # Tìm theo từ khóa, URL đang xếp hạng, URL mục tiêu, ghi chú. Hàm Python bên dưới lọc giống hệt để ô "chọn tất
     # cả" biết đúng các dòng đang khớp tìm kiếm (trên mọi trang, không chỉ trang đang xem).
     SEARCH_FIELDS = ("keyword", "link_full", "target_full", "note")
@@ -1543,7 +1675,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     table.add_slot("body-cell-keyword", """
         <q-td :props="props">
           <div class="row no-wrap items-center" style="gap: 4px">
-            <span class="sr-kw-link" role="button" tabindex="0" :style="{opacity: props.row.paused ? 0.55 : 1}"
+            <span class="sr-kw-link" role="button" tabindex="0"
                   @click="$parent.$emit('chart', props.row)" @keydown.enter="$parent.$emit('chart', props.row)"
                   :title="'Xem chi tiết: ' + props.value">{{ props.value }}</span>
             <q-icon v-if="props.row.note" name="sticky_note_2" size="15px" color="amber-8">
@@ -1555,17 +1687,14 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                       <q-tooltip>{{ {'I': 'Informational (Thông tin)', 'N': 'Navigational (Điều hướng)', 'C': 'Commercial (Cân nhắc mua)', 'T': 'Transactional (Mua / giao dịch)'}[props.row.intent] }}</q-tooltip></span></q-td>""")
     table.add_slot("body-cell-pos", """
         <q-td :props="props" class="text-center">
-          <span v-if="props.row.checked" class="sr-pos" :style="{opacity: props.row.paused ? 0.7 : 1}">
-            <q-icon class="medal" :name="props.row.medal_icon || 'circle'" size="15px"
-                    :style="{color: props.row.medal || 'transparent'}" />
-            <span class="chip" :style="{background: props.row.bg, color: props.row.fg}">{{ props.value }}</span>
+          <span v-if="props.row.checked" class="sr-pos2">
+            <span :class="props.row.sort_pos >= 999 ? 'muted' : ''">{{ props.value }}</span>
+            <q-icon v-if="props.row.sort_pos <= 3" name="star" size="14px" class="sr-star" />
             <i v-if="props.row.date_old" class="old"></i>
-            <q-icon v-if="props.row.paused" name="pause_circle" size="14px" color="grey-6" />
             <q-tooltip>Lần check gần nhất: {{ props.row.date_full }}<template v-if="props.row.date_old"><br/>Cũ hơn
-              lần check mới nhất của bộ</template><template v-if="props.row.paused"><br/>Đang tạm dừng: giữ thứ hạng
-              lần check gần nhất, không check tiếp</template></q-tooltip></span>
+              lần check mới nhất của bộ</template></q-tooltip></span>
           <span v-else-if="props.row.paused" class="sr-pill grey"><q-icon name="pause" size="13px" /> dừng</span>
-          <span v-else class="muted">chờ check</span>
+          <span v-else class="muted">{{ props.row.guest ? '–' : 'chờ check' }}</span>
         </q-td>""")
     table.add_slot("body-cell-aio", """
         <q-td :props="props" class="text-center">
@@ -1579,8 +1708,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     table.add_slot("body-cell-first_pos", """
         <q-td :props="props" class="text-center">
           <span v-if="props.value" class="row inline no-wrap items-center" style="gap:2px">
-            <span :class="'sr-rk ' + (props.row.first_pos_n <= 3 ? 'r3' : props.row.first_pos_n <= 10 ? 'r10'
-                  : props.row.first_pos_n < 999 ? 'r20' : 'out')">{{ props.value }}</span>
+            <span :class="props.row.first_pos_n >= 999 ? 'muted' : ''">{{ props.value }}</span>
             <q-icon v-if="props.row.since_first" :name="props.row.since_first > 0 ? 'trending_up' : 'trending_down'"
                     size="15px" :style="{color: props.row.since_first > 0 ? '#1E7C31' : '#C2410C'}">
               <q-tooltip>{{ props.row.since_first > 0 ? 'Tốt hơn' : 'Kém hơn' }} so với lần check đầu tiên
@@ -1590,15 +1718,14 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
     for name_ in ("prev_pos", "best"):  # vị trí phụ: số mờ hơn, cùng màu nhóm hạng
         table.add_slot(f"body-cell-{name_}", """
         <q-td :props="props" class="text-center">
-          <span v-if="props.value" :class="'sr-rk ' + (props.row['""" + "{0}" + """_n'] <= 3 ? 'r3'
-                : props.row['""" + "{0}" + """_n'] <= 10 ? 'r10' : props.row['""" + "{0}" + """_n'] < 999 ? 'r20' : 'out')">
+          <span v-if="props.value" :class="props.row['""" + "{0}" + """_n'] >= 999 ? 'muted' : ''">
             {{ props.value }}</span>
           <span v-else class="muted">–</span>
         </q-td>""".replace("{0}", name_))
     table.add_slot("body-cell-checked_at", """
         <q-td :props="props" class="text-center">
-          <span v-if="props.value" :class="props.row.date_old ? 'muted' : ''" style="white-space: nowrap;
-                font-size: 12.5px">{{ props.value }}<q-tooltip v-if="props.row.date_old">Cũ hơn lần check mới nhất
+          <span v-if="props.value" :class="props.row.date_old ? 'muted' : ''" style="white-space: nowrap">{{
+                props.value }}<q-tooltip v-if="props.row.date_old">Cũ hơn lần check mới nhất
                 của bộ</q-tooltip></span>
           <span v-else class="muted">–</span>
         </q-td>""")
@@ -1611,20 +1738,30 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         </q-td>""")
     table.add_slot("body-cell-top", """
         <q-td :props="props" class="text-center">
-          <span v-if="props.value" :class="'sr-pill goal-' + (props.row.top_n <= 3 ? 3 : props.row.top_n <= 5 ? 5
-                : props.row.top_n <= 10 ? 10 : 'x') + (props.row.top_hit ? ' hit' : '')">
-            <q-icon v-if="props.row.top_hit" name="check" size="13px" />{{ props.value }}
+          <span v-if="props.value" class="sr-goal2" :class="props.row.top_hit ? 'hit' : ''">
+            {{ props.value }}<q-icon v-if="props.row.top_hit" name="check" size="14px" />
             <q-tooltip>{{ props.row.top_hit ? 'Đã đạt Top mục tiêu' : 'Chưa đạt Top mục tiêu' }}</q-tooltip></span>
           <span v-else class="muted">–</span>
         </q-td>""")
     table.add_slot("body-cell-change", """
         <q-td :props="props">
-          <span v-if="props.value === 'Mới'" class="sr-pill new">Mới<q-tooltip>Lần check đầu tiên của từ khóa
+          <span v-if="props.value === 'Mới' && props.row.has_rank" class="sr-heart"><q-icon name="favorite"
+              size="16px" /><q-tooltip>Lần đầu có thứ hạng (vị trí {{ props.row.pos }})</q-tooltip></span>
+          <span v-else-if="props.value === 'Mới'" class="muted">–<q-tooltip>Lần check đầu tiên, chưa có thứ hạng
             </q-tooltip></span>
           <span v-else-if="!props.value || props.value === '–'" class="muted">–</span>
+          <span v-else-if="props.row.move === 100" class="sr-heart"><q-icon name="favorite" size="16px" />
+            <q-tooltip>Vào {{ props.row.change_short }}: lần trước ngoài {{ props.row.change_short }}, nay vị trí
+              {{ props.row.pos }} (lên ít nhất {{ props.row.chg_min }} bậc)</q-tooltip></span>
+          <span v-else-if="props.row.move === -100" class="sr-chg down">−{{ props.row.chg_min ?? '' }}<q-icon
+              size="15px" name="trending_down" />
+            <q-tooltip>Rớt khỏi {{ props.row.change_short }}: lần này ngoài {{ props.row.change_short }} nên không
+              biết vị trí thật, xuống ít nhất {{ props.row.chg_min }} bậc</q-tooltip></span>
           <span v-else class="sr-chg" :class="props.row.move > 0 ? 'up' : 'down'">
-            <q-icon :name="props.row.move > 0 ? 'trending_up' : 'trending_down'" size="16px" />
-            {{ props.row.change_short }}<q-tooltip>{{ props.value }} so với lần check trước</q-tooltip></span>
+            {{ props.row.move > 0 ? '+' : '−' }}{{ props.row.change_short }}<q-icon size="15px"
+              :name="props.row.move > 0 ? 'trending_up' : 'trending_down'" />
+            <q-tooltip>{{ props.row.move > 0 ? 'Lên' : 'Xuống' }} {{ props.row.change_short }} bậc so với lần check
+              trước</q-tooltip></span>
         </q-td>""")
     table.add_slot("body-cell-link", """
         <q-td :props="props">
@@ -1645,7 +1782,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         </q-td>""")
     table.add_slot("body-cell-chart", """
         <q-td :props="props">
-          <div class="row no-wrap justify-center">
+          <div class="row no-wrap justify-end items-center">
+            <q-icon v-if="props.row.paused" name="pause_circle" size="17px" color="grey-6" class="q-mr-xs">
+              <q-tooltip>Đang tạm dừng: giữ thứ hạng lần check gần nhất, không check tiếp</q-tooltip></q-icon>
             <q-btn v-if="props.row.can_edit" flat round dense icon="edit" color="grey-7" size="sm"
                    :aria-label="'Sửa ' + props.row.keyword" @click="$parent.$emit('edit', props.row)">
               <q-tooltip>Sửa Top mục tiêu / URL mục tiêu</q-tooltip></q-btn>
@@ -1698,12 +1837,15 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             with ui.row().classes("w-full items-center no-wrap"):
                 ui.label(row["keyword"]).classes("text-lg font-semibold col")
                 ui.button(icon="close", on_click=d.close).props("flat round dense")
+            if ed and not cl:
+                WAR.diag_section(ui, ai_ctx, row, serps)
             with ui.tabs().classes("w-full sr-tabs").props("align=left no-caps dense inline-label") as tabs:
                 t1 = ui.tab("Vị trí", icon="show_chart")
                 t0 = ui.tab("Kết quả Google", icon="travel_explore")
-                t2 = ui.tab(f"Các lần check · {len(hist)}", icon="event_note")
+                t2 = ui.tab(f"Lịch sử check · {len(hist)}", icon="event_note")
                 t3 = ui.tab(f"Nhật ký · {len(log)}", icon="history")
-                if cl:
+                if cl:  # khách: chỉ biểu đồ vị trí + kết quả Google, không lịch sử từng lần check / nhật ký
+                    t2.set_visibility(False)
                     t3.set_visibility(False)
             with ui.tab_panels(tabs, value=t1).classes("w-full").props("animated=false"):
                 with ui.tab_panel(t1).classes("q-px-none"):
@@ -1716,8 +1858,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                            "itemStyle": {"color": "#1E7C31"}, "label": {"show": True,
                                                                                        "position": "top"},
                                            **event_marks(pts, evs)}]}).classes("w-full").style("height: 300px")
-                    ui.label("Trục vị trí đảo ngược: lên cao là tốt hơn. Điểm trống = ngoài độ sâu check. Vạch tím là "
-                             "mốc sự kiện.").classes("text-xs muted")
+                    ui.label("Càng lên cao càng tốt." + ("" if cl else " Vạch tím là mốc sự kiện.")).classes(
+                        "text-xs muted")
                 with ui.tab_panel(t0).classes("q-px-none"):
                     serp_panel(row, serps)
                 with ui.tab_panel(t2).classes("q-px-none"):
@@ -1742,8 +1884,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                             "Xóa lần check này (chỉ khi kết quả sai)")
                         if owner:
                             with checks:
-                                ui.label("Chỉ xóa lần check có kết quả sai (ví dụ Google trả trang lạ). Việc xóa có "
-                                         "ghi nhật ký.").classes("text-xs muted q-mt-sm")
+                                ui.label("Chỉ xóa lần check có kết quả sai.").classes("text-xs muted q-mt-sm")
 
                     def drop_check(dd: str):
                         if not owner:
@@ -1753,7 +1894,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                         ui.notify(f"Đã xóa lần check {_vn(dd)}", type="positive")
                         draw_checks()
                         refresh()
-                    draw_checks()
+                    if not cl:  # khách không có tab này: không gửi danh sách lần check / độ sâu xuống trình duyệt
+                        draw_checks()
                 with ui.tab_panel(t3).classes("q-px-none"):
                     if not log:
                         ui.label("Chưa có thay đổi nào được ghi lại.").classes("text-sm muted")
@@ -1783,8 +1925,10 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
 
         if not serps:
             T.empty_state(ui, "travel_explore", "Chưa có: lần check sau sẽ có",
+                          "Kết quả Google của từ khóa sẽ hiện ở đây." if cl else
                           "Tool lưu AI Overview và 10 kết quả đầu từ kết quả check rank"
-                          + (" (không tốn thêm phí, AI Overview hiện chậm thêm tối đa 0,0006 USD)." if ed else "."))
+                          + (" (không tốn thêm phí, AI Overview hiện chậm thêm tối đa 0,0006 USD)."
+                             if ed and not PT.member(user) else "."))
             return
         box = ui.column().classes("w-full gap-3")
         from . import aio as AO
@@ -1825,7 +1969,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                             ui.label("Không tải được nội dung AI Overview").classes("text-xs muted")
                 # ---- Nguồn AI trích ----
                 if cur["aio"] and cur["refs"]:
-                    ui.label("Nguồn AI Overview trích").classes("sr-section-title").style("font-size:14px")
+                    ui.label("AI Overview trích nguồn").classes("sr-section-title").style("font-size:14px")
                     for x in cur["refs"]:
                         me = R._host_match(x["domain"], host)
                         with ui.row().classes("w-full items-center no-wrap gap-2 sr-serp-row" + (" me" if me else "")):
@@ -1860,7 +2004,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                             if ahead:
                                 ui.label(f"xếp trên {own_name}").classes("sr-delta down")
                 # ---- Top 10 ----
-                ui.label("10 kết quả đầu trên Google").classes("sr-section-title").style("font-size:14px")
+                ui.label("Top 10 trên Google").classes("sr-section-title").style("font-size:14px")
                 ref_hosts = {x["domain"] for x in cur["refs"]}
                 for x in R.compare_top10(cur["top10"], prev["top10"] if prev else None):
                     me = R._host_match(x["domain"], host)
@@ -1883,9 +2027,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                 f"So với lần check {_vn(prev['date'])[:5]}")
                 if not cur["top10"]:
                     ui.label("Không có kết quả tự nhiên trong lần check này.").classes("text-sm muted")
-                ui.label("Lấy từ kết quả check rank (DataForSEO, cùng nơi check của bộ), trong độ sâu đã check. "
-                         "Không tốn thêm phí.").classes(
-                    "text-xs muted")
+                if not cl:
+                    ui.label("Lấy từ kết quả check rank, không tốn thêm.").classes(
+                        "text-xs muted")
 
         if len(serps) > 1:
             opts = {i: _vn(x["date"]) + (" (mới nhất)" if i == 0 else "") for i, x in enumerate(serps)}
@@ -1907,7 +2051,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         with ui.dialog() as d, ui.card().style("min-width: 560px; max-width: 94vw; border-radius: 14px"):
             ui.label(f"Sửa: {row['keyword']}").classes("text-lg font-semibold")
             if is_kpi:
-                ui.label("Từ khóa cam kết: tool ghi thay đổi lên tab Từ khóa cam kết của sheet dự án.").classes(
+                ui.label("Thay đổi được ghi lên sheet dự án.").classes(
                     "text-sm muted")
             top = ui.select({0: "Không đặt"} | {t: f"Top {t}" for t in TOPS}, value=row.get("top_n") or 0,
                             label="Top mục tiêu").props("outlined dense").classes("w-48")
@@ -2001,11 +2145,36 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             from . import rank_overview as RO
             aio_now = RO.aio_for(c, cfg, [k for k in kws if not k["own_paused"]])
         trash_slot.clear()
-        if n_trash:  # thùng rác chỉ còn cho từ khóa đã bỏ trước khi có Xóa vĩnh viễn
+        if n_trash and not cl:  # thùng rác chỉ còn cho từ khóa đã bỏ trước khi có Xóa vĩnh viễn
             with trash_slot:
                 icon_btn(ui, "delete_sweep", "Thùng rác cũ: từ khóa đã bỏ theo dõi trước đây", lambda: trash_dialog(),
                          color="grey-8", badge=n_trash)
-        keep = FILTERS.get(filt.value, FILTERS["all"])[1]
+        keep = filter_keep(filt.on)
+        f_btn.text = f"Lọc · {len(filt.on)}" if filt.on else "Lọc"
+        f_btn.props(remove="color=grey-9 color=primary").props("color=primary" if filt.on else "color=grey-9")
+        chip_slot.clear()
+        with chip_slot:
+            for gi, (gname, keys) in enumerate(FILTER_GROUPS):
+                if cl:  # khách: chỉ lọc theo kết quả (thứ hạng, biến động), không nhóm "Cần xử lý" / "Chưa check"
+                    keys = [x for x in keys if x in GUEST_FILTERS]
+                    if not keys:
+                        continue
+                with ui.element("div").classes("sr-kchip-g"):
+                    ui.label(gname).classes("sr-kchip-gl")
+                    for x in keys:
+                        n_ = sum(1 for k in kws if FILTERS[x][1](k))
+                        on_ = x in filt.on
+                        if not n_ and not on_:
+                            continue
+                        b_ = ui.element("button").classes("sr-kchip" + (" on" if on_ else "")).props(
+                            f'type="button" aria-pressed="{str(on_).lower()}"')
+                        b_.on("click", lambda _, x=x: filt.toggle(x))
+                        with b_:
+                            ui.label("Chưa vào top" if cl and x == "out" else CHIP_LABEL.get(x, FILTERS[x][0]))
+                            ui.label(f"{n_:,}".replace(",", ".")).classes("sr-kchip-n")
+                    if gi == 0 and filt.on:  # nút bỏ lọc ở cuối hàng đầu, không chiếm hàng riêng
+                        ui.button("Bỏ lọc", icon="close", on_click=filt.clear).props(
+                            "flat dense no-caps size=sm color=grey-8").classes("sr-kchip-clear")
         rows = []
         newest = max((k["date"] for k in kws if k["date"]), default=None)
         with connect() as c:
@@ -2035,9 +2204,12 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 "volume": ((vols[k["id"]]["volume"] if vols[k["id"]]["volume"] is not None else -1)
                            if k["id"] in vols else None),
                 "checked": bool(k["date"]), "sort_pos": cur_pos or 999, "bg": bg, "fg": fg,
-                "change": text, "change_color": color, "move": move, "best": k["best"] or "",
+                "change": text, "change_color": color, "best": k["best"] or "",
+                # sắp theo Thay đổi: lần đầu có hạng (trái tim) xếp ngay sau "vào top", trước mọi số lên hạng
+                "move": 99 if text == "Mới" and k["rank"] is not None else move,
                 "best_n": k["best"] if k["best"] is not None else None,
                 "change_short": _short_change(text),
+                "chg_min": _min_move(k, move), "has_rank": k["rank"] is not None,
                 "since_first": (0 if k["id"] not in firsts or not k["date"] else
                                 ((firsts[k["id"]][0] if firsts[k["id"]][0] is not None else 999)
                                  - (k["rank"] if k["rank"] is not None else 999))),
@@ -2065,6 +2237,9 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 "intent2": [c_ for c_, _ in (intents.get(k["id"]) or ("", "", []))[2]],
                 "intent_tip": IN.tip(intents.get(k["id"])),
             })
+            if cl:  # khách: không URL mục tiêu / sai URL, không trạng thái tạm dừng, không độ sâu check
+                rows[-1].update({"guest": True, "target": "", "target_full": "", "wrong": False, "target_pos": "",
+                                 "paused": False, "own_paused": False, "source": ""})
         table.rows = rows
         table.selected = []
         on_select()
@@ -2079,12 +2254,15 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                   on_filter=show_in_table, short_url=short, kpi_now=kpi_now, aio=aio_now, aio_link=f"/aio?bo={sid}")
         with connect() as c:
             est = R.estimate(c, cfg.rank, sched, [k["depth"] for k in kws])
-        cost_label.text = f"≈ {R.usd(est)} USD / tháng cho bộ này"
+        cost_label.text = "" if PT.member(user) else f"≈ {R.usd(est)} USD / tháng cho bộ này"
         last_h = hist[-1] if hist else None
         # hàng thông tin luôn là lần check gần nhất; đang check thì trạng thái ở hàng tiến độ
         status_row.clear()
         with status_row:
-            if last_h:
+            if last_h and cl:  # khách: chỉ ngày cập nhật, không số từ khóa chờ check
+                at = max((k["checked_at"] for k in kws if k.get("checked_at")), default=None)
+                stat("schedule", f"Cập nhật {_local(at) if at else _vn(last_h['date'])}")
+            elif last_h:
                 n_un = last_h.get("unchecked", 0)
                 stat("check_circle" if not n_un else "error_outline",
                      f"{last_h['checked']}/{len(kws)} từ khóa đã kiểm tra",
@@ -2093,29 +2271,24 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                 at = max((k["checked_at"] for k in kws if k.get("checked_at")), default=None)
                 stat("schedule", f"Cập nhật {_local(at) if at else _vn(last_h['date'])}", "Lần check mới nhất của bộ")
             else:
-                stat("schedule", "Chưa kiểm tra lần nào")
+                stat("schedule", "Chưa có số liệu" if cl else "Chưa kiểm tra lần nào")
             if not cl:
                 stat("event_repeat", when.replace(" vào ", " · "),
-                     f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed else "Lịch check tự động")
+                     f"Lịch check tự động; ước tính ≈ {R.usd(est)} USD / tháng" if ed and not PT.member(user)
+                     else "Lịch check tự động")
             if cur["paused"] and not cl:
                 stat("pause_circle", "Đang tạm dừng", "Bộ không được check tự động, không tính tiền", tone="warn")
             if is_kpi:
                 stat("sync", "Đồng bộ sheet cam kết",
                      "Thêm / sửa / bỏ từ khóa ở đây thì tool ghi lên tab Từ khóa cam kết")
-        wrong = sum(1 for k in kws if k["target_url"] and k["ranking_url"] and k["ranking_url"] != k["target_url"])
-        wrong_box.clear()
-        if wrong and filt.value != "wrong" and not cl:
-            with wrong_box:
-                ui.button(f"{wrong} sai URL mục tiêu", icon="warning",
-                          on_click=lambda: filt.set_value("wrong")).props(
-                    "flat dense no-caps color=orange-9 size=sm")
+        wrong_box.clear()  # số "sai URL mục tiêu" giờ nằm ở chip lọc
         if on_budget_change:
             on_budget_change()
 
     def show_in_table(key: str):
         """Từ thẻ tổng quan xuống bảng: đặt bộ lọc rồi cuộn tới bảng."""
         filt.set_value(key)
-        with filt:  # nút bấm nằm trong khung vừa vẽ lại: chạy JS trong ngữ cảnh còn sống
+        with chip_slot:  # nút bấm nằm trong khung vừa vẽ lại: chạy JS trong ngữ cảnh còn sống
             ui.run_javascript("document.querySelector('.sr-kw-table')?.scrollIntoView({behavior: "
                               "matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', "
                               "block: 'start'})")
@@ -2139,7 +2312,15 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                          + (f" ({e['existing']} đã có trong bộ, không tính)" if e["existing"] else "")
                          ).classes("text-sm font-medium")
             if not e["new"]:
-                ui.label("Không tốn thêm tiền.").classes("text-sm")
+                ui.label("Không tốn thêm tiền." if not PT.member(user) else "Không trừ thêm credit.").classes("text-sm")
+                return
+            if PT.member(user):  # Member: giá bằng credit; lịch tự động tính vào ngân sách dự án
+                ui.label(f"Thêm vào bộ: {PT.cost('volume')} credit (lấy volume). Bấm Check ngay: "
+                         f"{PT.rank_points([20])} credit / từ khóa. Check theo lịch của bộ không trừ credit của bạn."
+                         ).classes("text-sm")
+                if over:
+                    ui.label("Vượt ngân sách check rank của dự án: phần vượt sẽ không được thêm. Nhờ Owner / Admin."
+                             ).classes("text-sm font-medium")
                 return
             ui.label(f"Mỗi lần check thêm khoảng {R.usd(e['per_check'], 4)} USD "
                      + (f"(lần đầu check top {e['depth']}; sau đó tool chỉnh độ sâu theo vị trí nên thường rẻ hơn)."
@@ -2189,6 +2370,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         items = parse_items(paste.value or "")
         if not items:
             return
+        if PT.take(ui, user, cfg, "volume", detail=f"thêm {len(items)} từ khóa") is False:
+            return
         if is_kpi:  # bộ Cam kết: thêm lên sheet trước, rồi đọc lại sheet
             add_btn.props("loading")
             try:
@@ -2209,7 +2392,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
 
         def fetch_volume():  # lấy volume một lần duy nhất khi thêm: cả lượt thêm chung một lần gọi
             with connect() as c:
-                return V.refresh(c, site, cfg, end, log=lambda m: None)
+                with SP.runner(str(user)):
+                    return V.refresh(c, site, cfg, end, log=lambda m: None)
         if r["added"]:
             try:
                 await run.io_bound(fetch_volume)
@@ -2222,12 +2406,14 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             parts.append(f"đã có sẵn {len(r['exists'])}")
         if r["over_budget"]:
             parts.append(f"KHÔNG thêm {len(r['over_budget'])} keyword vì vượt ngân sách: {', '.join(r['over_budget'][:5])}"
-                         + (" (ngân sách check rank của dự án đang là 0 USD/tháng: đặt ở màn Ngân sách check rank, "
-                            "hoặc thêm vào một bộ Nháp trước)" if not cfg.rank.monthly_budget_usd else ""))
+                         + ((" (dự án chưa có ngân sách check rank: nhờ Owner đặt, hoặc thêm vào một bộ Nháp "
+                             "trước)" if PT.member(user) else
+                             " (ngân sách check rank của dự án đang là 0 USD/tháng: đặt ở màn Ngân sách check rank, "
+                             "hoặc thêm vào một bộ Nháp trước)") if not cfg.rank.monthly_budget_usd else ""))
         if r["bad_url"]:
             parts.append(f"bỏ qua {len(r['bad_url'])} dòng có URL không thuộc site")
         add_result.text = " · ".join(parts) + (f". Ước tính: {R.usd(r['estimate'])} USD/tháng."
-                                               if r.get("estimate") is not None else ".")
+                                               if r.get("estimate") is not None and not PT.member(user) else ".")
         paste.value = ""
         show_cost("")
         if not r["over_budget"] and not r["bad_url"]:
@@ -2283,7 +2469,8 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                     "unelevated no-caps color=negative")
         d.open()
 
-    async def check_now(only: list[int] | None = None, confirmed: bool = False):
+    async def check_now(only: list[int] | None = None, confirmed: bool = False, points_ok: bool = False,
+                        big_ok: bool = False, depth: int | None = None):
         if not ed:  # chặn ở server: nút bị ẩn chưa đủ, sự kiện vẫn gửi được từ trình duyệt
             return
         from nicegui import background_tasks
@@ -2301,7 +2488,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             return
         creds = R.load_credentials(cfg.dataforseo_secret)
         if not creds:
-            ui.notify(f"Chưa có API key DataForSEO trong {cfg.dataforseo_secret}", type="negative")
+            ui.notify("Chưa kết nối dịch vụ check rank: Owner nhập ở Cài đặt tích hợp", type="negative")
             return
         if not confirmed:
             today = date.today().isoformat()
@@ -2333,6 +2520,64 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
                                 "unelevated no-caps")
                 d.open()
                 return
+        # credit theo độ sâu thật của từng từ khóa (1 credit mỗi 10 kết quả)
+        with connect() as c:
+            depth_of = {k["id"]: k["depth"] for k in R.keywords(c, site, end, sid)}
+        if len(ids) >= BIG_CHECK and not big_ok:  # check nhiều từ khóa một lúc: báo giá, cho chọn top 10 cho lần này
+            def cost_of(cap: int | None) -> str:
+                ds = [min(depth_of.get(i, 20), cap) if cap else depth_of.get(i, 20) for i in ids]
+                if PT.member(user):
+                    return f"{PT.rank_points(ds):,} credit".replace(",", ".")
+                return f"≈{sum(R._pages(d) for d in ds) * cfg.rank.price_per_page:.2f} USD".replace(".", ",")
+            deep = max(depth_of.get(i, 20) for i in ids)
+            with ui.dialog() as d, ui.card().style("max-width: 480px; border-radius: 14px"):
+                ui.label(f"Check {len(ids):,} từ khóa?".replace(",", ".")).classes("text-lg font-semibold")
+                ui.label("Check nhiều từ khóa một lúc tốn đáng kể. Lần đầu cần biết từ khóa có trong top 10 hay không "
+                         "thì check top 10 trước, rẻ hơn; các lần check theo lịch sau vẫn theo độ sâu của bộ.").classes(
+                    "text-sm")
+                with ui.column().classes("w-full gap-1 q-mt-sm sr-kr-paid"):
+                    ui.label(f"Theo độ sâu của bộ (tới top {deep}): {cost_of(None)}").classes("text-sm")
+                    if deep > 10:
+                        ui.label(f"Chỉ top 10 cho lần này: {cost_of(10)}").classes("text-sm")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                    async def go(cap):
+                        d.close()
+                        await check_now(ids, confirmed=True, points_ok=points_ok, big_ok=True, depth=cap)
+                    if deep > 10:
+                        ui.button("Chỉ top 10", on_click=lambda: go(10)).props("outline no-caps")
+                    ui.button(f"Check top {deep}", icon="play_arrow", on_click=lambda: go(None)).props(
+                        "unelevated no-caps")
+            d.open()
+            return
+        if depth:
+            depth_of = {i: min(v, depth) for i, v in depth_of.items()}
+        pts = PT.rank_points([depth_of.get(i, 20) for i in ids])
+        if PT.member(user) and not points_ok:
+            bal = PT.my_balance(user) or {"left": 0, "limit": 0}
+            with ui.dialog() as d, ui.card().style("max-width: 440px; border-radius: 14px"):
+                ui.label(f"Check ngay {len(ids)} từ khóa?").classes("text-lg font-semibold")
+                with ui.row().classes("items-start no-wrap gap-2 sr-kr-paid"):
+                    ui.icon("toll", size="18px")
+                    ui.label(f"Trừ {pts:,} credit (1 credit mỗi 10 kết quả theo độ sâu của từng từ khóa). Còn "
+                             f"{bal['left']:,} / {bal['limit']:,} credit tháng này.".replace(",", ".")).classes("text-sm")
+                if pts > bal["left"]:
+                    ui.label("Không đủ credit: bỏ bớt từ khóa hoặc nhờ Owner / Admin cấp thêm.").classes(
+                        "text-sm").style(f"color:{T.RED}")
+                with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
+                    ui.button("Hủy", on_click=d.close).props("flat no-caps")
+
+                    async def ok():
+                        d.close()
+                        await check_now(ids, confirmed=True, points_ok=True, big_ok=True, depth=depth)
+                    b_ok = ui.button("Check", icon="play_arrow", on_click=ok).props("unelevated no-caps")
+                    if pts > bal["left"]:
+                        b_ok.disable()
+            d.open()
+            return
+        if PT.take(ui, user, cfg, "rank", points=pts, detail=f"{len(ids)} từ khóa · {cur['name']}") is False:
+            return
         _RUNNING.add(site)
         _PAUSED.pop((site, sid), None)
         _PROGRESS[site] = {"set": cur["name"], "total": len(ids), "posted": 0, "done": 0, "failed": 0,
@@ -2341,7 +2586,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         status_running()
         ui.notify(f"Bắt đầu check {len(ids)} từ khóa", caption="Có thể sang trang khác, xong tool sẽ báo",
                   type="info", position="bottom-right", classes="sr-toast", timeout=4000)
-        background_tasks.create(_check_job(cfg, connect, site, end, ids, creds, str(user), sid))
+        background_tasks.create(_check_job(cfg, connect, site, end, ids, creds, str(user), sid, depth))
 
     def stop_check():
         st = _PROGRESS.get(site)
@@ -2414,7 +2659,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         with ui.dialog() as d, ui.card().style("min-width: 460px; max-width: 94vw; border-radius: 14px"):
             ui.label(title).classes("text-lg font-semibold")
             if is_kpi:
-                ui.label("Bộ Cam kết: tool ghi thay đổi lên tab Từ khóa cam kết của sheet.").classes("text-xs muted")
+                ui.label("Thay đổi được ghi lên sheet dự án.").classes("text-xs muted")
             vals = build()
             err = ui.label().classes("text-sm").style(f"color:{T.RED}")
 
@@ -2536,8 +2781,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         small_dialog(f"{'Chuyển' if mode == 'move' else 'Chép'} {len(rows)} từ khóa sang bộ khác", lambda: (
             ui.select(others, value=next(iter(others)), label="Bộ đích").props("outlined dense").classes("w-full"),
             ui.label("Chuyển: giữ nguyên lịch sử rank, từ khóa rời bộ này." if mode == "move" else
-                     "Chép: bộ đích check riêng theo nơi check của nó (tốn thêm tiền), lịch sử bắt đầu từ lần check "
-                     "đầu ở bộ đó.").classes("text-xs muted"))[0], go,
+                     "Bộ mới check riêng (tốn thêm), lịch sử bắt đầu từ lần check đầu.").classes("text-xs muted"))[0], go,
             "Chuyển" if mode == "move" else "Chép")
 
     def trash_dialog():
@@ -2610,8 +2854,7 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
             with ui.row().classes("w-full items-center no-wrap"):
                 ui.label("Mốc sự kiện").classes("text-lg font-semibold col")
                 ui.button(icon="close", on_click=d.close).props("flat round dense")
-            ui.label("Hiện thành vạch tím trên biểu đồ tăng trưởng và biểu đồ từng từ khóa, để biết rank lên / xuống "
-                     "sau việc gì.").classes("text-sm muted")
+            ui.label("Hiện trên biểu đồ để biết hạng lên / xuống sau việc gì.").classes("text-sm muted")
             box = ui.column().classes("w-full gap-0")
 
             def draw():
@@ -2694,6 +2937,20 @@ def _set_panel(ui, cfg, connect, user: str, on_budget_change, set_id: int, hooks
         def aio_text(kid):
             a, cited = flags.get(kid, (False, None))
             return "" if not a else ("Có, được trích" if cited else "Có, chưa trích")
+        if cl:  # khách hàng: kết quả, không URL mục tiêu / giờ check / độ sâu check
+            _sheet(wb, "Thứ hạng", [("STT", 6, INT), ("Từ khóa", 34, None), ("Vị trí", 8, None),
+                                    ("Thay đổi", 18, None), ("Volume/tháng", 12, INT), ("URL đang xếp hạng", 60, None)],
+                   [[i, k["keyword"], _pos(k["rank"], k["last_depth"]), change_text(k)[0],
+                     (vols.get(k["id"]) or {}).get("volume"), k["ranking_url"] or ""] for i, k in enumerate(kws, 1)])
+            _sheet(wb, "Tăng trưởng", [("Ngày", 12, "dd/mm/yyyy"), ("Top 3", 8, INT), ("Top 4–5", 9, INT),
+                                       ("Top 6–10", 9, INT), ("Hạng 11+", 10, INT), ("Vị trí TB", 10, None)],
+                   [[date.fromisoformat(h["date"]), h["top3"], h["top5"], h["top10"], h["top30"], h["avg"]]
+                    for h in growth])
+            _sheet(wb, "Lịch sử", [("Từ khóa", 34, None), ("Ngày", 12, "dd/mm/yyyy"), ("Vị trí", 8, INT)],
+                   [[k["keyword"], date.fromisoformat(d), r] for k in kws for d, r, _ in hist[k["id"]]])
+            buf = io.BytesIO()
+            wb.save(buf)
+            return buf.getvalue()
         _sheet(wb, "Check rank", [
             ("STT", 6, INT), ("Từ khóa", 34, None), ("Vị trí", 8, None), ("Thay đổi", 18, None),
             ("Vị trí trước", 10, None), ("Tốt nhất", 9, INT), ("Ban đầu", 9, None), ("AI Overview", 15, None),
@@ -2842,7 +3099,59 @@ async def fetch_intents(base) -> None:
 
         def work(cfg=cfg, creds=creds):
             with closing(db.connect(cfg.db_path)) as c:
-                return IN.fetch_missing(c, cfg, creds, log=lambda *_: None)
+                return IN.fetch_missing(c, cfg, creds, log=lambda *_: None)  # chạy nền: ghi "lịch"
+        try:
+            await run.io_bound(work)
+        except Exception:  # noqa: BLE001  (lượt sau thử lại)
+            import traceback
+            traceback.print_exc()
+
+
+async def gsc_hourly(base) -> None:
+    """Search Console số theo giờ (miễn phí): mỗi dự án khoảng 3 giờ một lần, để thấy sớm khi traffic tụt."""
+    from contextlib import closing
+
+    from nicegui import run
+
+    from . import auth, db
+    from . import gsc_types as GT
+    from . import projects as PJ
+
+    with closing(db.connect(base.db_path)) as c:
+        projects = PJ.list_projects(c)
+    for p in projects:
+        cfg = PJ.config_for(base, p)
+
+        def work(cfg=cfg):
+            with closing(db.connect(cfg.db_path)) as c:
+                if not GT.hourly_due(c, cfg.site_url):
+                    return 0
+                svc = auth.build_service(auth.get_credentials(cfg))
+                return GT.refresh_hourly(c, cfg.site_url, svc)
+        try:
+            await run.io_bound(work)
+        except (Exception, SystemExit):  # noqa: BLE001  (chưa kết nối Google / mất quyền: lượt sau thử lại)
+            pass
+
+
+async def check_built_links(base) -> None:
+    """Kiểm tra link đã xây (tải trang đặt link, miễn phí) cho từng dự án: mỗi link một lần mỗi tuần."""
+    from contextlib import closing
+
+    from nicegui import run
+
+    from . import backlink_build as BB
+    from . import db
+    from . import projects as PJ
+
+    with closing(db.connect(base.db_path)) as c:
+        projects = PJ.list_projects(c)
+    for p in projects:
+        cfg = PJ.config_for(base, p)
+
+        def work(cfg=cfg):
+            with closing(db.connect(cfg.db_path)) as c:
+                return BB.check_due(c, cfg.site_url)
         try:
             await run.io_bound(work)
         except Exception:  # noqa: BLE001  (lượt sau thử lại)
@@ -2856,12 +3165,17 @@ async def schedule_loop(base) -> None:
     while True:
         await scheduled_checks(base)
         await fetch_intents(base)
+        await gsc_hourly(base)
         await publish_sheets(base)
+        await check_built_links(base)
         await asyncio.sleep(15 * 60)
 
 
+BIG_CHECK = 100  # bấm check từ chừng này từ khóa trở lên: báo giá trước, cho chọn chỉ check top 10
+
+
 async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: str | None,
-                     set_id: int | None = None) -> None:
+                     set_id: int | None = None, depth: int | None = None) -> None:
     """Check rank chạy nền: không phụ thuộc trang đã bấm (trang có thể đã đóng). Gửi DataForSEO từng nhóm
     CHECK_CHUNK từ khóa, ghi tiến độ vào _PROGRESS (đã gửi / đã có kết quả); khi bấm Tạm dừng thì không gửi nhóm tiếp
     theo, thôi chờ kết quả (task đã gửi vẫn được lấy ở lần chạy sau) và lưu từ khóa chưa gửi cho nút Tiếp tục."""
@@ -2908,8 +3222,13 @@ async def _check_job(cfg, connect, site: str, end, ids: list[int], creds, user: 
                     break
                 chunk_logs: list[str] = []
                 chunk = todo[i:i + CHECK_CHUNK]
+                if depth:  # bấm check nhiều từ khóa và chọn "top 10 cho lần này"
+                    chunk = [dict(k, depth=min(k["depth"], depth)) for k in chunk]
+                elif user is None:  # lượt theo lịch: từ khóa vững top 5 chỉ check top 10
+                    chunk = R.economize(c, chunk)
+                # AI Overview hiện chậm chỉ tải ở lượt theo lịch (user None); bấm check tay không tải để đỡ tiền
                 n = R.post(c, site, cfg.rank, client, chunk, _date.today(), chunk_logs.append,
-                           by=user or "Lịch")
+                           by=user or "Lịch", aio=user is None)
                 logs.extend(m for m in chunk_logs if not m.startswith("Đã gửi"))
                 st["posted"] += n
                 if any(m.startswith("Dừng") for m in chunk_logs):  # vượt ngân sách: chưa gửi, giữ lại để Tiếp tục

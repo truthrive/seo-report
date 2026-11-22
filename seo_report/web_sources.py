@@ -56,9 +56,9 @@ def build_sources_page(ui, cfg, connect, user) -> None:
     from nicegui import run
     site = cfg.site_url
     ed = A.can_edit(user)
-    right = T.page_header(ui, "travel_explore", "Nguồn tìm kiếm",
-                          "Khách đến từ đâu trên Google: tìm kiếm web, hình ảnh, video, tab Tin tức, Discover, Google "
-                          "News. Số của Search Console, tự lấy mỗi ngày.")
+    cl = A.is_client(user)  # khách hàng: thẻ nguồn + biểu đồ tuần + chỉ số; không bảng chi tiết theo trang / loại kết quả
+    right = T.page_header(ui, "travel_explore", "Nguồn traffic",
+                          "Khách đến từ đâu trên Google: tìm kiếm, hình ảnh, video, Tin tức, Discover.")
     right.classes("no-wrap")
     state = {"type": "web", "days": 28}
 
@@ -92,7 +92,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
             b = ui.button("Lấy số mới", icon="refresh").props("unelevated no-caps color=primary").style(
                 "white-space:nowrap")
             b.on_click(lambda _, b=b: fetch(b))
-            b.tooltip("Lấy lại số các nguồn tìm kiếm và sitemap từ Search Console")
+            b.tooltip("Lấy số mới từ Search Console")
 
     @ui.refreshable
     def body():
@@ -156,8 +156,7 @@ def build_sources_page(ui, cfg, connect, user) -> None:
 
         cur, before = now[t], prev[t]
         with ui.element("div").classes("sr-src-main w-full"):
-            with T.section(ui, f"{GT.TYPES[t]} theo tuần", ICONS[t], "Click mỗi tuần (thứ Hai – Chủ nhật), 12 tháng "
-                                                                   "gần nhất · rê chuột xem lượt hiển thị"):
+            with T.section(ui, f"{GT.TYPES[t]} theo tuần", ICONS[t], "Click mỗi tuần, 12 tháng gần nhất"):
                 if not ser:
                     ui.label("Chưa có số cho nguồn này: website chưa xuất hiện ở đây.").classes("text-sm muted")
                 else:
@@ -197,6 +196,10 @@ def build_sources_page(ui, cfg, connect, user) -> None:
                         _metric(ui, "Vị trí trung bình",
                                 f"{cur['position']:.1f}".replace(".", ",") if cur["position"] else "–",
                                 _points_chip(pos_d, unit="", good_up=True, value=abs(pos_d) if pos_d else None))
+        if t == "web":
+            web_extras()
+        if cl:
+            return
         with T.section(ui, f"Trang hàng đầu · {GT.TYPES[t]}", "description",
                        (f"{date.fromisoformat(period[0]):%d/%m} – {date.fromisoformat(period[1]):%d/%m}, so với 28 ngày "
                         "trước · bấm tên trang để mở" if period else "Chưa có trang nào")):
@@ -234,6 +237,76 @@ def build_sources_page(ui, cfg, connect, user) -> None:
                     fontWeight: 600}">{{ props.value > 0 ? '▲' : '▼' }}
                     {{ Math.abs(props.value).toLocaleString('vi-VN') }}</span>
                   <span v-else class="muted">–</span></q-td>""")
+
+    def web_extras() -> None:
+        """Tìm kiếm web: số theo giờ (48 giờ gần nhất, so cùng giờ hôm trước) và theo loại kết quả trên Google."""
+        with connect() as c:
+            hrs = GT.hourly(c, site)
+            apps, aperiod = GT.appearance(c, site)
+        if hrs:
+            tot = sum(h["clicks"] for h in hrs[-24:])
+            ptot = sum(h["prev_clicks"] or 0 for h in hrs[-24:])
+            known = all(h["prev_clicks"] is not None for h in hrs[-24:])
+            d_ = (tot - ptot) / ptot * 100 if known and ptot else None
+            last_vn = hrs[-1]["hour"]
+            with T.section(ui, "Theo giờ · 48 giờ gần nhất", "schedule",
+                           f"Giờ Việt Nam, có số tới {last_vn[11:16]} ngày {last_vn[8:10]}/{last_vn[5:7]} (Google chậm "
+                           "vài giờ đến 1 ngày) · nét đứt: cùng giờ hôm trước"):
+                ui.label(f"24 giờ gần nhất: {F.n(tot)} click"
+                         + (f" · {'+' if d_ >= 0 else '−'}{abs(d_):.0f}% so với 24 giờ trước đó".replace(".", ",")
+                            if d_ is not None else "")).classes("text-sm")
+                ui.echart({
+                    "animation": False, "grid": {"left": 40, "right": 12, "top": 26, "bottom": 26},
+                    "tooltip": {"trigger": "axis"},
+                    "legend": {"top": 0, "right": 0, "icon": "roundRect", "itemWidth": 10, "itemHeight": 10,
+                               "textStyle": {"fontSize": 12, "color": "#4A4A40"}},
+                    "xAxis": {"type": "category", "data": [f"{h['hour'][11:13]}h {h['hour'][8:10]}/{h['hour'][5:7]}"
+                                                           for h in hrs],
+                              "axisTick": {"show": False}, "axisLabel": {"color": "#8C8A7E", "fontSize": 11}},
+                    "yAxis": {"type": "value", "splitLine": {"lineStyle": {"color": "#EEECE4"}},
+                              "axisLabel": {"color": "#8C8A7E", "fontSize": 11}},
+                    "series": [{"type": "line", "name": "Click", "symbol": "none", "smooth": False,
+                                "lineStyle": {"width": 2, "color": "#1E7C31"}, "itemStyle": {"color": "#1E7C31"},
+                                "areaStyle": {"color": "rgba(30,124,49,.08)"}, "data": [h["clicks"] for h in hrs]},
+                               {"type": "line", "name": "Cùng giờ hôm trước", "symbol": "none",
+                                "lineStyle": {"width": 1.5, "type": "dashed", "color": "#8C8A7E"},
+                                "itemStyle": {"color": "#8C8A7E"}, "data": [h["prev_clicks"] for h in hrs]}]},
+                ).classes("w-full").style("height:240px")
+        if apps and not cl:
+            sub = (f"{date.fromisoformat(aperiod[0]):%d/%m} – {date.fromisoformat(aperiod[1]):%d/%m}, so với 28 ngày "
+                   "trước" if aperiod else "")
+            with T.section(ui, "Theo loại kết quả trên Google", "auto_awesome_mosaic",
+                           sub + " · một lượt hiển thị có thể thuộc nhiều loại"):
+                rows = [{"id": i, "name": r["name"], "key": r["key"], "clicks": r["clicks"],
+                         "impressions": r["impressions"],
+                         "ctr": f"{r['clicks'] / r['impressions'] * 100:.1f}%".replace(".", ",") if r["impressions"]
+                         else "–",
+                         "position": f"{r['position']:.1f}".replace(".", ",") if r["position"] else "–",
+                         "change": (r["clicks"] - r["prev_clicks"]) if r["prev_clicks"] is not None else None}
+                        for i, r in enumerate(apps)]
+                num = "val => val == null ? '–' : val.toLocaleString('vi-VN')"
+                tb = ui.table(columns=[
+                    {"name": "name", "label": "Loại kết quả", "field": "name", "align": "left", "sortable": True},
+                    {"name": "clicks", "label": "Click", "field": "clicks", "align": "right", "sortable": True,
+                     ":format": num, "headerStyle": "width:90px"},
+                    {"name": "change", "label": "So với trước", "field": "change", "align": "right", "sortable": True,
+                     "headerStyle": "width:120px"},
+                    {"name": "impressions", "label": "Hiển thị", "field": "impressions", "align": "right",
+                     "sortable": True, ":format": num, "headerStyle": "width:110px"},
+                    {"name": "ctr", "label": "CTR", "field": "ctr", "align": "right", "headerStyle": "width:80px"},
+                    {"name": "position", "label": "Vị trí", "field": "position", "align": "right",
+                     "headerStyle": "width:80px"}], rows=rows, row_key="id").props(
+                    "flat dense binary-state-sort").classes("w-full sr-src-table")
+                tb.add_slot("body-cell-name", """
+                <q-td :props="props">{{ props.value }}<div class="sr-bb-sub">{{ props.row.key }}</div></q-td>""")
+                tb.add_slot("body-cell-change", """
+                <q-td :props="props" class="text-right">
+                  <span v-if="props.value === null" class="text-xs muted">mới</span>
+                  <span v-else-if="props.value" class="num" :style="{color: props.value > 0 ? '#1E7C31' : '#C2410C'}">
+                    {{ props.value > 0 ? '▲' : '▼' }} {{ Math.abs(props.value).toLocaleString('vi-VN') }}</span>
+                  <span v-else class="muted">–</span></q-td>""")
+                ui.label("Ví dụ: “Đoạn trích sản phẩm” là kết quả có giá / tình trạng hàng nhờ dữ liệu cấu trúc "
+                         "Product; số giảm có thể do schema bị lỗi.").classes("text-xs muted q-mt-xs")
 
     def make_xlsx() -> bytes:
         from openpyxl import Workbook

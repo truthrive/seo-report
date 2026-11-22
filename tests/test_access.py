@@ -52,8 +52,9 @@ class ToolListTest(unittest.TestCase):
     def test_add_change_remove(self):
         A.set_user(self.con, " Khach@ABC.vn ", A.VIEWER, "me", "khách hàng ABC")
         self.assertIn("khach@abc.vn", A.effective(self.con, S).viewers)
-        A.set_user(self.con, "khach@abc.vn", A.EDITOR, "me")  # không có trong config.toml: không thành Chủ tool
+        A.set_user(self.con, "khach@abc.vn", A.ADMIN, "me")  # Admin quản lý trên tool, không thành Owner
         self.assertNotIn("khach@abc.vn", A.effective(self.con, S).editors)
+        self.assertIn("khach@abc.vn", A.effective(self.con, S).admins)
         A.remove_user(self.con, "khach@abc.vn", "me")
         self.assertNotIn("khach@abc.vn", A.effective(self.con, S).viewers)
         # gỡ mềm: vẫn còn dòng lịch sử
@@ -81,9 +82,11 @@ class ToolListTest(unittest.TestCase):
         self.assertEqual((us["marketing@vidushop.com"]["role"], us["marketing@vidushop.com"]["source"]),
                          (A.EDITOR, "config"))
         self.assertEqual(us["boss@gmail.com"]["source"], "config")  # viewer trong config, chưa có trong tool
-        A.set_user(self.con, "boss@gmail.com", A.EDITOR, "me")  # đã có trong tool: theo tool, nhưng chỉ Chủ tool
-        us = {u["email"]: u for u in A.users(self.con, S)}    # (config editors) là quản trị
-        self.assertEqual((us["boss@gmail.com"]["role"], us["boss@gmail.com"]["source"]), (A.VIEWER, "tool"))
+        A.set_user(self.con, "boss@gmail.com", A.ADMIN, "me")  # đã có trong tool: Admin, không phải Owner
+        us = {u["email"]: u for u in A.users(self.con, S)}
+        self.assertEqual((us["boss@gmail.com"]["role"], us["boss@gmail.com"]["source"]), (A.ADMIN, "tool"))
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "boss@gmail.com", A.EDITOR, "me")  # Owner chỉ khai trong config.toml
 
     def test_bad_email(self):
         for bad in ("ab", "tên-có-dấu", "a b c", "-dau-gach", "x" * 33, "a@b"):
@@ -100,11 +103,67 @@ class ToolListTest(unittest.TestCase):
         self.assertEqual(str(u), "khach-abc")
 
     def test_old_admin_becomes_team_editor(self):
-        A.set_user(self.con, "phu@abc.vn", A.EDITOR, "me")
+        A.set_user(self.con, "phu@abc.vn", A.MEMBER, "me")
+        self.con.execute("UPDATE access_users SET role = ? WHERE email = 'phu@abc.vn'", (A.EDITOR,))  # dữ liệu cũ
         A.adopt_config(self.con, S, None)
         us = {u["email"]: u for u in A.users(self.con, S)}
         self.assertEqual((us["phu@abc.vn"]["role"], us["phu@abc.vn"]["team_role"]), (A.VIEWER, A.EDITOR))
         self.assertEqual(us["marketing@vidushop.com"]["role"], A.EDITOR)
+
+
+class AdminBoundaryTest(unittest.TestCase):
+    """Admin không sửa được Owner hay Admin khác ở tầng dữ liệu (không chỉ ẩn nút), không cấp được Admin."""
+
+    def setUp(self):
+        import sqlite3
+        self.con = sqlite3.connect(":memory:")
+        A.set_user(self.con, "admin2@abc.vn", A.ADMIN, "me")  # Admin khác (chuỗi thường: CLI / test)
+        A.set_user(self.con, "mem@abc.vn", A.MEMBER, "me")
+        self.admin = A.User("admin1@abc.vn", A.ADMIN_ACCT)
+        self.owner = A.User("marketing@vidushop.com", A.EDITOR)
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_admin_cannot_touch_owner_account(self):
+        # gõ email Owner vào ô "Thêm người": bị chặn, kể cả khi Owner chưa có dòng nào trong tool
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "marketing@vidushop.com", A.MEMBER, self.admin, settings=S)
+        with self.assertRaises(ValueError):
+            A.set_password(self.con, A.effective(self.con, S), "marketing@vidushop.com", "mat-khau-moi-1",
+                           must_change=False, by=self.admin)
+        with self.assertRaises(ValueError):
+            A.set_member(self.con, "marketing@vidushop.com", "tam-duc", A.CLIENT, self.admin, settings=S)
+        self.assertIsNone(A.login(self.con, S, "marketing@vidushop.com", "mat-khau-moi-1")[0])
+
+    def test_admin_cannot_demote_or_reset_other_admin(self):
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "admin2@abc.vn", A.MEMBER, self.admin, settings=S)
+        with self.assertRaises(ValueError):
+            A.set_password(self.con, A.effective(self.con, S), "admin2@abc.vn", "mat-khau-moi-1",
+                           must_change=False, by=self.admin)
+        with self.assertRaises(ValueError):
+            A.remove_user(self.con, "admin2@abc.vn", self.admin, settings=S)
+        self.assertIn("admin2@abc.vn", A.effective(self.con, S).admins)
+
+    def test_admin_cannot_grant_admin_but_can_manage_members(self):
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "mem@abc.vn", A.ADMIN, self.admin, settings=S)
+        with self.assertRaises(ValueError):
+            A.set_user(self.con, "admin1@abc.vn", A.ADMIN, self.admin, settings=S)  # cũng không tự nâng quyền
+        A.set_user(self.con, "mem@abc.vn", A.MEMBER, self.admin, "ghi chú", settings=S)
+        A.set_member(self.con, "mem@abc.vn", "tam-duc", A.EDITOR, self.admin, settings=S)
+        A.set_password(self.con, A.effective(self.con, S), "mem@abc.vn", "mat-khau-moi-1", must_change=False,
+                       by=self.admin)
+        A.remove_member(self.con, "mem@abc.vn", "tam-duc", self.admin, settings=S)
+
+    def test_owner_can_manage_admin_and_self_service_still_works(self):
+        A.set_user(self.con, "admin2@abc.vn", A.MEMBER, self.owner, settings=S)
+        A.set_user(self.con, "mem@abc.vn", A.ADMIN, self.owner, settings=S)
+        self.assertIn("mem@abc.vn", A.effective(self.con, S).admins)
+        # Admin tự đổi mật khẩu của mình (không qua màn Phân quyền): không bị chặn
+        A.set_password(self.con, A.effective(self.con, S), "mem@abc.vn", "mat-khau-moi-2", must_change=False,
+                       by=A.User("mem@abc.vn", A.ADMIN_ACCT))
 
 
 class PasswordTest(unittest.TestCase):
@@ -219,7 +278,7 @@ class ProjectAccessTest(unittest.TestCase):
         A.set_member(self.con, "khach-a@a.vn", "a", A.CLIENT, "me")
         A.set_user(self.con, "team@x.vn", A.MEMBER, "me")
         A.set_member(self.con, "team@x.vn", "a", A.EDITOR, "me")
-        A.set_member(self.con, "team@x.vn", "b", A.VIEWER, "me")
+        A.set_member(self.con, "team@x.vn", "b", A.EDITOR, "me")
 
     def tearDown(self):
         self.con.close()
@@ -233,11 +292,12 @@ class ProjectAccessTest(unittest.TestCase):
         self.assertIsNone(self.role(khach, "b"))
         self.assertIsNone(self.role(khach, "tam-duc"))
         team = A.User("team@x.vn", A.MEMBER)
-        self.assertEqual((self.role(team, "a"), self.role(team, "b")), (A.EDITOR, A.VIEWER))
+        self.assertEqual((self.role(team, "a"), self.role(team, "b")), (A.EDITOR, A.EDITOR))
 
     def test_admin_and_owner_see_everything(self):
         self.assertEqual(self.role(A.User("Truong Thinh", A.LOCAL), "b"), A.LOCAL)
-        self.assertEqual(self.role(A.User("marketing@vidushop.com", A.ADMIN), "b"), A.EDITOR)
+        self.assertEqual(self.role(A.User("marketing@vidushop.com", A.EDITOR), "b"), A.EDITOR)
+        self.assertEqual(self.role(A.User("ad@x.vn", A.ADMIN), "b"), A.EDITOR)
 
     def test_rights_inside_project(self):
         khach = A.in_project(A.User("khach-a@a.vn", A.MEMBER), A.CLIENT)
@@ -248,6 +308,11 @@ class ProjectAccessTest(unittest.TestCase):
         self.assertFalse(A.is_admin(team))  # được sửa một dự án không có nghĩa là quản trị dự án / phân quyền
         admin = A.in_project(A.User("m@x.vn", A.ADMIN), A.EDITOR)
         self.assertTrue(A.is_admin(admin))
+        self.assertFalse(A.is_owner(admin) or A.is_member(admin))
+        owner = A.in_project(A.User("o@x.vn", A.EDITOR), A.EDITOR)
+        self.assertTrue(A.is_owner(owner) and A.is_admin(owner))
+        self.assertTrue(A.is_member(team))
+        self.assertEqual([A.group(x) for x in (owner, admin, team, khach)], ["owner", "admin", "member", "guest"])
 
     def test_owner_preview_keeps_preview_role_and_is_not_admin(self):
         pv = A.User("Truong Thinh", A.CLIENT, preview=True, admin=True)
@@ -262,11 +327,11 @@ class ProjectAccessTest(unittest.TestCase):
 
     def test_config_viewer_adopted_into_tool(self):
         boss = A.User("boss@gmail.com", A.MEMBER)
-        self.assertEqual(self.role(boss, "tam-duc"), A.VIEWER)  # chưa chuyển vào tool: xem dự án đầu tiên
+        self.assertEqual(self.role(boss, "tam-duc"), A.EDITOR)  # chưa chuyển vào tool: dự án đầu tiên
         self.assertEqual(A.adopt_config(self.con, S, "tam-duc"), 1)
-        self.assertEqual(A.members(self.con)["boss@gmail.com"], {"tam-duc": A.VIEWER})
-        A.set_member(self.con, "boss@gmail.com", "a", A.VIEWER, "me")  # gắn thêm: vẫn giữ dự án đầu
-        self.assertEqual((self.role(boss, "tam-duc"), self.role(boss, "a")), (A.VIEWER, A.VIEWER))
+        self.assertEqual(A.members(self.con)["boss@gmail.com"], {"tam-duc": A.EDITOR})
+        A.set_member(self.con, "boss@gmail.com", "a", A.CLIENT, "me")  # gắn thêm: vẫn giữ dự án đầu
+        self.assertEqual((self.role(boss, "tam-duc"), self.role(boss, "a")), (A.EDITOR, A.CLIENT))
         A.remove_member(self.con, "boss@gmail.com", "tam-duc", "me")  # đã quản lý trong tool: gỡ được
         self.assertIsNone(self.role(boss, "tam-duc"))
         A.remove_user(self.con, "boss@gmail.com", "me")
@@ -289,11 +354,13 @@ class ProjectAccessTest(unittest.TestCase):
         mem = A.members(self.con)
         self.assertEqual(A.kind(us["khach-a@a.vn"], mem["khach-a@a.vn"]), "client")
         self.assertEqual(A.kind(us["team@x.vn"], mem["team@x.vn"]), "team")
-        self.assertEqual(A.kind(us["marketing@vidushop.com"], {}), "admin")
+        self.assertEqual(A.kind(us["marketing@vidushop.com"], {}), "owner")
+        A.set_user(self.con, "ad@x.vn", A.ADMIN, "me")
+        self.assertEqual(A.kind({x["email"]: x for x in A.users(self.con, S)}["ad@x.vn"], {}), "admin")
 
     def test_log_and_restore(self):
-        A.set_member(self.con, "team@x.vn", "a", A.VIEWER, "me")
-        A.set_member(self.con, "team@x.vn", "a", A.VIEWER, "me")  # không đổi: không ghi
+        A.set_member(self.con, "team@x.vn", "a", A.CLIENT, "me")
+        A.set_member(self.con, "team@x.vn", "a", A.CLIENT, "me")  # không đổi: không ghi
         A.remove_user(self.con, "khach-a@a.vn", "me")
         self.assertEqual([r["email"] for r in A.removed_users(self.con)], ["khach-a@a.vn"])
         A.set_user(self.con, "khach-a@a.vn", A.MEMBER, "me2")
@@ -303,13 +370,22 @@ class ProjectAccessTest(unittest.TestCase):
         self.assertEqual(A.removed_users(self.con), [])
 
     def test_bad_project_role(self):
-        with self.assertRaises(ValueError):
-            A.set_member(self.con, "khach-a@a.vn", "a", "owner", "me")
+        for bad in ("owner", A.VIEWER):  # Team xem cũ không còn: chỉ Member / Guest
+            with self.assertRaises(ValueError):
+                A.set_member(self.con, "khach-a@a.vn", "a", bad, "me")
+
+    def test_merge_old_viewers_into_member(self):
+        self.con.execute("INSERT INTO project_members (email, project, role, added_by, added_at) "
+                         "VALUES ('cu@x.vn', 'a', 'viewer', 'me', '2026-01-01')")
+        self.con.execute("UPDATE access_users SET team_role = 'viewer' WHERE email = 'team@x.vn'")
+        self.assertEqual(A.migrate_four_groups(self.con), 2)
+        self.assertEqual(A.members(self.con)["cu@x.vn"], {"a": A.EDITOR})
+        self.assertEqual(A.migrate_four_groups(self.con), 0)
 
     def test_migrate_old_viewers_once(self):
         A.set_user(self.con, "cu@x.vn", A.VIEWER, "me")  # tài khoản chỉ xem từ trước khi có nhiều dự án
         self.assertEqual(A.migrate_members(self.con, S, "tam-duc"), 1)
-        self.assertEqual(self.role(A.User("cu@x.vn", A.MEMBER), "tam-duc"), A.VIEWER)
+        self.assertEqual(self.role(A.User("cu@x.vn", A.MEMBER), "tam-duc"), A.EDITOR)
         A.set_user(self.con, "moi@x.vn", A.VIEWER, "me")
         self.assertEqual(A.migrate_members(self.con, S, "tam-duc"), 0)  # chỉ chạy một lần
         self.assertIsNone(self.role(A.User("moi@x.vn", A.MEMBER), "tam-duc"))
@@ -323,14 +399,14 @@ class PeopleInProjectTest(unittest.TestCase):
         A.set_member(self.con, "z-khach@a.vn", "a", A.CLIENT, "me")
         A.set_user(self.con, "a-seo@x.vn", A.MEMBER, "me", title="SEO")
         A.set_member(self.con, "a-seo@x.vn", "a", A.EDITOR, "me")
-        A.set_user(self.con, "m-content@x.vn", A.MEMBER, "me", team_role=A.VIEWER)
+        A.set_user(self.con, "m-content@x.vn", A.MEMBER, "me", team_role=A.EDITOR)
         A.set_user(self.con, "khac@b.vn", A.MEMBER, "me")
         A.set_member(self.con, "khac@b.vn", "b", A.CLIENT, "me")
 
     def test_order_and_scope(self):
         got = [(p["email"], p["role"]) for p in A.people_in_project(self.con, S, "a", "tam-duc")]
-        self.assertEqual(got, [("marketing@vidushop.com", "admin"), ("a-seo@x.vn", A.EDITOR),
-                               ("m-content@x.vn", A.VIEWER), ("z-khach@a.vn", A.CLIENT)])  # không có khách website b
+        self.assertEqual(got, [("marketing@vidushop.com", "owner"), ("a-seo@x.vn", A.EDITOR),
+                               ("m-content@x.vn", A.EDITOR), ("z-khach@a.vn", A.CLIENT)])  # không có khách website b
         first = [p["email"] for p in A.people_in_project(self.con, S, "tam-duc", "tam-duc")]
         self.assertIn("boss@gmail.com", first)  # viewer trong config.toml: dự án đầu tiên
         self.assertNotIn("z-khach@a.vn", first)

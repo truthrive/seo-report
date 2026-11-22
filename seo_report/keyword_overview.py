@@ -75,6 +75,14 @@ def fetch(con, cfg, kw: str, ads) -> dict:
     return {"keyword": kw, "vn": vn, "world": world, "countries": countries, "ideas": ideas}
 
 
+def cached(con, kw: str) -> bool:
+    """Đã có số Google Ads còn hạn (7 ngày) cho từ khóa này: phân tích lại không gọi Google Ads."""
+    ensure_tables(con)
+    row = con.execute("SELECT fetched_at FROM kw_overview WHERE key = ?", (KR.ckey(" ".join((kw or "").split())),)
+                      ).fetchone()
+    return bool(row) and datetime.fromisoformat(row[0]) > datetime.now(timezone.utc) - timedelta(days=CACHE_DAYS)
+
+
 def get(con, cfg, kw: str, ads=None, refresh: bool = False) -> dict:
     """Tổng quan từ khóa: số Google Ads (cache 7 ngày) + phần tính từ dữ liệu sẵn có (luôn mới)."""
     ensure_tables(con)
