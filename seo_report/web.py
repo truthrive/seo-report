@@ -48,6 +48,25 @@ ADMIN_TABS = (("Dự án", "/projects"), ("Ngân sách & chi phí", "/budget"), 
 URL_TABS = (("URL Performance", "/url"), ("Nguồn traffic", "/nguon"), ("Index", "/index"),
             ("Quản lý URL", "/urls"))
 RESEARCH_TABS = (("Keyword Overview", "/tu-khoa"), ("Keyword Ideas", "/research"), ("Thư viện AI", "/ai-da-tao"))
+# Icon riêng cho từng tab con, dùng ở lối tắt (nút +, menu chuột phải): các tab cùng mục không trùng icon của mục cha.
+SUB_ICONS = {
+    "/projects": "folder_open", "/budget": "account_balance_wallet", "/access": "manage_accounts",
+    "/cai-dat": "extension", "/quan-tri-ai": "smart_toy",
+    "/url": "insert_link", "/nguon": "alt_route", "/index": "fact_check", "/urls": "playlist_add",
+    "/tu-khoa": "manage_search", "/research": "lightbulb", "/ai-da-tao": "history",
+    "/kpi?tab=lo-trinh": "route", "/kpi?tab=tu-khoa": "format_list_numbered", "/kpi?tab=lich-su": "history",
+    "/local?tab=reviews": "reviews", "/local?tab=posts": "post_add", "/local?tab=profile": "badge",
+    "/backlink?tab=audit": "rule", "/backlink?tab=list": "list", "/backlink?tab=built": "construction",
+    "/backlink?tab=gap": "compare_arrows", "/backlink?tab=sources": "source",
+    "/audit?tab=trang": "description", "/audit?tab=tuan": "date_range",
+    "/toc-do?tab=field": "groups", "/toc-do?tab=pages": "description",
+    "/doi-thu?tab=xu-huong": "trending_up", "/doi-thu?tab=tu-khoa": "compare", "/doi-thu?tab=backlink": "link",
+    "/doi-thu?tab=danh-sach": "list",
+    "/ai?tab=nguon": "hub", "/ai?tab=trang-dich": "description", "/ai?tab=ai-google": "travel_explore",
+    "/ai?tab=co-hoi": "lightbulb",
+    "/aio?tab=viec": "task_alt", "/aio?tab=tu-khoa": "key", "/aio?tab=ban-ai": "article",
+    "/merchant?tab=products": "inventory_2",
+}
 NAV_PARENT = {title: "URL & Index" for title, _ in URL_TABS}  # màn → mục menu được tô sáng
 NAV_PARENT["Keyword Overview"] = NAV_PARENT["Keyword Ideas"] = NAV_PARENT["Thư viện AI"] = "Keyword Research"
 NAV_PARENT.update({title: "Quản trị" for title, _ in ADMIN_TABS})
@@ -589,6 +608,9 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             ed_ = A.can_edit(user)
             with app_connect() as c:
                 items = QP.get(c, str(user), ed_)
+            # lối tắt trang đã lưu trước đây mang icon của mục cha: lấy lại icon theo tab con hiện tại
+            items = [dict(x, icon=SUB_ICONS.get(x["key"][5:], x["icon"])) if x["key"].startswith("page:") else x
+                     for x in items]
             open_profile = profile_dialog(ui, base, app_connect, user)
             run_ = {"kw": lambda: Q.add_keywords(ui, P, user), "look": lambda: Q.lookup_keyword(ui, P, user),
                     "profile": lambda: open_profile(), "credit": lambda: credit_dialog(user),
@@ -622,7 +644,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
                     if (h in ADMIN_PAGES and not A.is_admin(user)) or (h in OWNER_PAGES and not A.is_owner(user)):
                         continue
                     out.append({"key": f"page:{h}", "label": f"{label} · {tab}" if tab != label else label,
-                                "icon": icon})
+                                "icon": SUB_ICONS.get(h, icon)})
         return out
 
     def quick_custom(user, P, ed_: bool) -> None:
@@ -745,7 +767,7 @@ def run(cfg: Config, port: int = 8080, show: bool = True) -> None:
             "/toc-do": q("/toc-do", [] if cl else WC.TABS), "/co-hoi": q("/co-hoi", WO.TABS), "/audit": q("/audit", WAU.TABS),
             "/backlink": q("/backlink", [t for t in WB.PAGE_TABS if not (cl and t[0] in WB.TEAM_TABS)]), "/local": q("/local", [] if cl else WL.TABS),
             "/merchant": q("/merchant", WM.TABS),
-            "/kpi": q("/kpi", [t for t in WK.TABS if not (cl and t[0] == "lich-su")]),
+            "/kpi": q("/kpi", list(WK.TABS)),
             "/doi-thu": q("/doi-thu", WR.TABS),
             "/ai": q("/ai", [("tong-quan", "Tổng quan"), ("nguon", "Nguồn AI"),
                              *([] if cl else [("trang-dich", "Trang đích"), ("ai-google", "AI trên Google"),

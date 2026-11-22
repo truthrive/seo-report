@@ -101,9 +101,11 @@ export default {
       const n = this.actions.length, rad = (-90 + 360 * i / n) * Math.PI / 180, r = this.ringR;
       return { left: (r * Math.cos(rad)) + 'px', top: (r * Math.sin(rad)) + 'px', animationDelay: (i * 20) + 'ms' };
     },
+    // nhãn luôn nằm phía ngoài vòng (không đè lên nút đóng ở giữa và các mục khác): mục trên → nhãn trên,
+    // mục dưới → nhãn dưới, mục hai bên → nhãn bên ngoài
     ringSide(i) {
-      const x = Math.cos((-90 + 360 * i / this.actions.length) * Math.PI / 180);
-      return Math.abs(x) < 0.2 ? 'top' : (x < 0 ? 'left' : 'right');
+      const a = (-90 + 360 * i / this.actions.length) * Math.PI / 180, x = Math.cos(a);
+      return Math.abs(x) < 0.2 ? (Math.sin(a) > 0 ? 'bottom' : 'top') : (x < 0 ? 'left' : 'right');
     },
     // phím mũi tên: chuyển qua lại giữa các thao tác trên vòng
     navKey(e, list) {

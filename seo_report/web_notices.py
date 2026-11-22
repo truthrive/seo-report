@@ -7,7 +7,8 @@ SHOW = 30  # số dòng tối đa trong cửa sổ (nặng trước)
 
 
 def bell(ui, cfg, connect, user, key) -> None:
-    """Chuông + số chưa xem; bấm mở cửa sổ thông báo (nội dung chỉ dựng khi mở, trang vẫn nhẹ)."""
+    """Chuông + số chưa xem; bấm mở cửa sổ thông báo. Nội dung dựng sẵn khi tải trang (cùng dữ liệu với số trên chuông)
+    để mở ra là thấy ngay; lúc mở mới kiểm tra lại ở luồng nền."""
     state = {"kind": "all"}
 
     def items() -> list[dict]:
@@ -35,6 +36,19 @@ def bell(ui, cfg, connect, user, key) -> None:
         panel.refresh()
         badge.refresh()
 
+    def sig(all_: list[dict]) -> tuple:
+        return tuple((n["key"], n["seen"]) for n in all_)
+
+    async def on_show() -> None:
+        """Khung đã có sẵn nội dung từ lúc tải trang (mở ra là thấy ngay). Khi mở: tính lại ở luồng nền (không chặn
+        máy chủ), chỉ vẽ lại khi danh sách thật sự đổi."""
+        from nicegui import run
+        fresh = await run.io_bound(items)
+        if sig(fresh) != state.get("sig"):
+            state["fresh"] = fresh
+            panel.refresh()
+            badge.refresh()
+
     with ui.button(on_click=lambda: None).props('flat round dense color=grey-8').classes("sr-bell") as btn:
         @ui.refreshable
         def badge() -> None:
@@ -47,9 +61,8 @@ def bell(ui, cfg, connect, user, key) -> None:
         with ui.menu().props('anchor="bottom right" self="top right" :offset="[0, 8]"').classes("sr-nt-pop") as menu:
             @ui.refreshable
             def panel() -> None:
-                if not state.get("open"):
-                    return
-                all_ = items()
+                all_ = state.pop("fresh", None) or items()  # cùng bộ nhớ tạm với số trên chuông: không tính thêm
+                state["sig"] = sig(all_)
                 new = N.unseen(all_)
                 with ui.row().classes("sr-nt-head items-center no-wrap w-full"):
                     ui.label("Thông báo").classes("text-base font-semibold")
@@ -96,8 +109,7 @@ def bell(ui, cfg, connect, user, key) -> None:
                         ui.label(f"và {len(shown) - SHOW} thông báo khác (nhẹ hơn)").classes(
                             "text-xs muted q-pa-sm")
             panel()
-        menu.on("show", lambda: (state.update(open=True), panel.refresh()))
-        menu.on("hide", lambda: state.update(open=False))
+        menu.on("show", on_show)
         # nền phía sau tối + mờ khi mở thông báo (giống nút nổi), làm ngay trên trình duyệt
         menu.on("before-show", js_handler="() => document.body.classList.add('sr-dim')")
         menu.on("before-hide", js_handler="() => document.body.classList.remove('sr-dim')")

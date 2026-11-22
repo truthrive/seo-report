@@ -103,7 +103,9 @@ nội dung        ── T.section (thẻ trắng bo 14px) xếp dọc, hoặc l
 ```
 
 - **Thẻ:** `.sr-card` nền trắng, viền `--line`, bo 14px, **không bóng đổ**. Thẻ lồng trong thẻ đổi sang nền `#F6F6F1`,
-  bỏ viền.
+  bỏ viền; phần tử nằm trong thẻ lồng (ô số nhỏ, viên %) lại đổi về nền trắng để vẫn tách lớp.
+- **Thẻ hẹp không rớt dòng:** các số phụ dưới số chính chia thành lưới ô (nhãn nhỏ ở trên, số ở dưới, mỗi ô một mốc),
+  câu kết luận viết ngắn một dòng (`white-space: nowrap` + `…`). Bỏ thông tin đã có ngay cạnh số chính.
 - **Khối có tiêu đề:** `with T.section(ui, "Tên", "icon", "mô tả một câu"):` — dùng cho mọi khối nội dung.
 - **Ô thống kê:** lưới `.sr-op-audit-sum` gồm các `.sr-op-stat` (số lớn + nhãn một dòng).
 - **Ô KPI có biểu đồ nhỏ:** `T.kpi(...)` trong `T.kpi_row(ui)`.
@@ -136,6 +138,13 @@ nội dung        ── T.section (thẻ trắng bo 14px) xếp dọc, hoặc l
 - **Theo thời gian**: so qua các lần quét bằng bảng *tiêu chí × lần quét* (mới nhất bên trái, cột tên dính bên trái),
   không bằng danh sách từng lần quét.
 - Thống kê mô tả (tỷ lệ dofollow, phân bố trang đích…) không đặt lẫn trong danh sách việc phải làm.
+- **Thông tin phụ không làm tab riêng** (lịch sử phiên bản, nhật ký sửa, cấu hình ít xem): một dòng chữ nhỏ cuối màn
+  dạng "🕘 Cam kết sửa lần cuối 12/11/2026 · Xem các lần sửa", bấm mở hộp thoại. Trong hộp thoại gộp các bản giống hệt
+  nhau ("lưu 6 lần"), bản đang dùng có nhãn, cuối có một câu nói vì sao cần giữ lịch sử. Khách hàng không thấy.
+- **Mốc / tháng chưa tới không tô như đã đạt.** Chỉ hiện số cần đạt (xám); số hiện tại đã đủ thì thêm ✓ nhỏ cạnh số,
+  không tô nền xanh cả ô. "Đạt / Không đạt" chỉ dùng cho tháng đã chốt.
+- **Tab đầu của một màn là tab nhận định / tổng quan** (đang ở đâu, AI nhận định, cảnh báo); thẻ chi tiết và bảng
+  theo tháng nằm ở tab sau (mẫu: KPI cam kết › Tổng quan · Lộ trình · Từ khóa cam kết).
 
 ---
 
@@ -179,6 +188,34 @@ Thanh chọn chính phía trên thanh chọn phụ thêm class `sr-seg-main` (to
 - **Không đánh dấu dòng / thẻ đang chọn bằng vạch màu bên trái** (`border-left`, `box-shadow: inset 3px 0 …`). Dùng
   nền nhạt (`#EEF3FB` cho đang chọn, `#F7F6F1` khi rê chuột).
 
+### Thẻ chỉ số (Top N, KPI)
+
+Mọi thẻ đếm từ khóa theo mốc Top (trang Thứ hạng, KPI cam kết…) dùng **một kiểu**: icon trơn 16px + tiêu đề
+(`.sr-bx-title`) + viên % bên phải (`.sr-kc-pct`), số lớn (`.sr-kc-num`, xanh khi tăng / đỏ khi giảm) + "/ 76 từ khóa"
+(`.sr-kc-of`), viên ▲▼ so với lần trước (`.sr-kc-delta`, có tooltip nói so với khi nào). Không chế kiểu thẻ mới cho
+cùng loại số.
+
+### Icon
+
+- **Cùng khái niệm thì cùng icon ở mọi màn**, lấy từ chỗ đã có: menu trái (`NAV` trong `web.py`) và `CELL_ICONS` (trang
+  Thứ hạng). Top 3 `emoji_events`, Top 5 `workspace_premium`, Top 10 `military_tech`, lượt truy cập Organic
+  `travel_explore`, AI traffic `smart_toy`.
+- Ô icon chuẩn: `.sr-icon-bubble` (32px, bo 10px, icon 18px, nền / màu lấy từ `TONES`). Trong thẻ số dùng icon trơn
+  16px như thẻ Top N. Không tự đặt cỡ / bo / mã màu riêng.
+- `auto_awesome` và màu tím dành cho nội dung AI viết; chỉ số liên quan AI nhưng không do AI viết (AI traffic) dùng icon
+  khác, tông xanh dương.
+
+### Thông báo nổi và lớp phủ
+
+- `ui.notify`: thẻ trắng bo 14px, icon trong vòng tròn màu theo loại (xanh lá thành công · hổ phách cảnh báo · đỏ lỗi
+  · xanh dương thông tin), chữ màu mực, nút ("Đóng") là viên thuốc nhỏ màu mực. Nội dung chính **một dòng ngắn**, phần
+  hướng dẫn đưa vào `caption` ("mkt…@gmail.com xin quyền vào tool" + "Duyệt ở Quản trị › Phân quyền"). CSS chung trong
+  `ui_theme.py`, không tô nền màu đặc.
+- Thông báo cần người khác xử lý (người xin quyền…) gửi ngay tới trang đang mở của Owner / Admin (`live.notify`), đồng
+  thời có mục ở chuông.
+- Mở popup nổi (thông báo, nút +, hộp "Tất cả mục") thì **làm tối + mờ nền phía sau** (`rgba(31,34,30,.38)` + blur 3px),
+  bấm ra ngoài để đóng.
+
 ### Trạng thái trống, đang tải, đang chạy
 
 - Trống: `T.empty_state(ui, "icon", "Tiêu đề", "Bấm … để …")` — luôn chỉ cách làm tiếp.
@@ -208,6 +245,10 @@ Mọi bảng trong tool cùng một kiểu (CSS chung `.q-table__container` tron
 - Bảng dài: tiêu đề cột dính khi cuộn.
 - Ô có hai tầng (website + nguồn, trang + đường dẫn): dòng phụ dùng class `.sr-bb-sub` / `.sr-bl-sub`.
 - Mỗi bảng có nút xuất Excel; file xuất **đủ cột** kể cả cột đang ẩn trên màn hình.
+- **Bảng theo tháng / lộ trình** (cột = tháng): không tô nền từng ô; trạng thái bằng màu chữ (xanh đạt, đỏ không đạt,
+  hổ phách đang thiếu). Trạng thái tháng ghi bằng nhãn nhỏ dưới tên cột ("Đang chạy 14/30", "Bắt đầu cam kết"), không
+  thêm một dòng timeline riêng. Cột tháng đang chạy nền xanh rất nhạt; tháng đã qua chữ xám. Chú thích dưới bảng dùng
+  ví dụ thật ("**16** thực tế · / 6 cam kết tháng đó").
 
 ---
 
@@ -254,6 +295,11 @@ Mọi bảng trong tool cùng một kiểu (CSS chung `.q-table__container` tron
   hơn số liệu hiện tại thì báo "Đã có số mới, bấm để cập nhật".
 - Bật / tắt và chọn model AI ở **Quản trị › AI**. **Tên model chỉ hiện ở trang đó**, không hiện ở nơi khác.
 - Khách hàng (Guest) không thấy nút tốn phí, nút AI, điểm spam, việc nội bộ của team.
+- **Giao diện khách = kết quả, không phải vận hành.** Không lộ USD / credit, tên nhà cung cấp dữ liệu (DataForSEO,
+  Semrush), bộ từ khóa nháp / tạm dừng, lịch check, lỗi kỹ thuật. Câu hướng dẫn cài đặt cho admin ("gắn GA4 ở Quản
+  trị…") với khách đổi thành "Đội SEO đang chuẩn bị số liệu này." Khách chỉ tải báo cáo ở trang Báo cáo
+  (`export_menu(..., report=True)`); nút tải / CSV ở trang chi tiết dùng `T.team_button`. Trang chi tiết rút còn một
+  màn kết quả (Local SEO, OKR theo mục tiêu, Tốc độ trang…); task tuần nằm trong Báo cáo tuần / tháng.
 
 ---
 
@@ -301,6 +347,12 @@ Mọi bảng trong tool cùng một kiểu (CSS chung `.q-table__container` tron
   nằm trong khung trượt từ đáy khi bấm nút kỳ; avatar người có quyền và "GSC đến …" ẩn. Ô chọn mới cho thanh trên thêm
   vào `controls()` trong `web.shell` để cả hai bản cùng có.
 - Sửa giao diện xong: đo mọi trang ở 375px, `document.documentElement.scrollWidth` phải bằng 375.
+- **Thanh điều hướng dưới đáy (điện thoại):** viên thuốc nổi kính mờ, 4 mục bằng nhau icon trên chữ; mục đang mở icon
+  đặc màu xanh và `aria-current="page"`, mục khác icon viền xám; chừa `env(safe-area-inset-bottom)`. Mục "Thêm" mở popup
+  lưới 2 cột (icon + tên), không lặp mục đã có trên thanh.
+- **Form đăng nhập:** `<form>` thật, Enter gửi form, ô có `name` + `autocomplete` (`username`, `current-password`) để
+  trình quản lý mật khẩu tự điền; nút hiện mật khẩu là `<button type="button">` có tên đọc được ("Hiện mật khẩu");
+  nút đăng nhập bằng Google ở trên, đường kẻ "hoặc", mật khẩu ẩn sau một nút.
 
 ---
 

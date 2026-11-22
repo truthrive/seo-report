@@ -845,6 +845,42 @@ HEAD = """
   .sr-kg-fk { font-size: 11.5px; color: #6B6A5E; }
   .sr-kg-fv { font-size: 13px; font-weight: 600; color: #1F221E; }
   .sr-kg-chart { height: 150px; margin-top: 4px; }
+  /* Thanh tiến độ tới mốc cam kết (web_kpi._milestones) */
+  .sr-ms { margin-top: 14px; }
+  .sr-ms-bar { position: relative; height: 12px; border-radius: 6px; background: #EEECE4; }
+  .sr-ms-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: #1E7C31; }
+  .sr-ms-bar .ahead { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, #BFDDC4 0 4px,
+    #DCEFE0 4px 8px); border-radius: 0 6px 6px 0; }
+  .sr-ms-bar .pin { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; border-radius: 2px;
+    background: #1F221E; box-shadow: 0 0 0 2px #fff; }
+  .sr-ms-bar .pin.done { background: #1E7C31; }
+  .sr-ms-chips { margin-top: 8px; }
+  .sr-ms-grid { display: grid; gap: 6px; margin-top: 10px; }
+  .sr-ms-cell { background: #F6F6F1; border-radius: 10px; padding: 6px 8px; min-width: 0; }
+  .sr-ms-cell .k { font-size: 11px; color: #8C8A7E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sr-ms-cell .v { font-size: 13.5px; font-weight: 700; color: #1F221E; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .sr-ms-cell.done .v { color: #1E7C31; }
+  .sr-kg-card.k-traffic .sr-ms-cell.done .v { color: #1D4ED8; }
+  .sr-ms-note.one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* màu theo nhóm KPI: thứ hạng (xanh lá) / lượt truy cập (xanh dương): ô icon trước tên + màu thanh */
+  .sr-kg-card.k-traffic .sr-ms-bar .fill { background: #1D4ED8; }
+  .sr-kg-card.k-traffic .sr-ms-bar .ahead { background: repeating-linear-gradient(135deg, #BFD2FA 0 4px,
+    #E1EAFD 4px 8px); }
+  .sr-kg-card.k-traffic .sr-ms-bar .pin.done, .sr-kg-card.k-traffic .sr-ms-chip.done { color: #2563EB; }
+  .sr-kg-card.k-traffic .sr-ms-bar .pin.done, .sr-kg-card.k-traffic .sr-ms-chip.done .dot { background: #2563EB; }
+
+  .sr-ms-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: #1F221E;
+    white-space: nowrap; }
+  .sr-ms-chip .dot { width: 3px; height: 12px; border-radius: 2px; background: #1F221E; display: inline-block; }
+  .sr-ms-chip.done { color: #1E7C31; } .sr-ms-chip.done .dot { background: #1E7C31; }
+  .sr-ms-chip.goal { color: #6B6A5E; font-weight: 500; }
+  .sr-ms-chip.muted { color: #8C8A7E; font-weight: 400; }
+  .sr-ms-note { font-size: 12.5px; color: #6B6A5E; margin-top: 6px; }
+  .sr-ms-note.strong { color: #8F5F14; font-weight: 600; }
+  .sr-ms-note.ok { color: #1E7C31; font-weight: 600; }
+  .sr-kg-delta { font-size: 12.5px; font-weight: 600; color: #6B6A5E; white-space: nowrap; }
+  .sr-kg-delta.up { color: #1E7C31; } .sr-kg-delta.down { color: #C2410C; }
   /* Bảng cam kết theo tháng (Sửa cam kết KPI) */
   .sr-kt2-wrap { width: 100%; overflow-x: auto; border: 1px solid #E4E2D8; border-radius: 12px; background: #fff; }
   .sr-kt2 { display: grid; min-width: max-content; }
@@ -960,7 +996,15 @@ HEAD = """
   .sr-kg-cell.s2 { grid-column: span 2; } .sr-kg-cell.s3 { grid-column: span 3; } .sr-kg-cell.s6 { grid-column: span 6; }
   @media (max-width: 1000px) { .sr-kg-cell.s2, .sr-kg-cell.s3 { grid-column: span 3; } }
   @media (max-width: 640px) { .sr-kg-cell.s2, .sr-kg-cell.s3, .sr-kg-cell.s6 { grid-column: span 6; } }
-  .sr-kg-cell .sr-kg-card { display: flex; flex-direction: column; background: #FCFCFA; }
+  /* thẻ KPI nằm trong khung "Các KPI" = thẻ lồng trong thẻ (DESIGN.md › Màu thẻ): nền #F6F6F1, không viền */
+  /* thẻ KPI: cùng kiểu thẻ Top 3 / 5 / 10 của trang Thứ hạng (nền trắng, viền mảnh, bo 16px) */
+  /* thẻ lồng trong khối trắng: nền #F6F6F1, không viền (DESIGN.md › Màu thẻ); ô mốc bên trong đổi sang trắng */
+  .sr-kg-cell .sr-kg-card { display: flex; flex-direction: column; background: #F6F6F1; border: 1px solid transparent; }
+  .sr-kg-cell .sr-kg-card .sr-ms-cell { background: #fff; padding: 5px 6px; }
+  .sr-kg-cell .sr-kg-card .sr-ms-grid { gap: 4px; }
+  .sr-kg-cell .sr-kg-card .sr-ms-cell .k { font-size: 10.5px; }
+  .sr-kg-cell .sr-kg-card .sr-ms-bar { background: #E6E4DA; }
+  .sr-kg-cell .sr-kg-card .sr-kc-pct { background: #fff; }
   .sr-kg-cell .sr-kg-chart { margin-top: auto; padding-top: 10px; }
   .sr-kf-chip { font-size: 12.5px !important; padding: 2px 12px !important; min-height: 30px;
     background: #fff !important; color: #6B6A5E !important; border: 1px solid #E4E2D8; }
@@ -997,6 +1041,41 @@ HEAD = """
   .sr-kg-cell .sr-kg-card { padding: 14px 16px 6px; }
   .sr-kg-cell .sr-kg-chart { padding-top: 6px; height: 160px; }
   .sr-kt3 td .p { display: block; font-size: 10.5px; color: #8C8A7E; margin-top: 1px; }
+  /* Bảng "Theo từng tháng" bản gọn: không nền màu từng ô, trạng thái bằng màu chữ; cột tháng đang chạy nền xanh rất
+     nhạt; tháng sắp tới chỉ số cam kết màu xám (✓ nhỏ khi số hiện tại đã đủ) */
+  .sr-kt3-wrap { border-color: #ECEAE2; }
+  .sr-kt3 th { background: #fff; border-bottom: 1px solid #ECEAE2; padding: 10px 8px 8px; vertical-align: top; }
+  .sr-kt3 th.lab { background: #fff; }
+  .sr-kt3 th .m { font-size: 13px; font-weight: 700; color: #1F221E; }
+  .sr-kt3 th.zp .m { color: #8C8A7E; }
+  .sr-kt3 th .st { display: inline-block; margin-top: 4px; font-size: 10.5px; font-weight: 600; padding: 1px 7px;
+    border-radius: 999px; background: #F1F0EA; color: #6B6A5E; white-space: nowrap; }
+  .sr-kt3 th .st.running { background: #1E7C31; color: #fff; }
+  .sr-kt3 th .st.ok { background: #E3F1E0; color: #1E7C31; }
+  .sr-kt3 th .st.fail { background: #FCE4DA; color: #C2410C; }
+  .sr-kt3 th .st.future { background: #F2F7DC; color: #4F6B12; }
+  .sr-kt3 th.zc, .sr-kt3 td.zc { background: #F3F9F2 !important; }
+  .sr-kt3 td { padding: 12px 8px; border-bottom: 1px solid #F3F2EC; }
+  .sr-kt3 td.ok, .sr-kt3 td.bad, .sr-kt3 td.run, .sr-kt3 td.over, .sr-kt3 td.fut { background: transparent; }
+  .sr-kt3 td b { font-size: 14px; font-weight: 700; }
+  .sr-kt3 td.ok b, .sr-kt3 td.over b { color: #1E7C31; }
+  .sr-kt3 td.bad b { color: #C2410C; }
+  .sr-kt3 td.run b { color: #8F5F14; }
+  .sr-kt3 td .tg { color: #8C8A7E; font-weight: 500; font-size: 13.5px; }
+  .sr-kt3 .ck { font-style: normal; color: #1E7C31; font-weight: 700; font-size: 12px; margin-left: 3px; }
+  .sr-kt3 .lab { font-weight: 600; color: #1F221E; }
+  .sr-kt3 .lab .ls { font-weight: 400; }
+  .sr-kt3-key { font-size: 12px; color: #6B6A5E; line-height: 1.8; }
+  .sr-kt3-key b { color: #1F221E; }
+  .sr-kt3-key .g { color: #8C8A7E; }
+  .sr-kt3-key .ck { font-style: normal; color: #1E7C31; font-weight: 700; }
+  .sr-kt3-key .okc { color: #1E7C31; font-weight: 600; }
+  .sr-kt3-key .badc { color: #C2410C; font-weight: 600; }
+  .sr-kt3-wrap .sr-kt3 td .tg { display: inline; color: #8C8A7E; font-weight: 500; }
+  .sr-kt3-wrap .sr-kt3 td { white-space: nowrap; }
+  .sr-kt3-wrap .sr-kt3 th.zp { background: #fff; }
+  .sr-kt3-wrap .sr-kt3 td.zp:not(.ok):not(.bad):not(.over):not(.run) { background: #fff; }
+  .sr-kt3-wrap .sr-kt3 td.zp b { color: #8C8A7E; }
   .sr-kt3 td.ok .p { color: #1E7C31; } .sr-kt3 td.bad .p { color: #B3401A; } .sr-kt3 td.run .p { color: #8F5F14; }
   .sr-kt3 td.over { background: #DDEFE1; } .sr-kt3 td.over b { color: #145A23; }
   .sr-kt3 td.over .p { color: #145A23; font-weight: 600; }
@@ -2872,6 +2951,7 @@ HEAD = """
   .sr-qc-row { padding: 4px 6px; border-radius: 8px; background: #F6F6F1; }
   .sr-rad-label.right { left: calc(100% + 8px); }
   .sr-rad-label.top { bottom: calc(100% + 8px); top: auto; left: 50%; transform: translateX(-50%); }
+  .sr-rad-label.bottom { top: calc(100% + 8px); bottom: auto; left: 50%; transform: translateX(-50%); }
   .sr-rad-item:hover .sr-rad-label, .sr-rad-item:focus-visible .sr-rad-label { opacity: 1; }
   /* nút +: cột dọc, nhãn luôn hiện (nền trắng); rê / focus thì đậm lên */
   .sr-radial.arc .sr-rad-label { opacity: 1; background: #fff; color: #1F221E; font-weight: 500;
